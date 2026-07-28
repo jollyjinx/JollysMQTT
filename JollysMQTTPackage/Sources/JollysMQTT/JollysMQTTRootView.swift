@@ -43,6 +43,7 @@ public struct JollysMQTTRootView: View {
 }
 
 private struct WorkspaceSceneView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @Bindable var store: WorkspaceSceneStore
   @Bindable private var workspaceStore: WorkspaceStore
 
@@ -61,9 +62,14 @@ private struct WorkspaceSceneView: View {
     .task {
       await store.run()
     }
-    .onChange(of: store.serverList.state.connectReady) { _, ready in
-      guard let ready else { return }
-      store.connectCurrentWorkspace(ready)
+    .task(id: store.serverList.state.connectReady?.requestID) {
+      guard let ready = store.serverList.state.connectReady else { return }
+      await store.connectCurrentWorkspace(ready)
+    }
+    .task(id: scenePhase) {
+      #if os(iOS)
+        await store.setSceneActive(scenePhase == .active)
+      #endif
     }
     .onChange(of: store.serverList.state.selectedProfileID) { _, selection in
       guard selection != store.selectedProfileID else { return }
@@ -111,7 +117,16 @@ private struct WorkspaceContentView: View {
           $0.id == profileID
         }?.profile.name,
         selectedTopic: selectedTopic,
-        onShowBrokers: sceneStore.showServerList
+        snapshot: sceneStore.connection.state.snapshot,
+        onRetry: {
+          Task { await sceneStore.connection.retry() }
+        },
+        onCancel: {
+          Task { await sceneStore.connection.cancel() }
+        },
+        onShowBrokers: {
+          Task { await sceneStore.showServerList() }
+        }
       )
     }
   }
@@ -120,48 +135,226 @@ private struct WorkspaceContentView: View {
 private struct ConnectedWorkspacePlaceholder: View {
   let profileName: String?
   let selectedTopic: String?
+  let snapshot: BrokerFeedSnapshot
+  let onRetry: () -> Void
+  let onCancel: () -> Void
   let onShowBrokers: () -> Void
 
   var body: some View {
-    ContentUnavailableView {
+    VStack(spacing: 20) {
+      ContentUnavailableView {
+        Label {
+          Text(
+            "Broker Workspace",
+            bundle: #bundle,
+            comment: "Title of the connected broker workspace."
+          )
+        } icon: {
+          Image(systemName: "network.badge.shield.half.filled")
+        }
+      } description: {
+        if let profileName {
+          Text(profileName)
+        } else {
+          Text(
+            "The saved broker profile is unavailable.",
+            bundle: #bundle,
+            comment: "Shown when a restored workspace refers to a missing profile."
+          )
+        }
+        if let selectedTopic {
+          Text(
+            "Selected topic: \(selectedTopic)",
+            bundle: #bundle,
+            comment: "Restored topic selection. The variable is an MQTT topic."
+          )
+        }
+      }
+      ConnectionStatusView(snapshot: snapshot)
+      HStack(spacing: 12) {
+        if snapshot.lastFailure != nil || snapshot.phase == .idle {
+          Button(action: onRetry) {
+            Text(
+              "Retry",
+              bundle: #bundle,
+              comment: "Retries a broker connection after a failure or cancellation."
+            )
+          }
+          .buttonStyle(.borderedProminent)
+        }
+        if snapshot.phase.isConnectionWorkActive {
+          Button(role: .cancel, action: onCancel) {
+            Text(
+              "Cancel",
+              bundle: #bundle,
+              comment: "Cancels the current broker connection or retry."
+            )
+          }
+        }
+        Button(action: onShowBrokers) {
+          Text(
+            "Show Brokers",
+            bundle: #bundle,
+            comment: "Returns a connected workspace to the broker list."
+          )
+        }
+      }
+    }
+    .padding(20)
+  }
+}
+
+private struct ConnectionStatusView: View {
+  let snapshot: BrokerFeedSnapshot
+
+  var body: some View {
+    VStack(spacing: 8) {
       Label {
-        Text(
-          "Broker Workspace",
-          bundle: #bundle,
-          comment: "Title of the placeholder connected workspace."
-        )
+        Text(snapshot.phase.localizedTitle)
       } icon: {
-        Image(systemName: "network.badge.shield.half.filled")
+        if snapshot.phase.showsProgress {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Image(systemName: snapshot.phase.systemImageName)
+        }
       }
-    } description: {
-      if let profileName {
-        Text(
-          "Ready to connect to \(profileName).",
-          bundle: #bundle,
-          comment: "Placeholder connected state. The variable is a broker profile name."
-        )
-      } else {
-        Text(
-          "The saved broker profile is unavailable.",
-          bundle: #bundle,
-          comment: "Placeholder shown when a restored workspace refers to a missing profile."
-        )
+      .accessibilityLabel(snapshot.phase.localizedTitle)
+
+      if let failure = snapshot.lastFailure {
+        Text(failure.localizedDescription)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .accessibilityLabel(failure.localizedDescription)
       }
-      if let selectedTopic {
+      if let retryAt = snapshot.retry?.retryAt {
         Text(
-          "Selected topic: \(selectedTopic)",
+          "Next retry \(retryAt, style: .relative)",
           bundle: #bundle,
-          comment: "Restored topic selection. The variable is an MQTT topic."
-        )
-      }
-    } actions: {
-      Button(action: onShowBrokers) {
-        Text(
-          "Show Brokers",
-          bundle: #bundle,
-          comment: "Returns a connected placeholder workspace to the broker list."
+          comment: "Relative time until the next automatic broker reconnect."
         )
       }
+    }
+  }
+}
+
+extension BrokerFeedPhase {
+  fileprivate var localizedTitle: LocalizedStringResource {
+    switch self {
+    case .idle:
+      LocalizedStringResource("Disconnected", bundle: #bundle)
+    case .resolving:
+      LocalizedStringResource("Resolving broker", bundle: #bundle)
+    case .connecting:
+      LocalizedStringResource("Connecting", bundle: #bundle)
+    case .subscribing:
+      LocalizedStringResource("Subscribing", bundle: #bundle)
+    case .connected:
+      LocalizedStringResource("Connected", bundle: #bundle)
+    case .waitingToReconnect:
+      LocalizedStringResource("Waiting to reconnect", bundle: #bundle)
+    case .disconnecting:
+      LocalizedStringResource("Disconnecting", bundle: #bundle)
+    case .suspended:
+      LocalizedStringResource("Suspended", bundle: #bundle)
+    case .failed:
+      LocalizedStringResource("Connection failed", bundle: #bundle)
+    case .overloaded:
+      LocalizedStringResource("Connection overloaded", bundle: #bundle)
+    }
+  }
+
+  fileprivate var showsProgress: Bool {
+    switch self {
+    case .resolving, .connecting, .subscribing, .waitingToReconnect,
+      .disconnecting:
+      true
+    case .idle, .connected, .suspended, .failed, .overloaded:
+      false
+    }
+  }
+
+  fileprivate var isConnectionWorkActive: Bool {
+    switch self {
+    case .resolving, .connecting, .subscribing, .connected,
+      .waitingToReconnect:
+      true
+    case .idle, .disconnecting, .suspended, .failed, .overloaded:
+      false
+    }
+  }
+
+  fileprivate var systemImageName: String {
+    switch self {
+    case .connected:
+      "checkmark.circle"
+    case .suspended:
+      "pause.circle"
+    case .failed, .overloaded:
+      "exclamationmark.triangle"
+    case .idle:
+      "circle"
+    case .resolving, .connecting, .subscribing, .waitingToReconnect,
+      .disconnecting:
+      "arrow.trianglehead.2.clockwise"
+    }
+  }
+}
+
+extension BrokerFeedFailure {
+  fileprivate var localizedDescription: LocalizedStringResource {
+    switch self {
+    case .dnsResolutionFailed:
+      LocalizedStringResource(
+        "The broker name could not be resolved.",
+        bundle: #bundle
+      )
+    case .networkUnavailable:
+      LocalizedStringResource("The network is unavailable.", bundle: #bundle)
+    case .transportUnavailable:
+      LocalizedStringResource("The network connection ended.", bundle: #bundle)
+    case .brokerUnavailable:
+      LocalizedStringResource("The broker is unavailable.", bundle: #bundle)
+    case .authenticationRejected:
+      LocalizedStringResource(
+        "The broker rejected the username or password.",
+        bundle: #bundle
+      )
+    case .trustRejected:
+      LocalizedStringResource(
+        "The broker certificate is not trusted.",
+        bundle: #bundle
+      )
+    case .invalidConfiguration:
+      LocalizedStringResource(
+        "The broker configuration is invalid.",
+        bundle: #bundle
+      )
+    case .subscriptionRejected:
+      LocalizedStringResource(
+        "The broker rejected a subscription.",
+        bundle: #bundle
+      )
+    case .localOverload:
+      LocalizedStringResource(
+        "Messages arrived faster than this device could process them.",
+        bundle: #bundle
+      )
+    case .credentialUnavailable:
+      LocalizedStringResource(
+        "The device password is unavailable.",
+        bundle: #bundle
+      )
+    case .sessionAlreadyInUse:
+      LocalizedStringResource(
+        "The MQTT session is already in use.",
+        bundle: #bundle
+      )
+    case .protocolFailure:
+      LocalizedStringResource(
+        "The broker reported an MQTT protocol error.",
+        bundle: #bundle
+      )
     }
   }
 }

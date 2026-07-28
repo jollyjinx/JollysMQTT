@@ -139,7 +139,7 @@ struct WorkspaceFeatureTests {
 
     await first.start()
     await second.start()
-    first.connectCurrentWorkspace(
+    await first.connectCurrentWorkspace(
       ConnectReadyState(
         profile: firstProfile.profile,
         credentialRevision: 0,
@@ -224,7 +224,7 @@ struct WorkspaceFeatureTests {
     let id = WorkspaceID()
     let scene = dependencies.makeSceneStore(id: id)
     await scene.start()
-    scene.connectCurrentWorkspace(
+    await scene.connectCurrentWorkspace(
       ConnectReadyState(
         profile: profile.profile,
         credentialRevision: 0,

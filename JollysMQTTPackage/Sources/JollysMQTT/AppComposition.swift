@@ -1,7 +1,124 @@
 import Foundation
 import JollysMQTTCore
 import JollysMQTTStorage
+import JollysMQTTTransport
 import Observation
+
+public struct BrokerFeedLeaseFactory: Sendable {
+  public static let noop = BrokerFeedLeaseFactory { _ in
+    NoopBrokerFeedLease()
+  }
+
+  private let operation: @Sendable (WorkspaceID) -> any BrokerFeedLeaseControlling
+
+  public init(
+    _ operation:
+      @escaping @Sendable (WorkspaceID) -> any BrokerFeedLeaseControlling
+  ) {
+    self.operation = operation
+  }
+
+  public func makeFeed(
+    for workspaceID: WorkspaceID
+  ) -> any BrokerFeedLeaseControlling {
+    operation(workspaceID)
+  }
+}
+
+private actor NoopBrokerFeedLease: BrokerFeedLeaseControlling {
+  private let stream: AsyncStream<BrokerFeedSnapshot>
+
+  init() {
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerFeedSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    self.stream = stream
+    continuation.yield(.idle)
+  }
+
+  func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
+    stream
+  }
+
+  func connect(_ configuration: BrokerFeedConfiguration) {}
+  func retry() {}
+  func cancel() {}
+  func setSceneActive(_ isActive: Bool) {}
+  func release() {}
+}
+
+private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
+  private let workspaceID: WorkspaceID
+  private let factory: BrokerFeedLeaseFactory
+  private let stream: AsyncStream<BrokerFeedSnapshot>
+  private let continuation: AsyncStream<BrokerFeedSnapshot>.Continuation
+
+  private var currentFeed: (any BrokerFeedLeaseControlling)?
+  private var observationTask: Task<Void, Never>?
+  private var sceneIsActive = true
+
+  init(
+    workspaceID: WorkspaceID,
+    factory: BrokerFeedLeaseFactory
+  ) {
+    self.workspaceID = workspaceID
+    self.factory = factory
+    (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerFeedSnapshot.self,
+      bufferingPolicy: .bufferingOldest(64)
+    )
+    continuation.yield(.idle)
+  }
+
+  func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
+    stream
+  }
+
+  func connect(_ configuration: BrokerFeedConfiguration) async {
+    let feed: any BrokerFeedLeaseControlling
+    if let currentFeed {
+      feed = currentFeed
+    } else {
+      feed = factory.makeFeed(for: workspaceID)
+      currentFeed = feed
+      let continuation = continuation
+      observationTask = Task {
+        let snapshots = await feed.snapshots()
+        for await snapshot in snapshots {
+          if Task.isCancelled { return }
+          continuation.yield(snapshot)
+        }
+      }
+      await feed.setSceneActive(sceneIsActive)
+    }
+    await feed.connect(configuration)
+  }
+
+  func retry() async {
+    await currentFeed?.retry()
+  }
+
+  func cancel() async {
+    await currentFeed?.cancel()
+  }
+
+  func setSceneActive(_ isActive: Bool) async {
+    sceneIsActive = isActive
+    await currentFeed?.setSceneActive(isActive)
+  }
+
+  func release() async {
+    let feed = currentFeed
+    let observer = observationTask
+    currentFeed = nil
+    observationTask = nil
+    observer?.cancel()
+    await feed?.release()
+    await observer?.value
+    continuation.yield(.idle)
+  }
+}
 
 public struct JollysMQTTAppDependencies: Sendable {
   public static let shared: JollysMQTTAppDependencies = {
@@ -14,6 +131,7 @@ public struct JollysMQTTAppDependencies: Sendable {
       path: "JollysMQTT",
       directoryHint: .isDirectory
     )
+    let installationID = JollysMQTTAppDependencies.installationID()
     return JollysMQTTAppDependencies(
       profileRepository: LocalProfileRepository(
         fileURL: root.appending(path: "profiles.json")
@@ -24,7 +142,14 @@ public struct JollysMQTTAppDependencies: Sendable {
           path: "workspaces",
           directoryHint: .isDirectory
         )
-      )
+      ),
+      brokerFeedFactory: .init { _ in
+        let attempt = MQTTBrokerFeedAttempt(
+          credentialResolver: CredentialRepository.shared,
+          installationID: installationID
+        )
+        return BrokerFeed(attempt: attempt)
+      }
     )
   }()
 
@@ -32,22 +157,39 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let credentialRepository: any CredentialRepositoryProtocol
   public let workspaceRepository: any WorkspaceRepositoryProtocol
   public let workspaceReleaser: any WorkspaceLeaseReleasing
+  public let brokerFeedFactory: BrokerFeedLeaseFactory
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     workspaceRepository: any WorkspaceRepositoryProtocol,
-    workspaceReleaser: any WorkspaceLeaseReleasing = NoopWorkspaceLeaseReleaser()
+    workspaceReleaser: any WorkspaceLeaseReleasing = NoopWorkspaceLeaseReleaser(),
+    brokerFeedFactory: BrokerFeedLeaseFactory = .noop
   ) {
     self.profileRepository = profileRepository
     self.credentialRepository = credentialRepository
     self.workspaceRepository = workspaceRepository
     self.workspaceReleaser = workspaceReleaser
+    self.brokerFeedFactory = brokerFeedFactory
   }
 
   @MainActor
   public func makeSceneStore(id: WorkspaceID) -> WorkspaceSceneStore {
     WorkspaceSceneStore(id: id, dependencies: self)
+  }
+
+  static func installationID(
+    defaults: UserDefaults = .standard,
+    key: String = "eu.jinx.JollysMQTT.installation-id.v1"
+  ) -> UUID {
+    if let value = defaults.string(forKey: key),
+      let id = UUID(uuidString: value)
+    {
+      return id
+    }
+    let id = UUID()
+    defaults.set(id.uuidString.lowercased(), forKey: key)
+    return id
   }
 }
 
@@ -56,10 +198,14 @@ public struct JollysMQTTAppDependencies: Sendable {
 public final class WorkspaceSceneStore {
   public let workspace: WorkspaceStore
   public let serverList: ServerListStore
+  public let connection: ConnectionStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
+  private let credentialRepository: any CredentialRepositoryProtocol
+  private let feed: any BrokerFeedLeaseControlling
   private let lifecycle: WorkspaceLifecycleOwner
   private var hasStarted = false
+  private var hasRun = false
 
   public init(
     id: WorkspaceID,
@@ -69,16 +215,26 @@ public final class WorkspaceSceneStore {
       id: id,
       repository: dependencies.workspaceRepository
     )
+    let feed = WorkspaceBrokerFeedLease(
+      workspaceID: id,
+      factory: dependencies.brokerFeedFactory
+    )
     self.workspace = workspace
+    self.feed = feed
+    self.connection = ConnectionStore(feed: feed)
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository
     )
     self.workspaceRepository = dependencies.workspaceRepository
+    self.credentialRepository = dependencies.credentialRepository
     self.lifecycle = WorkspaceLifecycleOwner(
       id: id,
       repository: dependencies.workspaceRepository,
-      releaser: dependencies.workspaceReleaser,
+      releaser: BrokerFeedWorkspaceReleaser(
+        feed: feed,
+        downstream: dependencies.workspaceReleaser
+      ),
       prepareForRelease: {
         await workspace.flush()
       }
@@ -94,8 +250,20 @@ public final class WorkspaceSceneStore {
   }
 
   public func run() async {
+    guard !hasRun else { return }
+    hasRun = true
     await start()
-    await lifecycle.run()
+    await restoreConnectionIfNeeded()
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask {
+        await self.lifecycle.run()
+      }
+      group.addTask {
+        await self.connection.observe()
+      }
+      await group.next()
+      group.cancelAll()
+    }
   }
 
   public func start() async {
@@ -124,16 +292,109 @@ public final class WorkspaceSceneStore {
     }
   }
 
-  public func connectCurrentWorkspace(_ ready: ConnectReadyState) {
+  public func connectCurrentWorkspace(_ ready: ConnectReadyState) async {
     workspace.sendImmediately(.connect(profileID: ready.profile.id))
     serverList.sendImmediately(.consumeConnectReady(requestID: ready.requestID))
+    await connection.connect(
+      BrokerFeedConfiguration(
+        profile: ready.profile,
+        credentialRevision: ready.credentialRevision
+      )
+    )
   }
 
-  public func showServerList() {
+  public func showServerList() async {
+    await connection.cancel()
+    await feed.release()
     workspace.sendImmediately(.showServerList)
+  }
+
+  public func setSceneActive(_ isActive: Bool) async {
+    await connection.setSceneActive(isActive)
   }
 
   public func waitUntilOwned() async {
     await lifecycle.waitUntilRunning()
+  }
+
+  private func restoreConnectionIfNeeded() async {
+    guard case .connected(let profileID) = workspace.state.record.route,
+      let profile = serverList.state.profiles.first(where: {
+        $0.id == profileID
+      })?.profile
+    else { return }
+
+    let revision: UInt64
+    if profile.username == nil {
+      revision = 0
+    } else {
+      let status = try? await credentialRepository.status(for: profileID)
+      revision = status?.revision ?? 0
+    }
+    await connection.connect(
+      BrokerFeedConfiguration(
+        profile: profile,
+        credentialRevision: revision
+      )
+    )
+  }
+}
+
+@MainActor
+@Observable
+public final class ConnectionStore {
+  public private(set) var state = ConnectionFeature.State()
+
+  private let feed: any BrokerFeedLeaseControlling
+
+  init(feed: any BrokerFeedLeaseControlling) {
+    self.feed = feed
+  }
+
+  func observe() async {
+    let snapshots = await feed.snapshots()
+    for await snapshot in snapshots {
+      if Task.isCancelled { return }
+      ConnectionFeature.reduce(
+        state: &state,
+        action: .snapshotReceived(snapshot)
+      )
+    }
+  }
+
+  func connect(_ configuration: BrokerFeedConfiguration) async {
+    await feed.connect(configuration)
+  }
+
+  func retry() async {
+    let effect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .retry
+    )
+    guard effect == .retry else { return }
+    await feed.retry()
+  }
+
+  func cancel() async {
+    let effect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .cancel
+    )
+    guard effect == .cancel else { return }
+    await feed.cancel()
+  }
+
+  func setSceneActive(_ isActive: Bool) async {
+    await feed.setSceneActive(isActive)
+  }
+}
+
+private struct BrokerFeedWorkspaceReleaser: WorkspaceLeaseReleasing {
+  let feed: any BrokerFeedLeaseControlling
+  let downstream: any WorkspaceLeaseReleasing
+
+  func release(workspaceID: WorkspaceID) async {
+    await feed.release()
+    await downstream.release(workspaceID: workspaceID)
   }
 }

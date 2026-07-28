@@ -32,10 +32,10 @@
       "comment" : "Title of the broker profile editor."
     },
     "Broker Workspace" : {
-      "comment" : "Title of the placeholder connected workspace."
+      "comment" : "Title of the connected broker workspace."
     },
     "Cancel" : {
-      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry."
+      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry.\nCancels the current broker connection or retry."
     },
     "Choose whether to keep or delete the password stored on this device for “%@”." : {
       "comment" : "Deletion warning. The variable is the broker profile name."
@@ -49,8 +49,20 @@
     "Connect" : {
       "comment" : "Primary action that connects to a selected broker."
     },
+    "Connected" : {
+      "comment" : "Broker connection phase shown after subscribing succeeds."
+    },
+    "Connecting" : {
+      "comment" : "Broker connection phase shown while opening the transport."
+    },
     "Connection" : {
       "comment" : "Header for common broker endpoint settings."
+    },
+    "Connection failed" : {
+      "comment" : "Broker connection phase shown after a terminal failure."
+    },
+    "Connection overloaded" : {
+      "comment" : "Broker connection phase shown after bounded intake overflows."
     },
     "Delete" : {
       "comment" : "Context action that requests broker profile deletion."
@@ -63,6 +75,12 @@
     },
     "Delete Profile and Password" : {
       "comment" : "Destructive action that deletes a broker profile and its device password."
+    },
+    "Disconnected" : {
+      "comment" : "Broker connection phase shown while no connection work is active."
+    },
+    "Disconnecting" : {
+      "comment" : "Broker connection phase shown while owned work is being closed."
     },
     "Duplicate" : {
       "comment" : "Context action that duplicates a broker profile."
@@ -127,14 +145,20 @@
     "Maximum delay: %lld seconds" : {
       "comment" : "Reconnect maximum delay. The variable is a number of seconds."
     },
+    "Messages arrived faster than this device could process them." : {
+      "comment" : "Explains a terminal local broker-feed overload."
+    },
     "Name" : {
       "comment" : "Label for a broker profile display name."
     },
-    "No Brokers" : {
-      "comment" : "Title of the initial empty broker-list screen."
-    },
     "New Window" : {
       "comment" : "Command that opens a fresh broker-list workspace."
+    },
+    "Next retry %@" : {
+      "comment" : "Relative time until the next automatic broker reconnect."
+    },
+    "No Brokers" : {
+      "comment" : "Title of the initial empty broker-list screen."
     },
     "OK" : {
       "comment" : "Dismisses a credential operation error.\nDismisses a workspace state error."
@@ -193,6 +217,12 @@
     "Removes this topic filter from the profile." : {
       "comment" : "Accessibility hint for removing a subscription filter."
     },
+    "Resolving broker" : {
+      "comment" : "Broker connection phase shown before opening the transport."
+    },
+    "Retry" : {
+      "comment" : "Retries a broker connection after a failure or cancellation."
+    },
     "Save" : {
       "comment" : "Action that validates and saves a broker profile."
     },
@@ -209,19 +239,58 @@
       "comment" : "Restored topic selection. The variable is an MQTT topic."
     },
     "Show Brokers" : {
-      "comment" : "Returns a connected placeholder workspace to the broker list."
+      "comment" : "Returns a connected workspace to the broker list."
     },
     "Stable Generated" : {
       "comment" : "Client ID mode derived stably for the installation and profile."
     },
+    "Subscribing" : {
+      "comment" : "Broker connection phase shown while MQTT subscriptions start."
+    },
     "Subscriptions" : {
       "comment" : "Header for MQTT subscription filters."
+    },
+    "Suspended" : {
+      "comment" : "Broker connection phase shown while a scene is dormant."
     },
     "TCP" : {
       "comment" : "Unencrypted TCP broker transport."
     },
     "TLS" : {
       "comment" : "System-trust TLS broker transport."
+    },
+    "The MQTT session is already in use." : {
+      "comment" : "Explains a terminal duplicate MQTT session failure."
+    },
+    "The broker certificate is not trusted." : {
+      "comment" : "Explains a terminal broker TLS trust failure."
+    },
+    "The broker configuration is invalid." : {
+      "comment" : "Explains a terminal invalid broker configuration."
+    },
+    "The broker is unavailable." : {
+      "comment" : "Explains a transient broker availability failure."
+    },
+    "The broker name could not be resolved." : {
+      "comment" : "Explains a transient broker DNS failure."
+    },
+    "The broker rejected a subscription." : {
+      "comment" : "Explains a terminal MQTT subscription failure."
+    },
+    "The broker rejected the username or password." : {
+      "comment" : "Explains a terminal MQTT authentication failure."
+    },
+    "The broker reported an MQTT protocol error." : {
+      "comment" : "Explains a terminal MQTT protocol failure."
+    },
+    "The device password is unavailable." : {
+      "comment" : "Explains a terminal device-local credential failure."
+    },
+    "The network connection ended." : {
+      "comment" : "Explains a transient transport failure."
+    },
+    "The network is unavailable." : {
+      "comment" : "Explains a transient network availability failure."
     },
     "The password could not be accessed. The broker profile was not changed." : {
       "comment" : "Explains an unavailable Keychain credential operation."
@@ -233,7 +302,7 @@
       "comment" : "Validation error for reconnect delay settings."
     },
     "The saved broker profile is unavailable." : {
-      "comment" : "Placeholder shown when a restored workspace refers to a missing profile."
+      "comment" : "Shown when a restored workspace refers to a missing profile."
     },
     "Topic Filter" : {
       "comment" : "Label for an MQTT subscription topic filter."
@@ -243,6 +312,9 @@
     },
     "Username" : {
       "comment" : "Label for the optional MQTT username."
+    },
+    "Waiting to reconnect" : {
+      "comment" : "Broker connection phase shown during automatic backoff."
     },
     "Workspace State Unavailable" : {
       "comment" : "Title for workspace restoration or persistence failure."
