@@ -31,6 +31,9 @@
     "Broker Profile" : {
       "comment" : "Title of the broker profile editor."
     },
+    "Broker Workspace" : {
+      "comment" : "Title of the placeholder connected workspace."
+    },
     "Cancel" : {
       "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry."
     },
@@ -130,8 +133,11 @@
     "No Brokers" : {
       "comment" : "Title of the initial empty broker-list screen."
     },
+    "New Window" : {
+      "comment" : "Command that opens a fresh broker-list workspace."
+    },
     "OK" : {
-      "comment" : "Dismisses a credential operation error."
+      "comment" : "Dismisses a credential operation error.\nDismisses a workspace state error."
     },
     "Opens the broker profile editor." : {
       "comment" : "Accessibility hint for the add broker action."
@@ -178,6 +184,9 @@
     "Random per Connection" : {
       "comment" : "Client ID mode that creates an ID for every clean connection."
     },
+    "Ready to connect to %@." : {
+      "comment" : "Placeholder connected state. The variable is a broker profile name."
+    },
     "Remove" : {
       "comment" : "Action that removes an MQTT subscription filter."
     },
@@ -196,6 +205,12 @@
     "Saving profile changes…" : {
       "comment" : "Status shown while local profile changes are not yet durable."
     },
+    "Selected topic: %@" : {
+      "comment" : "Restored topic selection. The variable is an MQTT topic."
+    },
+    "Show Brokers" : {
+      "comment" : "Returns a connected placeholder workspace to the broker list."
+    },
     "Stable Generated" : {
       "comment" : "Client ID mode derived stably for the installation and profile."
     },
@@ -208,9 +223,6 @@
     "TLS" : {
       "comment" : "System-trust TLS broker transport."
     },
-    "The broker profile “%@” will be removed. Credentials are managed separately." : {
-      "comment" : "Deletion warning. The variable is the broker profile name."
-    },
     "The password could not be accessed. The broker profile was not changed." : {
       "comment" : "Explains an unavailable Keychain credential operation."
     },
@@ -220,6 +232,9 @@
     "The reconnect delays are incompatible." : {
       "comment" : "Validation error for reconnect delay settings."
     },
+    "The saved broker profile is unavailable." : {
+      "comment" : "Placeholder shown when a restored workspace refers to a missing profile."
+    },
     "Topic Filter" : {
       "comment" : "Label for an MQTT subscription topic filter."
     },
@@ -228,6 +243,12 @@
     },
     "Username" : {
       "comment" : "Label for the optional MQTT username."
+    },
+    "Workspace State Unavailable" : {
+      "comment" : "Title for workspace restoration or persistence failure."
+    },
+    "Workspace state could not be restored or saved. Existing data was left unchanged." : {
+      "comment" : "Explains a workspace restoration or persistence failure."
     }
   },
   "version" : "1.0"

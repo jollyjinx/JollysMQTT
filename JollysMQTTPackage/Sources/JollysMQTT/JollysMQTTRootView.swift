@@ -3,50 +3,183 @@ import JollysMQTTStorage
 import JollysMQTTTransport
 import SwiftUI
 
+public struct JollysMQTTWindowCommands: Commands {
+  @Environment(\.openWindow) private var openWindow
+
+  public init() {}
+
+  public var body: some Commands {
+    CommandGroup(replacing: .newItem) {
+      Button {
+        openWindow(value: WorkspaceID())
+      } label: {
+        Text(
+          "New Window",
+          bundle: #bundle,
+          comment: "Command that opens a fresh broker-list workspace."
+        )
+      }
+      .keyboardShortcut("n", modifiers: .command)
+    }
+  }
+}
+
 public struct JollysMQTTRootView: View {
-  @State private var store: ServerListStore
+  @State private var sceneStore: WorkspaceSceneStore
 
   @MainActor
-  public init() {
-    let support =
-      FileManager.default.urls(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask
-      ).first ?? FileManager.default.temporaryDirectory
-    let fileURL =
-      support
-      .appending(path: "JollysMQTT", directoryHint: .isDirectory)
-      .appending(path: "profiles.json")
-    _store = State(
-      initialValue: ServerListStore(
-        repository: LocalProfileRepository(fileURL: fileURL)
-      )
+  public init(
+    workspaceID: WorkspaceID = WorkspaceID(),
+    dependencies: JollysMQTTAppDependencies = .shared
+  ) {
+    _sceneStore = State(
+      initialValue: dependencies.makeSceneStore(id: workspaceID)
     )
   }
 
-  @MainActor
-  public init(store: ServerListStore) {
-    _store = State(initialValue: store)
+  public var body: some View {
+    WorkspaceSceneView(store: sceneStore)
+  }
+}
+
+private struct WorkspaceSceneView: View {
+  @Bindable var store: WorkspaceSceneStore
+  @Bindable private var workspaceStore: WorkspaceStore
+
+  init(store: WorkspaceSceneStore) {
+    self.store = store
+    _workspaceStore = Bindable(wrappedValue: store.workspace)
   }
 
-  public var body: some View {
-    ServerListView(store: store)
+  var body: some View {
+    WorkspaceContentView(
+      route: store.workspace.state.record.route,
+      selectedTopic: store.workspace.state.record.selectedTopic,
+      serverListStore: store.serverList,
+      sceneStore: store
+    )
+    .task {
+      await store.run()
+    }
+    .onChange(of: store.serverList.state.connectReady) { _, ready in
+      guard let ready else { return }
+      store.connectCurrentWorkspace(ready)
+    }
+    .onChange(of: store.serverList.state.selectedProfileID) { _, selection in
+      guard selection != store.selectedProfileID else { return }
+      store.selectedProfileID = selection
+    }
+    .alert(
+      Text(
+        "Workspace State Unavailable",
+        bundle: #bundle,
+        comment: "Title for workspace restoration or persistence failure."
+      ),
+      isPresented: $workspaceStore.persistenceErrorPresented
+    ) {
+      Button {
+      } label: {
+        Text(
+          "OK",
+          bundle: #bundle,
+          comment: "Dismisses a workspace state error."
+        )
+      }
+    } message: {
+      Text(
+        "Workspace state could not be restored or saved. Existing data was left unchanged.",
+        bundle: #bundle,
+        comment: "Explains a workspace restoration or persistence failure."
+      )
+    }
+  }
+}
+
+private struct WorkspaceContentView: View {
+  let route: WorkspaceRoute
+  let selectedTopic: String?
+  let serverListStore: ServerListStore
+  let sceneStore: WorkspaceSceneStore
+
+  var body: some View {
+    switch route {
+    case .serverList:
+      ServerListView(store: serverListStore, sceneStore: sceneStore)
+    case .connected(let profileID):
+      ConnectedWorkspacePlaceholder(
+        profileName: serverListStore.state.profiles.first {
+          $0.id == profileID
+        }?.profile.name,
+        selectedTopic: selectedTopic,
+        onShowBrokers: sceneStore.showServerList
+      )
+    }
+  }
+}
+
+private struct ConnectedWorkspacePlaceholder: View {
+  let profileName: String?
+  let selectedTopic: String?
+  let onShowBrokers: () -> Void
+
+  var body: some View {
+    ContentUnavailableView {
+      Label {
+        Text(
+          "Broker Workspace",
+          bundle: #bundle,
+          comment: "Title of the placeholder connected workspace."
+        )
+      } icon: {
+        Image(systemName: "network.badge.shield.half.filled")
+      }
+    } description: {
+      if let profileName {
+        Text(
+          "Ready to connect to \(profileName).",
+          bundle: #bundle,
+          comment: "Placeholder connected state. The variable is a broker profile name."
+        )
+      } else {
+        Text(
+          "The saved broker profile is unavailable.",
+          bundle: #bundle,
+          comment: "Placeholder shown when a restored workspace refers to a missing profile."
+        )
+      }
+      if let selectedTopic {
+        Text(
+          "Selected topic: \(selectedTopic)",
+          bundle: #bundle,
+          comment: "Restored topic selection. The variable is an MQTT topic."
+        )
+      }
+    } actions: {
+      Button(action: onShowBrokers) {
+        Text(
+          "Show Brokers",
+          bundle: #bundle,
+          comment: "Returns a connected placeholder workspace to the broker list."
+        )
+      }
+    }
   }
 }
 
 struct ServerListView: View {
   @Bindable var store: ServerListStore
+  @Bindable var sceneStore: WorkspaceSceneStore
 
   var body: some View {
     NavigationSplitView {
-      BrokerListSidebar(store: store)
+      BrokerListSidebar(store: store, sceneStore: sceneStore)
     } detail: {
       BrokerListDetail(
         profile: store.state.profiles.first {
-          $0.id == store.state.selectedProfileID
+          $0.id == sceneStore.selectedProfileID
         }?.profile,
         credentialAvailability:
-          store.state.selectedProfileID.flatMap {
+          sceneStore.selectedProfileID.flatMap {
             store.state.credentialStatuses[$0]?.availability
           },
         store: store
@@ -59,11 +192,6 @@ struct ServerListView: View {
         comment: "Application title shown in navigation chrome."
       )
     )
-    .task {
-      if !store.state.hasLoaded {
-        await store.send(.load)
-      }
-    }
     .sheet(isPresented: $store.editorPresented) {
       if let editor = store.state.editor {
         ProfileEditorView(store: store, profileID: editor.id)
@@ -143,9 +271,10 @@ struct ServerListView: View {
 
 private struct BrokerListSidebar: View {
   @Bindable var store: ServerListStore
+  @Bindable var sceneStore: WorkspaceSceneStore
 
   var body: some View {
-    List(selection: $store.selection) {
+    List(selection: $sceneStore.selectedProfileID) {
       ForEach(store.state.profiles) { ranked in
         BrokerProfileRow(
           name: ranked.profile.name,
