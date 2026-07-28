@@ -16,8 +16,17 @@
     "Advanced Settings" : {
       "comment" : "Disclosure label for uncommon profile settings."
     },
+    "All windows are still using the previous connection settings." : {
+      "comment" : "Explains that a profile edit is pending for every connected workspace."
+    },
     "Anonymous connection; no password required" : {
       "comment" : "Indicates that a broker profile has no username and does not use a password."
+    },
+    "Another broker connection is using this fixed client ID." : {
+      "comment" : "Explains that an active connection to the same broker already owns the configured fixed client ID."
+    },
+    "Apply Later" : {
+      "comment" : "Dismisses this workspace's warning while keeping the active broker generation."
     },
     "Authentication" : {
       "comment" : "Header for broker authentication settings."
@@ -30,6 +39,9 @@
     },
     "Broker Profile" : {
       "comment" : "Title of the broker profile editor."
+    },
+    "Broker Settings Changed" : {
+      "comment" : "Title of the warning that a connected broker profile has newer settings."
     },
     "Broker Workspace" : {
       "comment" : "Title of the connected broker workspace."
@@ -211,6 +223,9 @@
     "Ready to connect to %@." : {
       "comment" : "Placeholder connected state. The variable is a broker profile name."
     },
+    "Reconnect All Windows to Apply" : {
+      "comment" : "Reconnects every workspace for a broker using the pending profile settings."
+    },
     "Remove" : {
       "comment" : "Action that removes an MQTT subscription filter."
     },
@@ -303,6 +318,9 @@
     },
     "The saved broker profile is unavailable." : {
       "comment" : "Shown when a restored workspace refers to a missing profile."
+    },
+    "The updated fixed client ID is already in use by another connection to this broker. Choose a different client ID before reconnecting." : {
+      "comment" : "Explains why updated broker settings cannot reconnect all windows."
     },
     "Topic Filter" : {
       "comment" : "Label for an MQTT subscription topic filter."

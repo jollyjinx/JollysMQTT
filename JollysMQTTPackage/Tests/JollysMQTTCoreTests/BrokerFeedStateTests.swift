@@ -83,6 +83,47 @@ struct BrokerFeedStateTests {
     #expect(cancelEffect == .cancel)
   }
 
+  @Test("Apply Later dismisses only one workspace and one pending revision")
+  func applyLaterIsWorkspaceAndRevisionLocal() {
+    let firstPending = BrokerFeedSnapshot(
+      phase: .connected,
+      generation: .stale(pendingRevision: 4, blocker: nil)
+    )
+    var firstWorkspace = ConnectionFeature.State(snapshot: firstPending)
+    var otherWorkspace = ConnectionFeature.State(snapshot: firstPending)
+
+    let effect = ConnectionFeature.reduce(
+      state: &firstWorkspace,
+      intent: .applyLater
+    )
+
+    #expect(effect == .none)
+    #expect(firstWorkspace.generationWarning == nil)
+    #expect(
+      otherWorkspace.generationWarning
+        == BrokerFeedGenerationWarning(
+          pendingRevision: 4,
+          blocker: nil
+        )
+    )
+
+    let nextPending = BrokerFeedSnapshot(
+      phase: .connected,
+      generation: .stale(pendingRevision: 5, blocker: nil)
+    )
+    ConnectionFeature.reduce(
+      state: &firstWorkspace,
+      action: .snapshotReceived(nextPending)
+    )
+    ConnectionFeature.reduce(
+      state: &otherWorkspace,
+      action: .snapshotReceived(nextPending)
+    )
+
+    #expect(firstWorkspace.generationWarning?.pendingRevision == 5)
+    #expect(otherWorkspace.generationWarning?.pendingRevision == 5)
+  }
+
   @Test("A leased feed reaches connected and closes on release")
   func successfulLeaseLifecycle() async {
     let attempt = HoldingSuccessfulAttempt()
@@ -341,6 +382,10 @@ struct BrokerFeedStateTests {
       ),
       PermanentFailureExpectation(
         failure: .sessionAlreadyInUse,
+        phase: .failed
+      ),
+      PermanentFailureExpectation(
+        failure: .fixedClientIDConflict,
         phase: .failed
       ),
       PermanentFailureExpectation(

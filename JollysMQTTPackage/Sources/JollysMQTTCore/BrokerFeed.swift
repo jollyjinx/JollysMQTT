@@ -12,6 +12,7 @@ public enum BrokerFeedFailure: Error, Equatable, Sendable {
   case localOverload
   case credentialUnavailable
   case sessionAlreadyInUse
+  case fixedClientIDConflict
   case protocolFailure
 
   public var allowsAutomaticRetry: Bool {
@@ -28,6 +29,7 @@ public enum BrokerFeedFailure: Error, Equatable, Sendable {
       .localOverload,
       .credentialUnavailable,
       .sessionAlreadyInUse,
+      .fixedClientIDConflict,
       .protocolFailure:
       false
     }
@@ -70,18 +72,71 @@ public struct BrokerFeedSnapshot: Equatable, Sendable {
   public let phase: BrokerFeedPhase
   public let lastFailure: BrokerFeedFailure?
   public let retry: BrokerFeedRetrySchedule?
+  public let generation: BrokerFeedGenerationState
+  public let sharedResources: BrokerFeedSharedResourceIdentity?
 
   public init(
     phase: BrokerFeedPhase,
     lastFailure: BrokerFeedFailure? = nil,
-    retry: BrokerFeedRetrySchedule? = nil
+    retry: BrokerFeedRetrySchedule? = nil,
+    generation: BrokerFeedGenerationState = .current,
+    sharedResources: BrokerFeedSharedResourceIdentity? = nil
   ) {
     self.phase = phase
     self.lastFailure = lastFailure
     self.retry = retry
+    self.generation = generation
+    self.sharedResources = sharedResources
   }
 
   public static let idle = BrokerFeedSnapshot(phase: .idle)
+}
+
+public struct BrokerFeedSharedResourceIdentity: Equatable, Sendable {
+  public let connection: UUID
+  public let client: UUID
+  public let subscriptionSet: UUID
+  public let topicIndex: UUID
+  public let historyWriter: UUID
+
+  public init(
+    connection: UUID = UUID(),
+    client: UUID = UUID(),
+    subscriptionSet: UUID = UUID(),
+    topicIndex: UUID = UUID(),
+    historyWriter: UUID = UUID()
+  ) {
+    self.connection = connection
+    self.client = client
+    self.subscriptionSet = subscriptionSet
+    self.topicIndex = topicIndex
+    self.historyWriter = historyWriter
+  }
+}
+
+public enum BrokerFeedGenerationBlocker: Equatable, Sendable {
+  case fixedClientIDConflict
+}
+
+public enum BrokerFeedGenerationState: Equatable, Sendable {
+  case current
+  case stale(
+    pendingRevision: UInt64,
+    blocker: BrokerFeedGenerationBlocker?
+  )
+}
+
+public struct BrokerFeedGenerationWarning: Equatable, Sendable {
+  public let pendingRevision: UInt64
+  public let blocker: BrokerFeedGenerationBlocker?
+
+  public init(
+    pendingRevision: UInt64,
+    blocker: BrokerFeedGenerationBlocker?
+  ) {
+    self.pendingRevision = pendingRevision
+    self.blocker = blocker
+  }
 }
 
 public struct BrokerReconnectBackoff: Equatable, Sendable {
@@ -227,7 +282,12 @@ public protocol BrokerFeedLeaseControlling: Sendable {
   func retry() async
   func cancel() async
   func setSceneActive(_ isActive: Bool) async
+  func reconnectAllToApply() async
   func release() async
+}
+
+extension BrokerFeedLeaseControlling {
+  public func reconnectAllToApply() async {}
 }
 
 public actor BrokerFeed: BrokerFeedLeaseControlling {
@@ -524,15 +584,34 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
 public enum ConnectionFeature {
   public struct State: Equatable, Sendable {
     public var snapshot: BrokerFeedSnapshot
+    public var deferredPendingRevision: UInt64?
 
-    public init(snapshot: BrokerFeedSnapshot = .idle) {
+    public init(
+      snapshot: BrokerFeedSnapshot = .idle,
+      deferredPendingRevision: UInt64? = nil
+    ) {
       self.snapshot = snapshot
+      self.deferredPendingRevision = deferredPendingRevision
+    }
+
+    public var generationWarning: BrokerFeedGenerationWarning? {
+      guard
+        case .stale(let pendingRevision, let blocker) =
+          snapshot.generation,
+        deferredPendingRevision != pendingRevision
+      else { return nil }
+      return BrokerFeedGenerationWarning(
+        pendingRevision: pendingRevision,
+        blocker: blocker
+      )
     }
   }
 
   public enum Intent: Equatable, Sendable {
     case retry
     case cancel
+    case applyLater
+    case reconnectAllToApply
   }
 
   public enum Action: Equatable, Sendable {
@@ -540,8 +619,10 @@ public enum ConnectionFeature {
   }
 
   public enum Effect: Equatable, Sendable {
+    case none
     case retry
     case cancel
+    case reconnectAllToApply
   }
 
   public static func reduce(
@@ -550,9 +631,16 @@ public enum ConnectionFeature {
   ) -> Effect {
     switch intent {
     case .retry:
-      .retry
+      return .retry
     case .cancel:
-      .cancel
+      return .cancel
+    case .applyLater:
+      if case .stale(let pendingRevision, _) = state.snapshot.generation {
+        state.deferredPendingRevision = pendingRevision
+      }
+      return .none
+    case .reconnectAllToApply:
+      return .reconnectAllToApply
     }
   }
 
@@ -563,6 +651,9 @@ public enum ConnectionFeature {
     switch action {
     case .snapshotReceived(let snapshot):
       state.snapshot = snapshot
+      if snapshot.generation == .current {
+        state.deferredPendingRevision = nil
+      }
     }
   }
 }

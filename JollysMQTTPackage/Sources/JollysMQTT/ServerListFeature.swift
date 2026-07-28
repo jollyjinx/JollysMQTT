@@ -693,17 +693,23 @@ public final class ServerListStore {
 
   private let repository: any ProfileRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
+  private let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
   private var persistenceTail: Task<Result<Void, ProfileRepositoryFailure>, Never>?
   private var pendingPersistenceCount = 0
 
   public init(
     initialState: ServerListFeature.State = .init(),
     repository: any ProfileRepositoryProtocol,
-    credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared
+    credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
+    brokerFeedGenerationCoordinator:
+      any BrokerFeedGenerationCoordinating =
+      NoopBrokerFeedGenerationCoordinator()
   ) {
     self.state = initialState
     self.repository = repository
     self.credentialRepository = credentialRepository
+    self.brokerFeedGenerationCoordinator =
+      brokerFeedGenerationCoordinator
   }
 
   public func send(_ intent: ServerListFeature.Intent) async {
@@ -734,12 +740,17 @@ public final class ServerListStore {
       pendingPersistenceCount += 1
       let previous = persistenceTail
       let repository = repository
+      let brokerFeedGenerationCoordinator =
+        brokerFeedGenerationCoordinator
       let task = Task<Result<Void, ProfileRepositoryFailure>, Never> {
         if let previous {
           _ = await previous.value
         }
         do {
           try await repository.replaceAll(profiles)
+          await brokerFeedGenerationCoordinator.profilesDidChange(
+            profiles.map(\.profile)
+          )
           return .success(())
         } catch {
           return .failure(ProfileRepositoryFailure())
@@ -782,7 +793,6 @@ public final class ServerListStore {
           result
         )
       )
-
     case .saveCredential(let profileID, let requestID, let credential):
       let result: Result<CredentialStatus, CredentialEffectFailure>
       do {
@@ -803,6 +813,12 @@ public final class ServerListStore {
           result
         )
       )
+      if case .success(let status) = result {
+        await brokerFeedGenerationCoordinator.credentialRevisionDidChange(
+          profileID: profileID,
+          revision: status.revision
+        )
+      }
 
     case .deleteCredential(let profileID, let requestID):
       let result: Result<CredentialStatus, CredentialEffectFailure>
@@ -812,6 +828,12 @@ public final class ServerListStore {
         result = .success(status)
       } catch {
         result = .failure(credentialFailure(for: error))
+      }
+      if case .success(let status) = result {
+        await brokerFeedGenerationCoordinator.credentialRevisionDidChange(
+          profileID: profileID,
+          revision: status.revision
+        )
       }
       if let followUp = ServerListFeature.reduce(
         state: &state,

@@ -108,6 +108,10 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
     await currentFeed?.setSceneActive(isActive)
   }
 
+  func reconnectAllToApply() async {
+    await currentFeed?.reconnectAllToApply()
+  }
+
   func release() async {
     let feed = currentFeed
     let observer = observationTask
@@ -132,6 +136,13 @@ public struct JollysMQTTAppDependencies: Sendable {
       directoryHint: .isDirectory
     )
     let installationID = JollysMQTTAppDependencies.installationID()
+    let registry = BrokerFeedRegistry { _ in
+      let attempt = MQTTBrokerFeedAttempt(
+        credentialResolver: CredentialRepository.shared,
+        installationID: installationID
+      )
+      return BrokerFeed(attempt: attempt)
+    }
     return JollysMQTTAppDependencies(
       profileRepository: LocalProfileRepository(
         fileURL: root.appending(path: "profiles.json")
@@ -143,13 +154,10 @@ public struct JollysMQTTAppDependencies: Sendable {
           directoryHint: .isDirectory
         )
       ),
-      brokerFeedFactory: .init { _ in
-        let attempt = MQTTBrokerFeedAttempt(
-          credentialResolver: CredentialRepository.shared,
-          installationID: installationID
-        )
-        return BrokerFeed(attempt: attempt)
-      }
+      brokerFeedFactory: .init { workspaceID in
+        registry.makeLease(workspaceID: workspaceID)
+      },
+      brokerFeedGenerationCoordinator: registry
     )
   }()
 
@@ -158,19 +166,25 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let workspaceRepository: any WorkspaceRepositoryProtocol
   public let workspaceReleaser: any WorkspaceLeaseReleasing
   public let brokerFeedFactory: BrokerFeedLeaseFactory
+  public let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     workspaceRepository: any WorkspaceRepositoryProtocol,
     workspaceReleaser: any WorkspaceLeaseReleasing = NoopWorkspaceLeaseReleaser(),
-    brokerFeedFactory: BrokerFeedLeaseFactory = .noop
+    brokerFeedFactory: BrokerFeedLeaseFactory = .noop,
+    brokerFeedGenerationCoordinator:
+      any BrokerFeedGenerationCoordinating =
+      NoopBrokerFeedGenerationCoordinator()
   ) {
     self.profileRepository = profileRepository
     self.credentialRepository = credentialRepository
     self.workspaceRepository = workspaceRepository
     self.workspaceReleaser = workspaceReleaser
     self.brokerFeedFactory = brokerFeedFactory
+    self.brokerFeedGenerationCoordinator =
+      brokerFeedGenerationCoordinator
   }
 
   @MainActor
@@ -224,7 +238,9 @@ public final class WorkspaceSceneStore {
     self.connection = ConnectionStore(feed: feed)
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
-      credentialRepository: dependencies.credentialRepository
+      credentialRepository: dependencies.credentialRepository,
+      brokerFeedGenerationCoordinator:
+        dependencies.brokerFeedGenerationCoordinator
     )
     self.workspaceRepository = dependencies.workspaceRepository
     self.credentialRepository = dependencies.credentialRepository
@@ -386,6 +402,23 @@ public final class ConnectionStore {
 
   func setSceneActive(_ isActive: Bool) async {
     await feed.setSceneActive(isActive)
+  }
+
+  func applyPendingGenerationLater() {
+    let effect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .applyLater
+    )
+    precondition(effect == .none)
+  }
+
+  func reconnectAllToApply() async {
+    let effect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .reconnectAllToApply
+    )
+    guard effect == .reconnectAllToApply else { return }
+    await feed.reconnectAllToApply()
   }
 }
 

@@ -9,6 +9,41 @@ import Testing
 @Suite("Workspace broker-feed composition")
 struct WorkspaceConnectionTests {
   @MainActor
+  @Test("Two scene stores share the process-wide registry feed")
+  func sceneStoresShareRegistryFeed() async throws {
+    let fixture = try await WorkspaceConnectionFixture()
+    defer { fixture.remove() }
+    let recorder = RecordingFeedFactory()
+    let registry = BrokerFeedRegistry(
+      gracePeriodSeconds: 30,
+      makeFeed: { _ in recorder.makeFeed() }
+    )
+    let dependencies = fixture.dependencies(
+      brokerFeedFactory: BrokerFeedLeaseFactory { workspaceID in
+        registry.makeLease(workspaceID: workspaceID)
+      },
+      brokerFeedGenerationCoordinator: registry
+    )
+    let first = dependencies.makeSceneStore(id: WorkspaceID())
+    let second = dependencies.makeSceneStore(id: WorkspaceID())
+    await first.start()
+    await second.start()
+
+    await first.connectCurrentWorkspace(fixture.connectReady(requestID: 1))
+    await second.connectCurrentWorkspace(fixture.connectReady(requestID: 2))
+
+    #expect(recorder.feeds().count == 1)
+    #expect(await recorder.feeds().first?.connectCount() == 1)
+    #expect(await registry.leaseCount(for: fixture.profile.id) == 2)
+
+    await first.showServerList()
+
+    #expect(await registry.leaseCount(for: fixture.profile.id) == 1)
+    #expect(await recorder.feeds().first?.releaseCount() == 0)
+    await second.showServerList()
+  }
+
+  @MainActor
   @Test("Show Brokers releases the feed and the next Connect acquires a fresh one")
   func showBrokersThenReconnectsWithFreshFeed() async throws {
     let fixture = try await WorkspaceConnectionFixture()
@@ -176,12 +211,17 @@ private struct WorkspaceConnectionFixture {
   }
 
   func dependencies(
-    brokerFeedFactory: BrokerFeedLeaseFactory
+    brokerFeedFactory: BrokerFeedLeaseFactory,
+    brokerFeedGenerationCoordinator:
+      any BrokerFeedGenerationCoordinating =
+      NoopBrokerFeedGenerationCoordinator()
   ) -> JollysMQTTAppDependencies {
     JollysMQTTAppDependencies(
       profileRepository: profileRepository,
       workspaceRepository: workspaceRepository,
-      brokerFeedFactory: brokerFeedFactory
+      brokerFeedFactory: brokerFeedFactory,
+      brokerFeedGenerationCoordinator:
+        brokerFeedGenerationCoordinator
     )
   }
 

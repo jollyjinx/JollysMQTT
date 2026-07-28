@@ -65,6 +65,43 @@ struct ServerListFeatureTests {
     #expect(relaunched.state.profiles.first?.id == id)
   }
 
+  @Test("Durable profile and credential changes notify the feed registry")
+  @MainActor
+  func durableChangesNotifyFeedCoordinator() async throws {
+    let profile = rankedProfile(
+      name: "Connected",
+      rank: 10,
+      username: "operator"
+    )
+    let coordinator = RecordingFeedGenerationCoordinator()
+    let credentials = ScriptedCredentialRepository(
+      statuses: [
+        .success(CredentialStatus(availability: .missing, revision: 2))
+      ],
+      saves: [
+        .success(CredentialStatus(availability: .available, revision: 3))
+      ]
+    )
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: MemoryProfileRepository(profiles: [profile]),
+      credentialRepository: credentials,
+      brokerFeedGenerationCoordinator: coordinator
+    )
+
+    await store.send(.editProfile(profile.id))
+    await store.send(.setHost("new.example"))
+    await store.send(.saveEditor)
+    await store.send(.connect(profile.id))
+    await store.send(.submitCredential(randomTransientCredential()))
+
+    #expect(
+      await coordinator.latestProfile(profileID: profile.id)?.host
+        == "new.example"
+    )
+    #expect(await coordinator.latestCredentialRevision(profile.id) == 3)
+  }
+
   @Test("Duplicate, delete, reorder, and connect validation preserve stable identity")
   @MainActor
   func profileOperations() throws {
@@ -194,6 +231,45 @@ struct ServerListFeatureTests {
     let durable = await repository.persistedProfiles()
     #expect(durable.map(\.id) == store.state.profiles.map(\.id))
     #expect(!store.state.hasUnpersistedChanges)
+  }
+
+  @Test("Profile writes and feed notifications remain in one durable order")
+  @MainActor
+  func persistenceNotificationsRemainOrdered() async {
+    let profile = rankedProfile(name: "Connected", rank: 10)
+    let repository = CountingProfileRepository(profiles: [profile])
+    let coordinator = GatedFeedGenerationCoordinator()
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: repository,
+      brokerFeedGenerationCoordinator: coordinator
+    )
+
+    await store.send(.editProfile(profile.id))
+    await store.send(.setHost("edit-one.example"))
+    let first = Task { await store.send(.saveEditor) }
+    await coordinator.waitForFirstNotification()
+
+    await store.send(.editProfile(profile.id))
+    await store.send(.setHost("edit-two.example"))
+    let second = Task { await store.send(.saveEditor) }
+    for _ in 0..<100 {
+      await Task.yield()
+    }
+
+    #expect(await repository.writeCount() == 1)
+    #expect(await coordinator.notificationCount() == 1)
+
+    await coordinator.finishFirstNotification()
+    await first.value
+    await second.value
+
+    #expect(await repository.writeCount() == 2)
+    #expect(await coordinator.notificationCount() == 2)
+    #expect(
+      await coordinator.latestProfile(profileID: profile.id)?.host
+        == "edit-two.example"
+    )
   }
 
   @Test("Connect hands off only profile identity and a non-secret credential revision")
@@ -567,6 +643,109 @@ private actor MemoryProfileRepository: ProfileRepositoryProtocol {
     self.profiles = profiles
   }
   func persistedProfiles() -> [RankedBrokerProfile] { profiles }
+}
+
+private actor CountingProfileRepository: ProfileRepositoryProtocol {
+  private var profiles: [RankedBrokerProfile]
+  private var writes = 0
+
+  init(profiles: [RankedBrokerProfile]) {
+    self.profiles = profiles
+  }
+
+  func load() -> [RankedBrokerProfile] { profiles }
+
+  func replaceAll(_ profiles: [RankedBrokerProfile]) {
+    writes += 1
+    self.profiles = profiles
+  }
+
+  func writeCount() -> Int { writes }
+}
+
+private actor GatedFeedGenerationCoordinator:
+  BrokerFeedGenerationCoordinating
+{
+  private var notifications = 0
+  private var profilesByID: [BrokerProfile.ID: BrokerProfile] = [:]
+  private var firstNotificationStarted = false
+  private var firstNotificationWaiters: [CheckedContinuation<Void, Never>] = []
+  private var firstNotificationGate: CheckedContinuation<Void, Never>?
+
+  func profilesDidChange(_ profiles: [BrokerProfile]) async {
+    notifications += 1
+    if notifications == 1 {
+      firstNotificationStarted = true
+      let waiters = firstNotificationWaiters
+      firstNotificationWaiters.removeAll()
+      for waiter in waiters {
+        waiter.resume()
+      }
+      await withCheckedContinuation { continuation in
+        firstNotificationGate = continuation
+      }
+    }
+    for profile in profiles {
+      profilesByID[profile.id] = profile
+    }
+  }
+
+  func credentialRevisionDidChange(
+    profileID: BrokerProfile.ID,
+    revision: UInt64
+  ) {}
+
+  func waitForFirstNotification() async {
+    if firstNotificationStarted { return }
+    await withCheckedContinuation { continuation in
+      firstNotificationWaiters.append(continuation)
+    }
+  }
+
+  func finishFirstNotification() {
+    firstNotificationGate?.resume()
+    firstNotificationGate = nil
+  }
+
+  func notificationCount() -> Int { notifications }
+
+  func latestProfile(
+    profileID: BrokerProfile.ID
+  ) -> BrokerProfile? {
+    profilesByID[profileID]
+  }
+}
+
+private actor RecordingFeedGenerationCoordinator:
+  BrokerFeedGenerationCoordinating
+{
+  private var profilesByID: [BrokerProfile.ID: BrokerProfile] = [:]
+  private var revisionsByID: [BrokerProfile.ID: UInt64] = [:]
+
+  func profilesDidChange(_ profiles: [BrokerProfile]) {
+    for profile in profiles {
+      profilesByID[profile.id] = profile
+    }
+  }
+
+  func credentialRevisionDidChange(
+    profileID: BrokerProfile.ID,
+    revision: UInt64
+  ) {
+    revisionsByID[profileID] = revision
+  }
+
+  func latestProfile(
+    profileID: BrokerProfile.ID
+  ) -> BrokerProfile? {
+    profilesByID[profileID]
+  }
+
+  func latestCredentialRevision(
+    _ profileID: BrokerProfile.ID
+  ) -> UInt64? {
+    revisionsByID[profileID]
+  }
 }
 
 private actor ScriptedCredentialRepository: CredentialRepositoryProtocol {

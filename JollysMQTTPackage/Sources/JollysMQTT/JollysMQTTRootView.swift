@@ -118,11 +118,19 @@ private struct WorkspaceContentView: View {
         }?.profile.name,
         selectedTopic: selectedTopic,
         snapshot: sceneStore.connection.state.snapshot,
+        generationWarning:
+          sceneStore.connection.state.generationWarning,
         onRetry: {
           Task { await sceneStore.connection.retry() }
         },
         onCancel: {
           Task { await sceneStore.connection.cancel() }
+        },
+        onApplyLater: {
+          sceneStore.connection.applyPendingGenerationLater()
+        },
+        onReconnectAll: {
+          Task { await sceneStore.connection.reconnectAllToApply() }
         },
         onShowBrokers: {
           Task { await sceneStore.showServerList() }
@@ -136,8 +144,11 @@ private struct ConnectedWorkspacePlaceholder: View {
   let profileName: String?
   let selectedTopic: String?
   let snapshot: BrokerFeedSnapshot
+  let generationWarning: BrokerFeedGenerationWarning?
   let onRetry: () -> Void
   let onCancel: () -> Void
+  let onApplyLater: () -> Void
+  let onReconnectAll: () -> Void
   let onShowBrokers: () -> Void
 
   var body: some View {
@@ -171,6 +182,13 @@ private struct ConnectedWorkspacePlaceholder: View {
         }
       }
       ConnectionStatusView(snapshot: snapshot)
+      if let generationWarning {
+        BrokerGenerationWarningView(
+          warning: generationWarning,
+          onApplyLater: onApplyLater,
+          onReconnectAll: onReconnectAll
+        )
+      }
       HStack(spacing: 12) {
         if snapshot.lastFailure != nil || snapshot.phase == .idle {
           Button(action: onRetry) {
@@ -201,6 +219,73 @@ private struct ConnectedWorkspacePlaceholder: View {
       }
     }
     .padding(20)
+  }
+}
+
+private struct BrokerGenerationWarningView: View {
+  let warning: BrokerFeedGenerationWarning
+  let onApplyLater: () -> Void
+  let onReconnectAll: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label {
+        Text(
+          "Broker Settings Changed",
+          bundle: #bundle,
+          comment: "Title of the warning that a connected broker profile has newer settings."
+        )
+      } icon: {
+        Image(systemName: "exclamationmark.triangle.fill")
+      }
+      .font(.headline)
+
+      if warning.blocker == .fixedClientIDConflict {
+        Text(
+          "The updated fixed client ID is already in use by another connection to this broker. Choose a different client ID before reconnecting.",
+          bundle: #bundle,
+          comment: "Explains why updated broker settings cannot reconnect all windows."
+        )
+      } else {
+        Text(
+          "All windows are still using the previous connection settings.",
+          bundle: #bundle,
+          comment: "Explains that a profile edit is pending for every connected workspace."
+        )
+      }
+
+      ViewThatFits {
+        HStack(spacing: 12) {
+          actions
+        }
+        VStack(alignment: .leading, spacing: 8) {
+          actions
+        }
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: 560, alignment: .leading)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+  }
+
+  @ViewBuilder
+  private var actions: some View {
+    Button(action: onApplyLater) {
+      Text(
+        "Apply Later",
+        bundle: #bundle,
+        comment: "Dismisses this workspace's warning while keeping the active broker generation."
+      )
+    }
+    Button(action: onReconnectAll) {
+      Text(
+        "Reconnect All Windows to Apply",
+        bundle: #bundle,
+        comment: "Reconnects every workspace for a broker using the pending profile settings."
+      )
+    }
+    .buttonStyle(.borderedProminent)
+    .disabled(warning.blocker != nil)
   }
 }
 
@@ -348,6 +433,11 @@ extension BrokerFeedFailure {
     case .sessionAlreadyInUse:
       LocalizedStringResource(
         "The MQTT session is already in use.",
+        bundle: #bundle
+      )
+    case .fixedClientIDConflict:
+      LocalizedStringResource(
+        "Another broker connection is using this fixed client ID.",
         bundle: #bundle
       )
     case .protocolFailure:
