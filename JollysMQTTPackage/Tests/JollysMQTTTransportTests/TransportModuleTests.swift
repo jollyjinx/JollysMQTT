@@ -43,6 +43,60 @@ struct TransportModuleTests {
     .enabled(if: ProcessInfo.processInfo.environment["JOLLYSMQTT_MQTT_INTEGRATION"] == "1")
 )
 struct MQTTTransportIntegrationTests {
+    @Test(
+        "Real mqtt-nio wildcard intake closes on bounded local overload",
+        .timeLimit(.minutes(1))
+    )
+    func realSubscriptionOverload() async throws {
+        let fixture = try await MosquittoFixture.start()
+        do {
+            let clientID = "jolly-ticket3-overload"
+            let processingGate = CancellableAsyncGate()
+            let connectionTask = Task {
+                try await MQTTTransportClient().withConnection(
+                    to: fixture.plainEndpoint,
+                    sessionPolicy: .clean(clientID: clientID)
+                ) { connection in
+                    try await connection.consumeBoundedSubscription(
+                        to: [
+                            MQTTSubscriptionFilter(
+                                topicFilter: "ticket3/overload/#",
+                                qos: .atMostOnce
+                            ),
+                        ],
+                        policy: MQTTIngressPolicy(
+                            capacity: 2,
+                            drainTimeout: .zero
+                        ),
+                        process: { _ in
+                            try await processingGate.wait()
+                        }
+                    )
+                }
+            }
+
+            try await fixture.waitForLog(containing: "Received SUBSCRIBE from \(clientID)")
+            try await fixture.publishBurst(
+                topic: "ticket3/overload/value",
+                messageCount: 1_000,
+                payloadBytes: 256
+            )
+            let report = try await connectionTask.value
+
+            #expect(report.termination == .localOverload)
+            #expect(report.highWaterMark == 2)
+            #expect(report.rejectedMessageCount == 1)
+            #expect(report.coverageGap?.isOpenEnded == true)
+            #expect(report.allowsAutomaticReconnect == false)
+            try await fixture.waitForLog(containing: "Client \(clientID) [")
+
+            await fixture.stop()
+        } catch {
+            await fixture.stop()
+            throw error
+        }
+    }
+
     @Test("MQTT 3.1.1 wildcard receive and QoS 0, 1, and 2 publish")
     func publishAndReceiveEveryQoS() async throws {
         let fixture = try await MosquittoFixture.start()
@@ -318,5 +372,23 @@ private actor AsyncGate {
         for waiter in currentWaiters {
             waiter.resume()
         }
+    }
+}
+
+private actor CancellableAsyncGate {
+    private let stream: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+
+    init() {
+        (stream, continuation) = AsyncStream.makeStream(
+            of: Void.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+    }
+
+    func wait() async throws {
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        try Task.checkCancellation()
     }
 }

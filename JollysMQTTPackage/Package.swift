@@ -19,6 +19,10 @@ let package = Package(
         .library(name: "JollysMQTTTransport", targets: ["JollysMQTTTransport"]),
         .library(name: "JollysMQTTStorage", targets: ["JollysMQTTStorage"]),
         .library(name: "JollysMQTT", targets: ["JollysMQTT"]),
+        .executable(
+            name: "JollysMQTTOverloadProbe",
+            targets: ["JollysMQTTOverloadProbe"]
+        ),
     ],
     dependencies: [
         .package(
@@ -53,6 +57,12 @@ let package = Package(
                 "JollysMQTTStorage",
             ],
             resources: [.process("Resources")],
+            swiftSettings: strictSwiftSettings
+        ),
+        .executableTarget(
+            name: "JollysMQTTOverloadProbe",
+            dependencies: ["JollysMQTTTransport"],
+            resources: [.copy("Resources")],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(

@@ -77,8 +77,13 @@ actor MosquittoFixture {
             process: process,
             logURL: logURL
         )
-        try await fixture.waitUntilReady()
-        return fixture
+        do {
+            try await fixture.waitUntilReady()
+            return fixture
+        } catch {
+            await fixture.stop()
+            throw error
+        }
     }
 
     private init(
@@ -108,9 +113,16 @@ actor MosquittoFixture {
         }
         if process.isRunning {
             process.interrupt()
-            Issue.record("Mosquitto fixture did not terminate promptly")
-            return
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(2))
+            while process.isRunning, clock.now < deadline {
+                try? await clock.sleep(for: .milliseconds(20))
+            }
         }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -134,6 +146,51 @@ actor MosquittoFixture {
         throw FixtureError(
             "Timed out waiting for broker log containing \(text). Log: \(log)"
         )
+    }
+
+    func publishBurst(
+        topic: String,
+        messageCount: Int,
+        payloadBytes: Int
+    ) async throws {
+        let payload = String(repeating: "A", count: payloadBytes)
+        let input = Data(
+            Array(repeating: payload, count: messageCount)
+                .joined(separator: "\n")
+                .appending("\n")
+                .utf8
+        )
+        let process = Process()
+        let standardInput = Pipe()
+        process.executableURL = URL(
+            fileURLWithPath: "/opt/homebrew/bin/mosquitto_pub"
+        )
+        process.arguments = [
+            "-h", plainEndpoint.host,
+            "-p", String(plainEndpoint.port),
+            "-t", topic,
+            "-q", "0",
+            "-l",
+        ]
+        process.standardInput = standardInput
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        do {
+            try standardInput.fileHandleForWriting.write(contentsOf: input)
+            try standardInput.fileHandleForWriting.close()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw FixtureError("mosquitto_pub burst failed")
+            }
+        } catch {
+            try? standardInput.fileHandleForWriting.close()
+            if process.isRunning {
+                process.terminate()
+            }
+            process.waitUntilExit()
+            throw error
+        }
     }
 
     private func waitUntilReady() async throws {
