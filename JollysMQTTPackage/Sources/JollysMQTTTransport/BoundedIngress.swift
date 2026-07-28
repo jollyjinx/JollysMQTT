@@ -194,13 +194,17 @@ extension MQTTConnectionScope {
     public func consumeBoundedSubscription(
         to filters: [MQTTSubscriptionFilter],
         policy: MQTTIngressPolicy,
+        boundaryPolicy: MQTTInboundBoundaryPolicy = .init(),
         onSubscribed: @escaping @Sendable () async -> Void = {},
         onOverload: @escaping @Sendable () -> Void = {},
         process: @escaping @Sendable (MQTTReceivedMessage) async throws -> Void
     ) async throws -> MQTTIngressReport {
         let completedReport = MQTTIngressReportBox()
         do {
-            return try await withSubscription(to: filters) { messages in
+            return try await withSubscription(
+                to: filters,
+                boundaryPolicy: boundaryPolicy
+            ) { messages in
                 await onSubscribed()
                 let report = try await MQTTBoundedIngressAdapter(
                     policy: policy

@@ -138,7 +138,9 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     var feedIdentity: UUID?
     var leases: [UUID: LeaseRecord]
     var snapshot: BrokerFeedSnapshot
+    var topicSnapshot: BrokerTopicTreeSnapshot
     var observationTask: Task<Void, Never>?
+    var topicObservationTask: Task<Void, Never>?
     var graceTask: Task<Void, Never>?
     var graceToken: UInt64
     var pending: PendingGeneration?
@@ -304,6 +306,7 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
       entries[profileID] = entry
       leaseProfiles[leaseID] = profileID
       await lease.receive(decoratedSnapshot(for: entry))
+      await lease.receive(entry.topicSnapshot)
       await updateSceneActivity(profileID: profileID)
       return
     }
@@ -332,7 +335,9 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
         )
       ],
       snapshot: .idle,
+      topicSnapshot: .empty,
       observationTask: nil,
+      topicObservationTask: nil,
       graceTask: nil,
       graceToken: 0,
       pending: nil,
@@ -399,18 +404,22 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
 
     let oldFeed = entry.feed
     let oldObserver = entry.observationTask
+    let oldTopicObserver = entry.topicObservationTask
     entry.feed = nil
     entry.feedIdentity = nil
     entry.observationTask = nil
+    entry.topicObservationTask = nil
     entry.pending = nil
     entry.switchTarget = target
     entry.snapshot = BrokerFeedSnapshot(phase: .disconnecting)
     entries[profileID] = entry
     oldObserver?.cancel()
+    oldTopicObserver?.cancel()
     await broadcast(profileID: profileID)
 
     await oldFeed?.release()
     await oldObserver?.value
+    await oldTopicObserver?.value
 
     guard var current = entries[profileID],
       current.switchTarget?.revision == target.revision
@@ -576,9 +585,21 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
         )
       }
     }
+    let topicObserver = Task { [weak self] in
+      let snapshots = await feed.topicSnapshots()
+      for await snapshot in snapshots {
+        if Task.isCancelled { return }
+        await self?.receive(
+          snapshot,
+          profileID: profileID,
+          feedIdentity: identity
+        )
+      }
+    }
     entry.feed = feed
     entry.feedIdentity = identity
     entry.observationTask = observer
+    entry.topicObservationTask = topicObserver
     entries[profileID] = entry
     await feed.setSceneActive(
       entry.leases.values.contains(where: \.sceneIsActive)
@@ -597,6 +618,22 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     entry.snapshot = snapshot
     entries[profileID] = entry
     await broadcast(profileID: profileID)
+  }
+
+  private func receive(
+    _ snapshot: BrokerTopicTreeSnapshot,
+    profileID: BrokerProfile.ID,
+    feedIdentity: UUID
+  ) async {
+    guard var entry = entries[profileID],
+      entry.feedIdentity == feedIdentity
+    else { return }
+    entry.topicSnapshot = snapshot
+    entries[profileID] = entry
+    let leases = entry.leases.values.map(\.lease)
+    for lease in leases {
+      await lease.receive(snapshot)
+    }
   }
 
   private func decoratedSnapshot(for entry: Entry) -> BrokerFeedSnapshot {
@@ -639,12 +676,15 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     else { return }
     entries[profileID] = nil
     entry.observationTask?.cancel()
+    entry.topicObservationTask?.cancel()
     let retirementToken = UUID()
     let feed = entry.feed
     let observer = entry.observationTask
+    let topicObserver = entry.topicObservationTask
     let task = Task {
       await feed?.release()
       await observer?.value
+      await topicObserver?.value
     }
     retirements[profileID] = Retirement(
       token: retirementToken,
@@ -732,6 +772,8 @@ public actor BrokerFeedRegistryLease: BrokerFeedLeaseControlling {
   private let registry: BrokerFeedRegistry
   private let stream: AsyncStream<BrokerFeedSnapshot>
   private let continuation: AsyncStream<BrokerFeedSnapshot>.Continuation
+  private let topicStream: AsyncStream<BrokerTopicTreeSnapshot>
+  private let topicContinuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
   private var configuration: BrokerFeedConfiguration?
   private var sceneIsActive = true
   private var isReleased = false
@@ -749,11 +791,20 @@ public actor BrokerFeedRegistryLease: BrokerFeedLeaseControlling {
       of: BrokerFeedSnapshot.self,
       bufferingPolicy: .bufferingNewest(64)
     )
+    (topicStream, topicContinuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
     continuation.yield(.idle)
+    topicContinuation.yield(.empty)
   }
 
   public func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
     stream
+  }
+
+  public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
+    topicStream
   }
 
   public func snapshot() -> BrokerFeedSnapshot {
@@ -806,12 +857,18 @@ public actor BrokerFeedRegistryLease: BrokerFeedLeaseControlling {
     currentSnapshot = .idle
     continuation.yield(.idle)
     continuation.finish()
+    topicContinuation.finish()
   }
 
   fileprivate func receive(_ snapshot: BrokerFeedSnapshot) {
     guard !isReleased else { return }
     currentSnapshot = snapshot
     continuation.yield(snapshot)
+  }
+
+  fileprivate func receive(_ snapshot: BrokerTopicTreeSnapshot) {
+    guard !isReleased else { return }
+    topicContinuation.yield(snapshot)
   }
 
   fileprivate func adoptCommittedConfiguration(

@@ -14,6 +14,7 @@ public enum BrokerFeedFailure: Error, Equatable, Sendable {
   case sessionAlreadyInUse
   case fixedClientIDConflict
   case protocolFailure
+  case payloadTooLarge
 
   public var allowsAutomaticRetry: Bool {
     switch self {
@@ -30,7 +31,8 @@ public enum BrokerFeedFailure: Error, Equatable, Sendable {
       .credentialUnavailable,
       .sessionAlreadyInUse,
       .fixedClientIDConflict,
-      .protocolFailure:
+      .protocolFailure,
+      .payloadTooLarge:
       false
     }
   }
@@ -226,10 +228,21 @@ public protocol BrokerFeedAttempting: Sendable {
 
   func closeActiveConnection() async throws
   func shutdownOwnedWork() async throws
+  func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
 }
 
 extension BrokerFeedAttempting {
   public func shutdownOwnedWork() async throws {}
+
+  public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    continuation.yield(.empty)
+    continuation.finish()
+    return stream
+  }
 }
 
 public struct BrokerFeedClock: Sendable {
@@ -278,6 +291,7 @@ public struct BrokerFeedJitter: Sendable {
 
 public protocol BrokerFeedLeaseControlling: Sendable {
   func snapshots() async -> AsyncStream<BrokerFeedSnapshot>
+  func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
   func connect(_ configuration: BrokerFeedConfiguration) async
   func retry() async
   func cancel() async
@@ -288,6 +302,16 @@ public protocol BrokerFeedLeaseControlling: Sendable {
 
 extension BrokerFeedLeaseControlling {
   public func reconnectAllToApply() async {}
+
+  public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    continuation.yield(.empty)
+    continuation.finish()
+    return stream
+  }
 }
 
 public actor BrokerFeed: BrokerFeedLeaseControlling {
@@ -324,6 +348,10 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
 
   public func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
     stream
+  }
+
+  public func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot> {
+    await attempt.topicSnapshots()
   }
 
   public func snapshot() -> BrokerFeedSnapshot {

@@ -53,9 +53,12 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
   private let factory: BrokerFeedLeaseFactory
   private let stream: AsyncStream<BrokerFeedSnapshot>
   private let continuation: AsyncStream<BrokerFeedSnapshot>.Continuation
+  private let topicStream: AsyncStream<BrokerTopicTreeSnapshot>
+  private let topicContinuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
 
   private var currentFeed: (any BrokerFeedLeaseControlling)?
   private var observationTask: Task<Void, Never>?
+  private var topicObservationTask: Task<Void, Never>?
   private var sceneIsActive = true
 
   init(
@@ -68,11 +71,20 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
       of: BrokerFeedSnapshot.self,
       bufferingPolicy: .bufferingOldest(64)
     )
+    (topicStream, topicContinuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
     continuation.yield(.idle)
+    topicContinuation.yield(.empty)
   }
 
   func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
     stream
+  }
+
+  func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
+    topicStream
   }
 
   func connect(_ configuration: BrokerFeedConfiguration) async {
@@ -88,6 +100,14 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
         for await snapshot in snapshots {
           if Task.isCancelled { return }
           continuation.yield(snapshot)
+        }
+      }
+      let topicContinuation = topicContinuation
+      topicObservationTask = Task {
+        let snapshots = await feed.topicSnapshots()
+        for await snapshot in snapshots {
+          if Task.isCancelled { return }
+          topicContinuation.yield(snapshot)
         }
       }
       await feed.setSceneActive(sceneIsActive)
@@ -115,12 +135,17 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
   func release() async {
     let feed = currentFeed
     let observer = observationTask
+    let topicObserver = topicObservationTask
     currentFeed = nil
     observationTask = nil
+    topicObservationTask = nil
     observer?.cancel()
+    topicObserver?.cancel()
     await feed?.release()
     await observer?.value
+    await topicObserver?.value
     continuation.yield(.idle)
+    topicContinuation.yield(.empty)
   }
 }
 
@@ -136,10 +161,28 @@ public struct JollysMQTTAppDependencies: Sendable {
       directoryHint: .isDirectory
     )
     let installationID = JollysMQTTAppDependencies.installationID()
-    let registry = BrokerFeedRegistry { _ in
+    let historyDirectory = root.appending(
+      path: "history",
+      directoryHint: .isDirectory
+    )
+    let registry = BrokerFeedRegistry { configuration in
+      let profile = configuration.profile
+      let historyWriter = SQLiteBrokerHistoryWriter(
+        databaseURL: historyDirectory.appending(
+          path: "\(profile.id.uuidString.lowercased()).sqlite3"
+        )
+      )
+      let ingestion = BrokerFeedIngestion(
+        brokerID: profile.id,
+        historySourceID: MQTTBrokerFeedAttempt.historySourceID(
+          for: profile
+        ),
+        historyWriter: historyWriter
+      )
       let attempt = MQTTBrokerFeedAttempt(
         credentialResolver: CredentialRepository.shared,
-        installationID: installationID
+        installationID: installationID,
+        ingestion: ingestion
       )
       return BrokerFeed(attempt: attempt)
     }
@@ -213,6 +256,7 @@ public final class WorkspaceSceneStore {
   public let workspace: WorkspaceStore
   public let serverList: ServerListStore
   public let connection: ConnectionStore
+  public let topics: TopicOutlineStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -236,6 +280,7 @@ public final class WorkspaceSceneStore {
     self.workspace = workspace
     self.feed = feed
     self.connection = ConnectionStore(feed: feed)
+    self.topics = TopicOutlineStore(feed: feed)
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
@@ -276,6 +321,9 @@ public final class WorkspaceSceneStore {
       }
       group.addTask {
         await self.connection.observe()
+      }
+      group.addTask {
+        await self.topics.observe()
       }
       await group.next()
       group.cancelAll()
@@ -329,6 +377,10 @@ public final class WorkspaceSceneStore {
     await connection.setSceneActive(isActive)
   }
 
+  public func selectTopic(_ topic: String) {
+    workspace.sendImmediately(.selectTopic(topic))
+  }
+
   public func waitUntilOwned() async {
     await lifecycle.waitUntilRunning()
   }
@@ -353,6 +405,32 @@ public final class WorkspaceSceneStore {
         credentialRevision: revision
       )
     )
+  }
+}
+
+@MainActor
+@Observable
+public final class TopicOutlineStore {
+  public private(set) var snapshot = BrokerTopicTreeSnapshot.empty
+
+  private let feed: any BrokerFeedLeaseControlling
+
+  init(feed: any BrokerFeedLeaseControlling) {
+    self.feed = feed
+  }
+
+  func observe() async {
+    let snapshots = await feed.topicSnapshots()
+    for await snapshot in snapshots {
+      if Task.isCancelled { return }
+      guard
+        snapshot.revision == 0
+          || snapshot.revision >= self.snapshot.revision
+      else {
+        continue
+      }
+      self.snapshot = snapshot
+    }
   }
 }
 

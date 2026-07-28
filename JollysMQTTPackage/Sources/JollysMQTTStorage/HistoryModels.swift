@@ -2,17 +2,23 @@ import Foundation
 
 public struct HistoryMessageInput: Sendable, Equatable {
   public let historySourceID: String
+  public let connectionEpoch: UUID?
+  public let connectionOrdinal: UInt64?
   public let topic: String
   public let receivedAtMicroseconds: Int64
   public let payload: Data
 
   public init(
     historySourceID: String,
+    connectionEpoch: UUID? = nil,
+    connectionOrdinal: UInt64? = nil,
     topic: String,
     receivedAtMicroseconds: Int64,
     payload: Data
   ) {
     self.historySourceID = historySourceID
+    self.connectionEpoch = connectionEpoch
+    self.connectionOrdinal = connectionOrdinal
     self.topic = topic
     self.receivedAtMicroseconds = receivedAtMicroseconds
     self.payload = payload
@@ -22,6 +28,8 @@ public struct HistoryMessageInput: Sendable, Equatable {
 public struct StoredHistoryMessage: Sendable, Equatable {
   public let durableOrder: Int64
   public let historySourceID: String
+  public let connectionEpoch: UUID?
+  public let connectionOrdinal: UInt64?
   public let topic: String
   public let receivedAtMicroseconds: Int64
   public let payload: Data

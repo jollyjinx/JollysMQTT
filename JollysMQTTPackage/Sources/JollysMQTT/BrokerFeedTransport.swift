@@ -3,6 +3,7 @@ import Foundation
 import JollysMQTTCore
 import JollysMQTTStorage
 import JollysMQTTTransport
+import Network
 
 struct BrokerFeedPublishCommand: Sendable {
   let topic: String
@@ -58,7 +59,9 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   private let credentialResolver: any ConnectionCredentialResolving
   private let installationID: UUID
   private let ingressPolicy: MQTTIngressPolicy
-  private var publishCommands: BrokerFeedPublishCommandQueue
+  private let boundaryPolicy: MQTTInboundBoundaryPolicy
+  private let ingestion: BrokerFeedIngestion?
+  private let publishCommands: BrokerFeedPublishCommandQueue
   private var ownedWorkIsShutdown = false
 
   private var activeConnection: MQTTConnectionScope?
@@ -73,6 +76,8 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
       capacity: 4_096,
       drainTimeout: .milliseconds(100)
     ),
+    boundaryPolicy: MQTTInboundBoundaryPolicy = .init(),
+    ingestion: BrokerFeedIngestion? = nil,
     publishCommands: BrokerFeedPublishCommandQueue =
       BrokerFeedPublishCommandQueue()
   ) {
@@ -80,6 +85,8 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     self.credentialResolver = credentialResolver
     self.installationID = installationID
     self.ingressPolicy = ingressPolicy
+    self.boundaryPolicy = boundaryPolicy
+    self.ingestion = ingestion
     self.publishCommands = publishCommands
   }
 
@@ -87,9 +94,8 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     configuration: BrokerFeedConfiguration,
     events: BrokerFeedAttemptEvents
   ) async throws {
-    if ownedWorkIsShutdown {
-      publishCommands = BrokerFeedPublishCommandQueue()
-      ownedWorkIsShutdown = false
+    guard !ownedWorkIsShutdown else {
+      throw CancellationError()
     }
     let profile = configuration.profile
     guard profile.validationIssues.isEmpty else {
@@ -138,6 +144,20 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     guard !ownedWorkIsShutdown else { return }
     ownedWorkIsShutdown = true
     await publishCommands.close()
+    await ingestion?.shutdown()
+  }
+
+  func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot> {
+    if let ingestion {
+      return await ingestion.snapshots()
+    }
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    continuation.yield(.empty)
+    continuation.finish()
+    return stream
   }
 
   private func runTransport(
@@ -212,11 +232,23 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
         let report = try await connection.consumeBoundedSubscription(
           to: filters,
           policy: self.ingressPolicy,
+          boundaryPolicy: self.boundaryPolicy,
           onSubscribed: {
             await events.connected()
           },
-          process: { _ in
-            // Ticket #10 installs the topic-index/history consumer here.
+          process: { message in
+            await self.ingestion?.ingest(
+              BrokerInboundMessage(
+                connectionEpoch: message.connectionEpoch,
+                ordinal: message.ordinal,
+                topic: message.topic,
+                payload: message.payload,
+                qos: message.qos.coreQoS,
+                retained: message.retained,
+                duplicate: message.duplicate,
+                receivedAtMicroseconds: message.receivedAtMicroseconds
+              )
+            )
           }
         )
         if report.termination == .localOverload {
@@ -302,10 +334,52 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
       return value
     }
   }
+
+  static func historySourceID(for profile: BrokerProfile) -> String {
+    let source = [
+      canonicalHistoryHost(profile.host),
+      String(profile.port),
+      profile.transport.rawValue,
+      profile.username ?? "",
+      "mqtt-3.1.1",
+    ].joined(separator: "\u{1F}")
+    return SHA256.hash(data: Data(source.utf8)).map {
+      String(format: "%02x", $0)
+    }.joined()
+  }
+
+  private static func canonicalHistoryHost(_ host: String) -> String {
+    let numeric =
+      host.first == "[" && host.last == "]"
+      ? String(host.dropFirst().dropLast())
+      : host
+    if let address = IPv4Address(numeric) {
+      return "ipv4:"
+        + address.rawValue.map { String(format: "%02x", $0) }.joined()
+    }
+    if let address = IPv6Address(numeric) {
+      return "ipv6:"
+        + address.rawValue.map { String(format: "%02x", $0) }.joined()
+    }
+    return "dns:\(host.lowercased())"
+  }
 }
 
 extension JollysMQTTCore.MQTTQualityOfService {
   fileprivate var transportQoS: JollysMQTTTransport.MQTTQualityOfService {
+    switch self {
+    case .atMostOnce:
+      .atMostOnce
+    case .atLeastOnce:
+      .atLeastOnce
+    case .exactlyOnce:
+      .exactlyOnce
+    }
+  }
+}
+
+extension JollysMQTTTransport.MQTTQualityOfService {
+  fileprivate var coreQoS: JollysMQTTCore.MQTTQualityOfService {
     switch self {
     case .atMostOnce:
       .atMostOnce
@@ -340,6 +414,8 @@ extension MQTTTransportFailure {
       .sessionAlreadyInUse
     case .protocolFailure:
       .protocolFailure
+    case .payloadTooLarge:
+      .payloadTooLarge
     }
   }
 }

@@ -8,6 +8,38 @@ import Testing
 
 @Suite("SQLite history store")
 struct SQLiteHistoryStoreTests {
+  @Test("Connection epoch and ordinal survive durable history round trip")
+  func connectionIdentityRoundTrip() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: "JollysMQTTStorageTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    let epoch = UUID()
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 42,
+        topic: "identity",
+        receivedAtMicroseconds: 7,
+        payload: Data([0x2A])
+      )
+    ])
+
+    let message = try #require(
+      try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "identity",
+        limit: 1
+      ).first
+    )
+    #expect(message.connectionEpoch == epoch)
+    #expect(message.connectionOrdinal == 42)
+  }
+
   @Test("Equal receive timestamps use durable insertion order newest first")
   func equalTimestampOrdering() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -382,6 +414,61 @@ struct SQLiteHistoryStoreTests {
   }
 
   #if os(macOS)
+    @Test("A version-one database migrates without losing existing history")
+    func versionOneMigration() async throws {
+      let directory = FileManager.default.temporaryDirectory
+        .appending(path: "JollysMQTTStorageTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let databaseURL = directory.appending(path: "history.sqlite")
+      let process = Process()
+      process.executableURL = URL(filePath: "/usr/bin/sqlite3")
+      process.arguments = [
+        databaseURL.path,
+        """
+        PRAGMA auto_vacuum = INCREMENTAL;
+        CREATE TABLE schema_version (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          version INTEGER NOT NULL
+        );
+        CREATE TABLE topics (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          history_source_id TEXT NOT NULL,
+          topic TEXT NOT NULL,
+          UNIQUE(history_source_id, topic)
+        );
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          received_at_microseconds INTEGER NOT NULL,
+          payload BLOB NOT NULL
+        );
+        CREATE INDEX messages_topic_order ON messages(topic_id, id DESC);
+        INSERT INTO schema_version(singleton, version) VALUES (1, 1);
+        INSERT INTO topics(history_source_id, topic) VALUES ('source-a', 'legacy');
+        INSERT INTO messages(topic_id, received_at_microseconds, payload)
+          SELECT id, 1, X'01' FROM topics;
+        """,
+      ]
+      try process.run()
+      process.waitUntilExit()
+      #expect(process.terminationStatus == 0)
+
+      let store = try await SQLiteHistoryStore.open(databaseURL: databaseURL)
+      #expect(
+        try await store.diagnostics().schemaVersion
+          == SQLiteHistoryStore.currentSchemaVersion
+      )
+      let legacy = try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "legacy",
+        limit: 1
+      )
+      #expect(legacy.first?.payload == Data([1]))
+      #expect(legacy.first?.connectionEpoch == nil)
+      #expect(legacy.first?.connectionOrdinal == nil)
+    }
+
     @Test("An interrupted uncommitted write recovers without partial history")
     func interruptedWriteRecovery() async throws {
       let directory = FileManager.default.temporaryDirectory

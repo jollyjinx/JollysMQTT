@@ -1,4 +1,5 @@
 import Foundation
+import JollysMQTTCore
 import MQTTNIO
 import NIOCore
 import NIOTransportServices
@@ -59,24 +60,33 @@ public struct MQTTSubscriptionFilter: Equatable, Sendable {
 }
 
 public struct MQTTReceivedMessage: Equatable, Sendable {
+  public let connectionEpoch: ConnectionEpochID
+  public let ordinal: UInt64
   public let topic: String
   public let payload: Data
   public let qos: MQTTQualityOfService
   public let retained: Bool
   public let duplicate: Bool
+  public let receivedAtMicroseconds: Int64
 
   public init(
+    connectionEpoch: ConnectionEpochID = ConnectionEpochID(),
+    ordinal: UInt64 = 0,
     topic: String,
     payload: Data,
     qos: MQTTQualityOfService,
     retained: Bool,
-    duplicate: Bool
+    duplicate: Bool,
+    receivedAtMicroseconds: Int64 = 0
   ) {
+    self.connectionEpoch = connectionEpoch
+    self.ordinal = ordinal
     self.topic = topic
     self.payload = payload
     self.qos = qos
     self.retained = retained
     self.duplicate = duplicate
+    self.receivedAtMicroseconds = receivedAtMicroseconds
   }
 }
 
@@ -93,6 +103,7 @@ public enum MQTTTransportFailure: Error, Equatable, Sendable {
   case timedOut
   case connectionClosed
   case protocolFailure
+  case payloadTooLarge(byteCount: Int, maximumByteCount: Int)
 }
 
 extension MQTTTransportFailure: CustomStringConvertible {
@@ -110,6 +121,29 @@ extension MQTTTransportFailure: CustomStringConvertible {
     case .timedOut: "The MQTT operation timed out."
     case .connectionClosed: "The MQTT connection closed."
     case .protocolFailure: "The MQTT protocol operation failed."
+    case .payloadTooLarge(let byteCount, let maximumByteCount):
+      "The MQTT payload has \(byteCount) bytes, exceeding the \(maximumByteCount)-byte limit."
+    }
+  }
+}
+
+public struct MQTTInboundBoundaryPolicy: Equatable, Sendable {
+  public let maximumPayloadBytes: Int
+
+  public init(maximumPayloadBytes: Int = 1_048_576) {
+    precondition(maximumPayloadBytes >= 0)
+    self.maximumPayloadBytes = maximumPayloadBytes
+  }
+
+  public func validate(payloadByteCount: Int) throws {
+    guard payloadByteCount >= 0 else {
+      throw MQTTTransportFailure.invalidConfiguration
+    }
+    guard payloadByteCount <= maximumPayloadBytes else {
+      throw MQTTTransportFailure.payloadTooLarge(
+        byteCount: payloadByteCount,
+        maximumByteCount: maximumPayloadBytes
+      )
     }
   }
 }
@@ -131,31 +165,75 @@ public enum MQTTSessionPolicy: Sendable {
   case inProcessPersistent(MQTTInProcessSession)
 }
 
+struct MQTTConnectionMessageIdentity: Equatable, Sendable {
+  let epoch: ConnectionEpochID
+  let ordinal: UInt64
+}
+
+final class MQTTConnectionMessageIdentityAllocator: Sendable {
+  private let epoch: ConnectionEpochID
+  private let lastOrdinal = Mutex<UInt64>(0)
+
+  init(epoch: ConnectionEpochID) {
+    self.epoch = epoch
+  }
+
+  func next() -> MQTTConnectionMessageIdentity {
+    let ordinal = lastOrdinal.withLock { lastOrdinal in
+      precondition(
+        lastOrdinal < UInt64.max,
+        "MQTT connection message ordinal exhausted"
+      )
+      lastOrdinal += 1
+      return lastOrdinal
+    }
+    return MQTTConnectionMessageIdentity(
+      epoch: epoch,
+      ordinal: ordinal
+    )
+  }
+}
+
 public struct MQTTMessageSequence: AsyncSequence, Sendable {
   public typealias Element = MQTTReceivedMessage
 
   let base: MQTTSubscription
+  let identityAllocator: MQTTConnectionMessageIdentityAllocator
+  let boundaryPolicy: MQTTInboundBoundaryPolicy
 
   public func makeAsyncIterator() -> Iterator {
-    Iterator(base: base.makeAsyncIterator())
+    Iterator(
+      base: base.makeAsyncIterator(),
+      identityAllocator: identityAllocator,
+      boundaryPolicy: boundaryPolicy
+    )
   }
 
   public struct Iterator: AsyncIteratorProtocol {
     var base: MQTTSubscription.AsyncIterator
+    let identityAllocator: MQTTConnectionMessageIdentityAllocator
+    let boundaryPolicy: MQTTInboundBoundaryPolicy
 
     public mutating func next() async throws -> MQTTReceivedMessage? {
       guard let message = try await base.next() else {
         return nil
       }
+      let payloadByteCount = message.payload.readableBytes
+      try boundaryPolicy.validate(payloadByteCount: payloadByteCount)
+      let identity = identityAllocator.next()
 
       return MQTTReceivedMessage(
+        connectionEpoch: identity.epoch,
+        ordinal: identity.ordinal,
         topic: message.topicName,
         payload: Data(
           message.payload.readableBytesView
         ),
         qos: MQTTQualityOfService(message.qos),
         retained: message.retain,
-        duplicate: message.dup
+        duplicate: message.dup,
+        receivedAtMicroseconds:
+          Int64(Date().timeIntervalSince1970 * 1_000_000)
       )
     }
   }
@@ -164,16 +242,23 @@ public struct MQTTMessageSequence: AsyncSequence, Sendable {
 public struct MQTTConnectionScope: Sendable {
   let connection: MQTTConnection
   fileprivate let cancellationBridge: ConnectionCancellationBridge
+  fileprivate let identityAllocator: MQTTConnectionMessageIdentityAllocator
 
   public let resumedSession: Bool
+  public let connectionEpoch: ConnectionEpochID
 
   fileprivate init(
     connection: MQTTConnection,
     resumedSession: Bool,
+    connectionEpoch: ConnectionEpochID,
     cancellationBridge: ConnectionCancellationBridge
   ) {
     self.connection = connection
     self.resumedSession = resumedSession
+    self.connectionEpoch = connectionEpoch
+    self.identityAllocator = MQTTConnectionMessageIdentityAllocator(
+      epoch: connectionEpoch
+    )
     self.cancellationBridge = cancellationBridge
   }
 
@@ -197,6 +282,7 @@ public struct MQTTConnectionScope: Sendable {
 
   public func withSubscription<Value: Sendable>(
     to filters: [MQTTSubscriptionFilter],
+    boundaryPolicy: MQTTInboundBoundaryPolicy = .init(),
     operation: @Sendable (MQTTMessageSequence) async throws -> Value
   ) async throws -> Value {
     let registration = cancellationBridge.beginSubscription()
@@ -215,7 +301,11 @@ public struct MQTTConnectionScope: Sendable {
         registration.didBecomeActive()
         return await captureMQTTOperationResult {
           try await operation(
-            MQTTMessageSequence(base: subscription)
+            MQTTMessageSequence(
+              base: subscription,
+              identityAllocator: identityAllocator,
+              boundaryPolicy: boundaryPolicy
+            )
           )
         }
       }
@@ -318,6 +408,7 @@ public struct MQTTTransportClient: Sendable {
                 MQTTConnectionScope(
                   connection: connection,
                   resumedSession: false,
+                  connectionEpoch: ConnectionEpochID(),
                   cancellationBridge: cancellationBridge
                 )
               )
@@ -342,6 +433,7 @@ public struct MQTTTransportClient: Sendable {
                 MQTTConnectionScope(
                   connection: connection,
                   resumedSession: resumedSession,
+                  connectionEpoch: ConnectionEpochID(),
                   cancellationBridge: cancellationBridge
                 )
               )

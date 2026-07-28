@@ -82,6 +82,35 @@ struct BrokerFeedTransportTests {
     #expect(firstSession === secondSession)
   }
 
+  @Test("History identity is stable for equivalent endpoints and password rotation")
+  func historySourceIdentity() {
+    let id = UUID()
+    let expanded = BrokerProfile.feedTransportTest(
+      id: id,
+      host: "[2001:0db8:0:0:0:0:0:1]",
+      username: "operator"
+    )
+    let compressed = BrokerProfile.feedTransportTest(
+      id: id,
+      host: "2001:db8::1",
+      username: "operator"
+    )
+    let otherPrincipal = BrokerProfile.feedTransportTest(
+      id: id,
+      host: "2001:db8::1",
+      username: "viewer"
+    )
+
+    #expect(
+      MQTTBrokerFeedAttempt.historySourceID(for: expanded)
+        == MQTTBrokerFeedAttempt.historySourceID(for: compressed)
+    )
+    #expect(
+      MQTTBrokerFeedAttempt.historySourceID(for: compressed)
+        != MQTTBrokerFeedAttempt.historySourceID(for: otherPrincipal)
+    )
+  }
+
   @Test(
     "Every transport failure maps to the expected feed failure",
     arguments: [
@@ -143,16 +172,18 @@ extension MQTTSessionPolicy {
 extension BrokerProfile {
   fileprivate static func feedTransportTest(
     id: UUID = UUID(),
+    host: String = "broker.example",
+    username: String? = nil,
     clientIDPolicy: ClientIDPolicy = .stableGenerated,
     cleanSession: Bool = true
   ) -> BrokerProfile {
     BrokerProfile(
       id: id,
       name: "Test",
-      host: "broker.example",
+      host: host,
       port: 1_883,
       transport: .tcp,
-      username: nil,
+      username: username,
       clientIDPolicy: clientIDPolicy,
       cleanSession: cleanSession,
       keepAliveSeconds: 60,

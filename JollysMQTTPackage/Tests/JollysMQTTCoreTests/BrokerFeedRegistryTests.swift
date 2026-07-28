@@ -80,6 +80,51 @@ struct BrokerFeedRegistryTests {
     await second.release()
   }
 
+  @Test("Current and newly attached leases receive the shared newest topic snapshot")
+  func sharedTopicSnapshotsFanOut() async throws {
+    let factory = RegistryRawFeedFactory()
+    let registry = BrokerFeedRegistry(
+      gracePeriodSeconds: 30,
+      makeFeed: factory.makeFeed
+    )
+    let first = registry.makeLease(workspaceID: WorkspaceID())
+    let second = registry.makeLease(workspaceID: WorkspaceID())
+    var firstSnapshots = await first.topicSnapshots().makeAsyncIterator()
+    var secondSnapshots = await second.topicSnapshots().makeAsyncIterator()
+    _ = await firstSnapshots.next()
+    _ = await secondSnapshots.next()
+    let configuration = BrokerFeedConfiguration(
+      profile: .registryTest(),
+      credentialRevision: 0
+    )
+    await first.connect(configuration)
+    let expected = BrokerTopicTreeSnapshot(
+      revision: 7,
+      roots: [],
+      totalMessageCount: 19,
+      valueTopicCount: 4,
+      historyIsHealthy: true,
+      unpersistedMessageCount: 0
+    )
+
+    await factory.onlyFeed()?.emit(expected)
+
+    var firstReceived = await firstSnapshots.next()
+    if firstReceived?.revision == 0 {
+      firstReceived = await firstSnapshots.next()
+    }
+    #expect(firstReceived == expected)
+
+    await second.connect(configuration)
+    var secondReceived = await secondSnapshots.next()
+    if secondReceived?.revision == 0 {
+      secondReceived = await secondSnapshots.next()
+    }
+    #expect(secondReceived == expected)
+    await first.release()
+    await second.release()
+  }
+
   @Test("Scene dormancy is aggregated across attached leases")
   func sceneDormancyIsAggregated() async {
     let factory = RegistryRawFeedFactory()
@@ -130,6 +175,58 @@ struct BrokerFeedRegistryTests {
     await sleeper.resumeNext()
     await factory.onlyFeed()?.waitForReleaseCount(1)
     #expect(await factory.onlyFeed()?.releaseCount() == 1)
+  }
+
+  @Test("Last-lease retirement shuts down the shared ingestion resources")
+  func lastLeaseRetirementShutsDownIngestion() async {
+    let sleeper = RegistryManualSleeper()
+    let shutdown = RegistryIngestionShutdownRecorder()
+    let writer = RegistryIngestionHistoryWriter(recorder: shutdown)
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer
+    )
+    let attempt = RegistryIngestionAttempt(ingestion: ingestion)
+    let registry = BrokerFeedRegistry(
+      gracePeriodSeconds: 12,
+      clock: BrokerFeedClock(now: Date.init, sleep: sleeper.sleep)
+    ) { _ in
+      BrokerFeed(attempt: attempt)
+    }
+    let configuration = BrokerFeedConfiguration(
+      profile: .registryTest(),
+      credentialRevision: 0
+    )
+    let lease = registry.makeLease(workspaceID: WorkspaceID())
+    await lease.connect(configuration)
+    await ingestion.ingest(
+      BrokerInboundMessage(
+        connectionEpoch: ConnectionEpochID(),
+        ordinal: 1,
+        topic: "large/tree",
+        payload: Data(repeating: 0xA5, count: 1_048_576),
+        qos: .atMostOnce,
+        retained: false,
+        duplicate: false,
+        receivedAtMicroseconds: 1
+      )
+    )
+
+    await lease.release()
+    await sleeper.waitForRequestCount(1)
+    #expect(await ingestion.metrics().isShutdown == false)
+    #expect(await shutdown.shutdownCount == 0)
+
+    await sleeper.resumeNext()
+    await shutdown.waitForCount(1)
+
+    let metrics = await ingestion.metrics()
+    #expect(metrics.isShutdown)
+    #expect(metrics.topicNodeCount == 0)
+    #expect(metrics.retainedPayloadByteCount == 0)
+    #expect(metrics.pendingHistoryMessageCount == 0)
+    #expect(await shutdown.events == ["append:1", "shutdown"])
   }
 
   @Test("A lease arriving during grace reuses the active generation")
@@ -608,6 +705,8 @@ private final class RegistryRawFeedFactory: Sendable {
 private actor RegistryRawFeed: BrokerFeedLeaseControlling {
   private let stream: AsyncStream<BrokerFeedSnapshot>
   private let continuation: AsyncStream<BrokerFeedSnapshot>.Continuation
+  private let topicStream: AsyncStream<BrokerTopicTreeSnapshot>
+  private let topicContinuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
   private var connections = 0
   private var releases = 0
   private var sceneActivities: [Bool] = []
@@ -618,11 +717,24 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
       of: BrokerFeedSnapshot.self,
       bufferingPolicy: .bufferingNewest(1)
     )
+    (topicStream, topicContinuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
     continuation.yield(.idle)
+    topicContinuation.yield(.empty)
   }
 
   func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
     stream
+  }
+
+  func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
+    topicStream
+  }
+
+  func emit(_ snapshot: BrokerTopicTreeSnapshot) {
+    topicContinuation.yield(snapshot)
   }
 
   func connect(_ configuration: BrokerFeedConfiguration) {
@@ -639,6 +751,7 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
   func release() {
     releases += 1
     continuation.finish()
+    topicContinuation.finish()
     let waiters = releaseWaiters
     releaseWaiters.removeAll()
     for waiter in waiters {
@@ -664,6 +777,86 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
 
   func lastSceneActivity() -> Bool? {
     sceneActivities.last
+  }
+}
+
+private actor RegistryIngestionAttempt: BrokerFeedAttempting {
+  let ingestion: BrokerFeedIngestion
+  private var activeContinuation: AsyncStream<Void>.Continuation?
+
+  init(ingestion: BrokerFeedIngestion) {
+    self.ingestion = ingestion
+  }
+
+  func runAttempt(
+    configuration: BrokerFeedConfiguration,
+    events: BrokerFeedAttemptEvents
+  ) async throws {
+    await events.connecting()
+    await events.subscribing()
+    await events.connected()
+    let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+    activeContinuation = continuation
+    await withTaskCancellationHandler {
+      for await _ in stream {}
+    } onCancel: {
+      continuation.finish()
+    }
+    activeContinuation = nil
+    throw CancellationError()
+  }
+
+  func closeActiveConnection() {
+    activeContinuation?.finish()
+  }
+
+  func shutdownOwnedWork() async {
+    await ingestion.shutdown()
+  }
+
+  func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot> {
+    await ingestion.snapshots()
+  }
+}
+
+private actor RegistryIngestionShutdownRecorder {
+  private(set) var events: [String] = []
+  var shutdownCount: Int {
+    events.count { $0 == "shutdown" }
+  }
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func record(_ event: String) {
+    events.append(event)
+    let ready = waiters
+    waiters.removeAll()
+    for waiter in ready {
+      waiter.resume()
+    }
+  }
+
+  func waitForCount(_ expected: Int) async {
+    while shutdownCount < expected {
+      await withCheckedContinuation { continuation in
+        waiters.append(continuation)
+      }
+    }
+  }
+}
+
+private actor RegistryIngestionHistoryWriter: BrokerHistoryWriting {
+  let recorder: RegistryIngestionShutdownRecorder
+
+  init(recorder: RegistryIngestionShutdownRecorder) {
+    self.recorder = recorder
+  }
+
+  func append(_ messages: [BrokerHistoryMessage]) async throws {
+    await recorder.record("append:\(messages.count)")
+  }
+
+  func shutdown() async {
+    await recorder.record("shutdown")
   }
 }
 

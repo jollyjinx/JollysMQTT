@@ -118,6 +118,7 @@ private struct WorkspaceContentView: View {
         }?.profile.name,
         selectedTopic: selectedTopic,
         snapshot: sceneStore.connection.state.snapshot,
+        topicSnapshot: sceneStore.topics.snapshot,
         generationWarning:
           sceneStore.connection.state.generationWarning,
         onRetry: {
@@ -134,6 +135,9 @@ private struct WorkspaceContentView: View {
         },
         onShowBrokers: {
           Task { await sceneStore.showServerList() }
+        },
+        onSelectTopic: { topic in
+          sceneStore.selectTopic(topic)
         }
       )
     }
@@ -144,12 +148,14 @@ private struct ConnectedWorkspacePlaceholder: View {
   let profileName: String?
   let selectedTopic: String?
   let snapshot: BrokerFeedSnapshot
+  let topicSnapshot: BrokerTopicTreeSnapshot
   let generationWarning: BrokerFeedGenerationWarning?
   let onRetry: () -> Void
   let onCancel: () -> Void
   let onApplyLater: () -> Void
   let onReconnectAll: () -> Void
   let onShowBrokers: () -> Void
+  let onSelectTopic: (String) -> Void
 
   var body: some View {
     VStack(spacing: 20) {
@@ -217,9 +223,85 @@ private struct ConnectedWorkspacePlaceholder: View {
           )
         }
       }
+      if topicSnapshot.roots.isEmpty == false {
+        TopicOutlineView(
+          snapshot: topicSnapshot,
+          selectedTopic: selectedTopic,
+          onSelectTopic: onSelectTopic
+        )
+      }
+      if topicSnapshot.historyIsHealthy == false {
+        Label {
+          Text(
+            "History is unavailable. Live topic values are still updating.",
+            bundle: #bundle,
+            comment: "Warns that durable history failed while live MQTT ingestion continues."
+          )
+        } icon: {
+          Image(systemName: "externaldrive.badge.exclamationmark")
+        }
+        .foregroundStyle(.secondary)
+      }
     }
     .padding(20)
   }
+}
+
+private struct TopicOutlineView: View {
+  let snapshot: BrokerTopicTreeSnapshot
+  let selectedTopic: String?
+  let onSelectTopic: (String) -> Void
+
+  var body: some View {
+    List(snapshot.roots, children: \.outlineChildren) { node in
+      Button {
+        onSelectTopic(node.fullTopic)
+      } label: {
+        TopicOutlineRow(
+          node: node,
+          isSelected: node.fullTopic == selectedTopic
+        )
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(
+        Text(
+          "\(node.fullTopic), \(node.subtreeValueTopicCount) topics, \(node.subtreeMessageCount) messages",
+          bundle: #bundle,
+          comment: "Accessible live topic row with exact topic and subtree counters."
+        )
+      )
+    }
+    .frame(minHeight: 220)
+  }
+}
+
+private struct TopicOutlineRow: View {
+  let node: BrokerTopicNodeSnapshot
+  let isSelected: Bool
+
+  var body: some View {
+    HStack {
+      Text(node.level.isEmpty ? "/" : node.level)
+        .fontWeight(isSelected ? .semibold : .regular)
+      Spacer()
+      if node.subtreeValueTopicCount > 0 {
+        Text(
+          "\(node.subtreeValueTopicCount) topics, \(node.subtreeMessageCount) messages",
+          bundle: #bundle,
+          comment: "Live topic subtree counters. The variables are topic and message counts."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+extension BrokerTopicNodeSnapshot {
+  fileprivate var outlineChildren: [BrokerTopicNodeSnapshot]? {
+    children.isEmpty ? nil : children
+  }
+
 }
 
 private struct BrokerGenerationWarningView: View {
@@ -443,6 +525,11 @@ extension BrokerFeedFailure {
     case .protocolFailure:
       LocalizedStringResource(
         "The broker reported an MQTT protocol error.",
+        bundle: #bundle
+      )
+    case .payloadTooLarge:
+      LocalizedStringResource(
+        "A received MQTT payload exceeded the configured size limit.",
         bundle: #bundle
       )
     }

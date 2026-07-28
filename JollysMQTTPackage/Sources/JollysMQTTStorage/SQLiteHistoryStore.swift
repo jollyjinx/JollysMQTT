@@ -2,7 +2,7 @@ import CSQLite
 import Foundation
 
 public actor SQLiteHistoryStore {
-  public static let currentSchemaVersion = 1
+  public static let currentSchemaVersion = 2
 
   private let databaseURL: URL
   private let databaseHandle: UInt
@@ -114,8 +114,14 @@ public actor SQLiteHistoryStore {
 
       let insertMessage = try prepare(
         """
-        INSERT INTO messages(topic_id, received_at_microseconds, payload)
-        VALUES (?, ?, ?)
+        INSERT INTO messages(
+            topic_id,
+            connection_epoch,
+            connection_ordinal,
+            received_at_microseconds,
+            payload
+        )
+        VALUES (?, ?, ?, ?, ?)
         """,
         operation: "prepare message insert"
       )
@@ -165,6 +171,8 @@ public actor SQLiteHistoryStore {
           messages.id,
           topics.history_source_id,
           topics.topic,
+          messages.connection_epoch,
+          messages.connection_ordinal,
           messages.received_at_microseconds,
           messages.payload
       FROM messages
@@ -194,9 +202,15 @@ public actor SQLiteHistoryStore {
           StoredHistoryMessage(
             durableOrder: sqlite3_column_int64(statement, 0),
             historySourceID: textColumn(statement, index: 1),
+            connectionEpoch: optionalTextColumn(statement, index: 3)
+              .flatMap(UUID.init(uuidString:)),
+            connectionOrdinal:
+              sqlite3_column_type(statement, 4) == SQLITE_NULL
+              ? nil
+              : UInt64(bitPattern: sqlite3_column_int64(statement, 4)),
             topic: textColumn(statement, index: 2),
-            receivedAtMicroseconds: sqlite3_column_int64(statement, 3),
-            payload: dataColumn(statement, index: 4)
+            receivedAtMicroseconds: sqlite3_column_int64(statement, 5),
+            payload: dataColumn(statement, index: 6)
           )
         )
       case SQLITE_DONE:
@@ -548,7 +562,7 @@ public actor SQLiteHistoryStore {
     if hasVersionTable == 0 {
       try execute("BEGIN IMMEDIATE", operation: "begin initial migration")
       do {
-        try createSchemaVersionOne()
+        try createCurrentSchema()
         try execute("COMMIT", operation: "commit initial migration")
       } catch {
         try? execute("ROLLBACK", operation: "rollback initial migration")
@@ -559,7 +573,9 @@ public actor SQLiteHistoryStore {
         "SELECT version FROM schema_version WHERE singleton = 1",
         operation: "read schema version"
       )
-      guard version == Self.currentSchemaVersion else {
+      if version == 1 {
+        try migrateSchemaVersionOneToTwo()
+      } else if version != Self.currentSchemaVersion {
         throw HistoryStorageError.sqlite(
           code: SQLITE_ERROR,
           operation: "migrate schema",
@@ -581,7 +597,7 @@ public actor SQLiteHistoryStore {
     }
   }
 
-  private func createSchemaVersionOne() throws {
+  private func createCurrentSchema() throws {
     try execute(
       """
       CREATE TABLE schema_version (
@@ -607,6 +623,8 @@ public actor SQLiteHistoryStore {
       CREATE TABLE messages (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+          connection_epoch TEXT,
+          connection_ordinal INTEGER,
           received_at_microseconds INTEGER NOT NULL,
           payload BLOB NOT NULL
       )
@@ -624,6 +642,28 @@ public actor SQLiteHistoryStore {
       "INSERT INTO schema_version(singleton, version) VALUES (1, \(Self.currentSchemaVersion))",
       operation: "record schema version"
     )
+  }
+
+  private func migrateSchemaVersionOneToTwo() throws {
+    try execute("BEGIN IMMEDIATE", operation: "begin schema version two migration")
+    do {
+      try execute(
+        "ALTER TABLE messages ADD COLUMN connection_epoch TEXT",
+        operation: "add connection epoch"
+      )
+      try execute(
+        "ALTER TABLE messages ADD COLUMN connection_ordinal INTEGER",
+        operation: "add connection ordinal"
+      )
+      try execute(
+        "UPDATE schema_version SET version = 2 WHERE singleton = 1",
+        operation: "record schema version two"
+      )
+      try execute("COMMIT", operation: "commit schema version two migration")
+    } catch {
+      try? execute("ROLLBACK", operation: "rollback schema version two migration")
+      throw error
+    }
   }
 
   private func resolveTopicID(
@@ -690,18 +730,46 @@ public actor SQLiteHistoryStore {
       sqlite3_bind_int64(statement, 1, topicID),
       operation: "bind message topic"
     )
+    if let connectionEpoch = message.connectionEpoch {
+      try bind(
+        connectionEpoch.uuidString.lowercased(),
+        to: 2,
+        in: statement,
+        operation: "bind connection epoch"
+      )
+    } else {
+      try check(
+        sqlite3_bind_null(statement, 2),
+        operation: "bind absent connection epoch"
+      )
+    }
+    if let connectionOrdinal = message.connectionOrdinal {
+      try check(
+        sqlite3_bind_int64(
+          statement,
+          3,
+          Int64(bitPattern: connectionOrdinal)
+        ),
+        operation: "bind connection ordinal"
+      )
+    } else {
+      try check(
+        sqlite3_bind_null(statement, 3),
+        operation: "bind absent connection ordinal"
+      )
+    }
     try check(
-      sqlite3_bind_int64(statement, 2, message.receivedAtMicroseconds),
+      sqlite3_bind_int64(statement, 4, message.receivedAtMicroseconds),
       operation: "bind receive timestamp"
     )
     let blobResult: Int32
     if message.payload.isEmpty {
-      blobResult = sqlite3_bind_zeroblob(statement, 3, 0)
+      blobResult = sqlite3_bind_zeroblob(statement, 5, 0)
     } else {
       blobResult = message.payload.withUnsafeBytes { bytes in
         sqlite3_bind_blob(
           statement,
-          3,
+          5,
           bytes.baseAddress,
           Int32(bytes.count),
           sqliteTransient
@@ -826,6 +894,16 @@ private let sqliteTransient = unsafeBitCast(
 
 private func textColumn(_ statement: OpaquePointer, index: Int32) -> String {
   guard let bytes = sqlite3_column_text(statement, index) else { return "" }
+  return String(cString: bytes)
+}
+
+private func optionalTextColumn(
+  _ statement: OpaquePointer,
+  index: Int32
+) -> String? {
+  guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+    let bytes = sqlite3_column_text(statement, index)
+  else { return nil }
   return String(cString: bytes)
 }
 

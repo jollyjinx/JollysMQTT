@@ -1,6 +1,31 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@, %lld topics, %llu messages" : {
+      "comment" : "Accessible live topic row with exact topic and subtree counters.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld topics, %3$llu messages"
+          }
+        }
+      }
+    },
+    "%lld topics, %llu messages" : {
+      "comment" : "Live topic subtree counters. The variables are topic and message counts.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld topics, %2$llu messages"
+          }
+        }
+      }
+    },
+    "A received MQTT payload exceeded the configured size limit." : {
+
+    },
     "Add Broker" : {
       "comment" : "Toolbar action that creates a broker profile."
     },
@@ -135,6 +160,9 @@
     },
     "Fix Before Saving" : {
       "comment" : "Header for broker profile validation errors."
+    },
+    "History is unavailable. Live topic values are still updating." : {
+      "comment" : "Warns that durable history failed while live MQTT ingestion continues."
     },
     "Home Broker" : {
       "comment" : "Example placeholder for a broker display name."

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 import enum JollysMQTTCore.BrokerFeedFailure
+import struct JollysMQTTCore.ConnectionEpochID
 
 @testable import JollysMQTTTransport
 
@@ -79,6 +80,51 @@ struct TransportModuleTests {
     )
 
     #expect(failure == .invalidConfiguration)
+  }
+
+  @Test("Payload size is rejected at the configured transport boundary")
+  func payloadBoundary() throws {
+    let policy = MQTTInboundBoundaryPolicy(maximumPayloadBytes: 4)
+
+    try policy.validate(payloadByteCount: 4)
+    #expect(
+      throws: MQTTTransportFailure.payloadTooLarge(
+        byteCount: 5,
+        maximumByteCount: 4
+      )
+    ) {
+      try policy.validate(payloadByteCount: 5)
+    }
+  }
+
+  @Test("One connection epoch allocates unique ordinals across concurrent consumers")
+  func connectionWideMessageIdentity() async {
+    let epoch = ConnectionEpochID(
+      rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!
+    )
+    let allocator = MQTTConnectionMessageIdentityAllocator(epoch: epoch)
+
+    let identities = await withTaskGroup(
+      of: [MQTTConnectionMessageIdentity].self,
+      returning: [MQTTConnectionMessageIdentity].self
+    ) { group in
+      for _ in 0..<2 {
+        group.addTask {
+          (0..<256).map { _ in allocator.next() }
+        }
+      }
+      var collected: [MQTTConnectionMessageIdentity] = []
+      for await batch in group {
+        collected.append(contentsOf: batch)
+      }
+      return collected
+    }
+
+    #expect(identities.allSatisfy { $0.epoch == epoch })
+    #expect(
+      identities.map(\.ordinal).sorted()
+        == Array(UInt64(1)...UInt64(512))
+    )
   }
 
   @Test("Caller errors survive both structured transport scope layers")
@@ -239,6 +285,11 @@ struct MQTTTransportIntegrationTests {
           "payload-1",
           "payload-2",
         ])
+      #expect(messages.map(\.ordinal) == [1, 2, 3])
+      #expect(Set(messages.map(\.connectionEpoch)).count == 1)
+      #expect(
+        messages.allSatisfy { $0.receivedAtMicroseconds > 0 }
+      )
 
       try await fixture.waitForLog(containing: "Client \(clientID) [")
       await fixture.stop()
