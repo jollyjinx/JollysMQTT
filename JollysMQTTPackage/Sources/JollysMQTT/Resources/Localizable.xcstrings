@@ -1,0 +1,15 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Broker profiles will appear here." : {
+      "comment" : "Description on the initial empty broker-list screen."
+    },
+    "JollysMQTT" : {
+      "comment" : "Application title shown in navigation chrome."
+    },
+    "No Brokers" : {
+      "comment" : "Title of the initial empty broker-list screen."
+    }
+  },
+  "version" : "1.0"
+}

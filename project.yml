@@ -1,0 +1,84 @@
+name: JollysMQTT
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  developmentLanguage: en
+  xcodeVersion: "27.0"
+
+packages:
+  JollysMQTTPackage:
+    path: JollysMQTTPackage
+
+settings:
+  base:
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_VERSION: "6.0"
+  configs:
+    Debug:
+      CODE_SIGNING_ALLOWED: NO
+
+targets:
+  JollysMQTT:
+    type: application
+    platform: auto
+    supportedDestinations:
+      - iOS
+      - macOS
+    sources:
+      - path: JollysMQTTApp
+    info:
+      path: JollysMQTTApp/Info.plist
+      properties:
+        CFBundleDisplayName: JollysMQTT
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSLocalNetworkUsageDescription: JollysMQTT uses the local network to connect to MQTT brokers you configure.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    dependencies:
+      - package: JollysMQTTPackage
+        product: JollysMQTT
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: JollysMQTTApp/JollysMQTT.macOS.entitlements
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.JollysMQTT
+        PRODUCT_MODULE_NAME: JollysMQTTApp
+        PRODUCT_NAME: JollysMQTT
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+schemes:
+  JollysMQTT:
+    build:
+      targets:
+        JollysMQTT: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

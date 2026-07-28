@@ -1,0 +1,71 @@
+// swift-tools-version: 6.2
+
+import PackageDescription
+
+let strictSwiftSettings: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .unsafeFlags(["-strict-concurrency=complete"]),
+]
+
+let package = Package(
+    name: "JollysMQTTPackage",
+    defaultLocalization: "en",
+    platforms: [
+        .iOS(.v18),
+        .macOS(.v15),
+    ],
+    products: [
+        .library(name: "JollysMQTTCore", targets: ["JollysMQTTCore"]),
+        .library(name: "JollysMQTTTransport", targets: ["JollysMQTTTransport"]),
+        .library(name: "JollysMQTTStorage", targets: ["JollysMQTTStorage"]),
+        .library(name: "JollysMQTT", targets: ["JollysMQTT"]),
+    ],
+    targets: [
+        .systemLibrary(name: "CSQLite"),
+        .target(
+            name: "JollysMQTTCore",
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "JollysMQTTTransport",
+            dependencies: ["JollysMQTTCore"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "JollysMQTTStorage",
+            dependencies: ["JollysMQTTCore", "CSQLite"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .target(
+            name: "JollysMQTT",
+            dependencies: [
+                "JollysMQTTCore",
+                "JollysMQTTTransport",
+                "JollysMQTTStorage",
+            ],
+            resources: [.process("Resources")],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "JollysMQTTCoreTests",
+            dependencies: ["JollysMQTTCore"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "JollysMQTTTransportTests",
+            dependencies: ["JollysMQTTTransport"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "JollysMQTTStorageTests",
+            dependencies: ["JollysMQTTStorage"],
+            swiftSettings: strictSwiftSettings
+        ),
+        .testTarget(
+            name: "JollysMQTTTests",
+            dependencies: ["JollysMQTT"],
+            swiftSettings: strictSwiftSettings
+        ),
+    ],
+    swiftLanguageModes: [.v6]
+)
