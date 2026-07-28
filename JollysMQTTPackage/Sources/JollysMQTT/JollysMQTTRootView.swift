@@ -45,6 +45,10 @@ struct ServerListView: View {
         profile: store.state.profiles.first {
           $0.id == store.state.selectedProfileID
         }?.profile,
+        credentialAvailability:
+          store.state.selectedProfileID.flatMap {
+            store.state.credentialStatuses[$0]?.availability
+          },
         store: store
       )
     }
@@ -65,6 +69,11 @@ struct ServerListView: View {
         ProfileEditorView(store: store, profileID: editor.id)
       }
     }
+    .sheet(isPresented: $store.credentialPromptPresented) {
+      if let prompt = store.state.credentialPrompt {
+        CredentialPromptView(prompt: prompt, store: store)
+      }
+    }
     .confirmationDialog(
       Text(
         "Delete Broker?",
@@ -75,15 +84,27 @@ struct ServerListView: View {
       titleVisibility: .visible
     ) {
       Button(role: .destructive) {
-        Task { await store.send(.confirmDeleteProfile) }
+        guard let profileID = store.state.pendingDeletionProfileID else { return }
+        Task { await store.send(.deleteProfileAndCredential(profileID)) }
       } label: {
         Text(
-          "Delete",
+          "Delete Profile and Password",
           bundle: #bundle,
-          comment: "Destructive action that deletes a broker profile."
+          comment: "Destructive action that deletes a broker profile and its device password."
+        )
+      }
+      Button(role: .destructive) {
+        guard let profileID = store.state.pendingDeletionProfileID else { return }
+        Task { await store.send(.deleteProfile(profileID)) }
+      } label: {
+        Text(
+          "Delete Profile Only",
+          bundle: #bundle,
+          comment: "Destructive action that deletes a broker profile but keeps its device password."
         )
       }
       Button(role: .cancel) {
+        store.sendImmediately(.cancelDeleteProfile)
       } label: {
         Text(
           "Cancel",
@@ -93,10 +114,29 @@ struct ServerListView: View {
       }
     } message: {
       Text(
-        "The broker profile “\(store.pendingDeletionName)” will be removed. Credentials are managed separately.",
+        "Choose whether to keep or delete the password stored on this device for “\(store.pendingDeletionName)”.",
         bundle: #bundle,
         comment: "Deletion warning. The variable is the broker profile name."
       )
+    }
+    .alert(
+      Text(
+        "Password Not Updated",
+        bundle: #bundle,
+        comment: "Title for a device credential operation failure."
+      ),
+      isPresented: $store.credentialErrorPresented
+    ) {
+      Button {
+      } label: {
+        Text(
+          "OK",
+          bundle: #bundle,
+          comment: "Dismisses a credential operation error."
+        )
+      }
+    } message: {
+      CredentialErrorMessage(error: store.state.credentialError)
     }
   }
 }
@@ -237,6 +277,7 @@ private struct BrokerRowActions: View {
 
 private struct BrokerListDetail: View {
   let profile: BrokerProfile?
+  let credentialAvailability: CredentialAvailability?
   let store: ServerListStore
 
   var body: some View {
@@ -250,6 +291,11 @@ private struct BrokerListDetail: View {
           .font(.title)
         Text(profile.endpointSummary)
           .foregroundStyle(.secondary)
+        if profile.username == nil {
+          AnonymousBrokerStatus()
+        } else {
+          BrokerCredentialAvailability(availability: credentialAvailability)
+        }
         BrokerDetailActions(profileID: profile.id, store: store)
       } else {
         BrokerListEmptyState()
@@ -282,6 +328,170 @@ private struct BrokerListDetail: View {
       }
     }
     .padding()
+  }
+}
+
+private struct BrokerCredentialAvailability: View {
+  let availability: CredentialAvailability?
+
+  var body: some View {
+    switch availability {
+    case .available:
+      Label {
+        Text(
+          "Password available on this device",
+          bundle: #bundle,
+          comment: "Indicates that a broker password exists in this device's Keychain."
+        )
+      } icon: {
+        Image(systemName: "key.fill")
+      }
+      .foregroundStyle(.secondary)
+    case .missing:
+      Label {
+        Text(
+          "Password required on this device",
+          bundle: #bundle,
+          comment: "Indicates that this device has no broker password."
+        )
+      } icon: {
+        Image(systemName: "key.slash")
+      }
+      .foregroundStyle(.orange)
+    case nil:
+      Text(
+        "Password availability is checked when connecting.",
+        bundle: #bundle,
+        comment: "Explains when the app checks for a device-local broker password."
+      )
+      .font(.footnote)
+      .foregroundStyle(.secondary)
+    }
+  }
+}
+
+private struct AnonymousBrokerStatus: View {
+  var body: some View {
+    Label {
+      Text(
+        "Anonymous connection; no password required",
+        bundle: #bundle,
+        comment: "Indicates that a broker profile has no username and does not use a password."
+      )
+    } icon: {
+      Image(systemName: "person.crop.circle")
+    }
+    .foregroundStyle(.secondary)
+  }
+}
+
+private struct CredentialPromptView: View {
+  let prompt: CredentialPromptState
+  let store: ServerListStore
+  @State private var password = ""
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section {
+          SecureField(text: $password) {
+            Text(
+              "Password",
+              bundle: #bundle,
+              comment: "Label for transient broker password entry."
+            )
+          }
+          .textContentType(.password)
+          .disabled(prompt.isSaving)
+        } footer: {
+          Text(
+            "The password is stored only in this device’s Keychain.",
+            bundle: #bundle,
+            comment: "Privacy explanation below transient broker password entry."
+          )
+        }
+      }
+      .navigationTitle(
+        Text(
+          "Password for \(prompt.profileName)",
+          bundle: #bundle,
+          comment: "Credential prompt title. The variable is a broker profile name."
+        )
+      )
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button {
+            password.removeAll(keepingCapacity: false)
+            store.sendImmediately(.cancelCredentialPrompt)
+          } label: {
+            Text(
+              "Cancel",
+              bundle: #bundle,
+              comment: "Cancels broker password entry."
+            )
+          }
+          .disabled(prompt.isSaving)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button {
+            let credential = TransientCredential(utf8: password)
+            password.removeAll(keepingCapacity: false)
+            Task {
+              await store.send(.submitCredential(credential))
+            }
+          } label: {
+            if prompt.isSaving {
+              ProgressView()
+                .accessibilityLabel(
+                  Text(
+                    "Saving password",
+                    bundle: #bundle,
+                    comment: "Accessibility label while a broker password is saved."
+                  )
+                )
+            } else {
+              Text(
+                "Save and Connect",
+                bundle: #bundle,
+                comment: "Saves a device password and continues connecting."
+              )
+            }
+          }
+          .disabled(prompt.isSaving)
+        }
+      }
+    }
+    .frame(minWidth: 320, idealWidth: 440, minHeight: 220)
+    .interactiveDismissDisabled(prompt.isSaving)
+  }
+}
+
+private struct CredentialErrorMessage: View {
+  let error: CredentialPresentationError?
+
+  var body: some View {
+    switch error {
+    case .cancelled:
+      Text(
+        "Password access was cancelled. The broker profile was not changed.",
+        bundle: #bundle,
+        comment: "Explains a cancelled Keychain credential operation."
+      )
+    case .denied:
+      Text(
+        "Password access was denied. The broker profile was not changed.",
+        bundle: #bundle,
+        comment: "Explains a denied Keychain credential operation."
+      )
+    case .unavailable:
+      Text(
+        "The password could not be accessed. The broker profile was not changed.",
+        bundle: #bundle,
+        comment: "Explains an unavailable Keychain credential operation."
+      )
+    case nil:
+      EmptyView()
+    }
   }
 }
 

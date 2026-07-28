@@ -16,6 +16,9 @@
     "Advanced Settings" : {
       "comment" : "Disclosure label for uncommon profile settings."
     },
+    "Anonymous connection; no password required" : {
+      "comment" : "Indicates that a broker profile has no username and does not use a password."
+    },
     "Authentication" : {
       "comment" : "Header for broker authentication settings."
     },
@@ -29,7 +32,10 @@
       "comment" : "Title of the broker profile editor."
     },
     "Cancel" : {
-      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving."
+      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry."
+    },
+    "Choose whether to keep or delete the password stored on this device for “%@”." : {
+      "comment" : "Deletion warning. The variable is the broker profile name."
     },
     "Clean Session" : {
       "comment" : "Toggle controlling MQTT clean-session behavior."
@@ -44,10 +50,16 @@
       "comment" : "Header for common broker endpoint settings."
     },
     "Delete" : {
-      "comment" : "Context action that requests broker profile deletion.\nDestructive action that deletes a broker profile."
+      "comment" : "Context action that requests broker profile deletion."
     },
     "Delete Broker?" : {
       "comment" : "Title confirming deletion of a broker profile."
+    },
+    "Delete Profile Only" : {
+      "comment" : "Destructive action that deletes a broker profile but keeps its device password."
+    },
+    "Delete Profile and Password" : {
+      "comment" : "Destructive action that deletes a broker profile and its device password."
     },
     "Duplicate" : {
       "comment" : "Context action that duplicates a broker profile."
@@ -118,8 +130,35 @@
     "No Brokers" : {
       "comment" : "Title of the initial empty broker-list screen."
     },
+    "OK" : {
+      "comment" : "Dismisses a credential operation error."
+    },
     "Opens the broker profile editor." : {
       "comment" : "Accessibility hint for the add broker action."
+    },
+    "Password" : {
+      "comment" : "Label for transient broker password entry."
+    },
+    "Password Not Updated" : {
+      "comment" : "Title for a device credential operation failure."
+    },
+    "Password access was cancelled. The broker profile was not changed." : {
+      "comment" : "Explains a cancelled Keychain credential operation."
+    },
+    "Password access was denied. The broker profile was not changed." : {
+      "comment" : "Explains a denied Keychain credential operation."
+    },
+    "Password availability is checked when connecting." : {
+      "comment" : "Explains when the app checks for a device-local broker password."
+    },
+    "Password available on this device" : {
+      "comment" : "Indicates that a broker password exists in this device's Keychain."
+    },
+    "Password for %@" : {
+      "comment" : "Credential prompt title. The variable is a broker profile name."
+    },
+    "Password required on this device" : {
+      "comment" : "Indicates that this device has no broker password."
     },
     "Passwords are stored separately on this device." : {
       "comment" : "Explains that secret material is outside the profile editor model."
@@ -148,6 +187,12 @@
     "Save" : {
       "comment" : "Action that validates and saves a broker profile."
     },
+    "Save and Connect" : {
+      "comment" : "Saves a device password and continues connecting."
+    },
+    "Saving password" : {
+      "comment" : "Accessibility label while a broker password is saved."
+    },
     "Saving profile changes…" : {
       "comment" : "Status shown while local profile changes are not yet durable."
     },
@@ -165,6 +210,12 @@
     },
     "The broker profile “%@” will be removed. Credentials are managed separately." : {
       "comment" : "Deletion warning. The variable is the broker profile name."
+    },
+    "The password could not be accessed. The broker profile was not changed." : {
+      "comment" : "Explains an unavailable Keychain credential operation."
+    },
+    "The password is stored only in this device’s Keychain." : {
+      "comment" : "Privacy explanation below transient broker password entry."
     },
     "The reconnect delays are incompatible." : {
       "comment" : "Validation error for reconnect delay settings."

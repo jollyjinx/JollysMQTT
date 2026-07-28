@@ -62,6 +62,53 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
   }
 }
 
+public struct ConnectReadyState: Equatable, Sendable {
+  public let profile: BrokerProfile
+  public let credentialRevision: UInt64
+  public let requestID: UInt64
+
+  public init(
+    profile: BrokerProfile,
+    credentialRevision: UInt64,
+    requestID: UInt64
+  ) {
+    self.profile = profile
+    self.credentialRevision = credentialRevision
+    self.requestID = requestID
+  }
+}
+
+public struct CredentialPromptState: Equatable, Sendable {
+  public let profileID: BrokerProfile.ID
+  public let profileName: String
+  public let requestID: UInt64
+  public var isSaving: Bool
+
+  public init(
+    profileID: BrokerProfile.ID,
+    profileName: String,
+    requestID: UInt64,
+    isSaving: Bool = false
+  ) {
+    self.profileID = profileID
+    self.profileName = profileName
+    self.requestID = requestID
+    self.isSaving = isSaving
+  }
+}
+
+public enum CredentialPresentationError: Equatable, Sendable {
+  case cancelled
+  case denied
+  case unavailable
+}
+
+public enum CredentialEffectFailure: Error, Equatable, Sendable {
+  case cancelled
+  case denied
+  case unavailable
+}
+
 public enum ServerListFeature {
   public struct State: Equatable, Sendable {
     public var profiles: [RankedBrokerProfile]
@@ -71,8 +118,14 @@ public enum ServerListFeature {
     public var hasLoaded: Bool
     public var persistenceError: Bool
     public var hasUnpersistedChanges: Bool
-    public var connectProfile: BrokerProfile?
     public var pendingDeletionProfileID: BrokerProfile.ID?
+    public var credentialStatuses: [BrokerProfile.ID: CredentialStatus]
+    public var credentialPrompt: CredentialPromptState?
+    public var credentialError: CredentialPresentationError?
+    public var connectReady: ConnectReadyState?
+    var pendingConnectRequest: PendingCredentialRequest?
+    var pendingCredentialDeletionRequest: PendingCredentialRequest?
+    var nextCredentialRequestID: UInt64
 
     public init(
       profiles: [RankedBrokerProfile] = [],
@@ -82,8 +135,11 @@ public enum ServerListFeature {
       hasLoaded: Bool = false,
       persistenceError: Bool = false,
       hasUnpersistedChanges: Bool = false,
-      connectProfile: BrokerProfile? = nil,
-      pendingDeletionProfileID: BrokerProfile.ID? = nil
+      pendingDeletionProfileID: BrokerProfile.ID? = nil,
+      credentialStatuses: [BrokerProfile.ID: CredentialStatus] = [:],
+      credentialPrompt: CredentialPromptState? = nil,
+      credentialError: CredentialPresentationError? = nil,
+      connectReady: ConnectReadyState? = nil
     ) {
       self.profiles = profiles
       self.selectedProfileID = selectedProfileID
@@ -92,8 +148,14 @@ public enum ServerListFeature {
       self.hasLoaded = hasLoaded
       self.persistenceError = persistenceError
       self.hasUnpersistedChanges = hasUnpersistedChanges
-      self.connectProfile = connectProfile
       self.pendingDeletionProfileID = pendingDeletionProfileID
+      self.credentialStatuses = credentialStatuses
+      self.credentialPrompt = credentialPrompt
+      self.credentialError = credentialError
+      self.connectReady = connectReady
+      self.pendingConnectRequest = nil
+      self.pendingCredentialDeletionRequest = nil
+      self.nextCredentialRequestID = 0
     }
   }
 
@@ -106,7 +168,9 @@ public enum ServerListFeature {
     case requestDeleteProfile(BrokerProfile.ID)
     case cancelDeleteProfile
     case confirmDeleteProfile
+    case confirmDeleteProfileAndCredential
     case deleteProfile(BrokerProfile.ID)
+    case deleteProfileAndCredential(BrokerProfile.ID)
     case moveProfile(BrokerProfile.ID, before: BrokerProfile.ID?)
     case setName(String)
     case setHost(String)
@@ -125,17 +189,42 @@ public enum ServerListFeature {
     case cancelEditor
     case saveEditor
     case connect(BrokerProfile.ID)
+    case submitCredential(TransientCredential)
+    case cancelCredentialPrompt
+    case dismissCredentialError
+    case consumeConnectReady(requestID: UInt64)
   }
 
   public enum Action: Sendable {
     case loaded(Result<[RankedBrokerProfile], ProfileRepositoryFailure>)
     case persisted(Result<Void, ProfileRepositoryFailure>)
+    case connectCredentialResolved(
+      profileID: BrokerProfile.ID,
+      requestID: UInt64,
+      Result<CredentialStatus, CredentialEffectFailure>
+    )
+    case credentialSaved(
+      profileID: BrokerProfile.ID,
+      requestID: UInt64,
+      Result<CredentialStatus, CredentialEffectFailure>
+    )
+    case credentialDeleted(
+      profileID: BrokerProfile.ID,
+      requestID: UInt64,
+      Result<CredentialStatus, CredentialEffectFailure>
+    )
   }
 
   public enum Effect: Equatable, Sendable {
     case loadProfiles
     case persistProfiles([RankedBrokerProfile])
-    case connect(BrokerProfile)
+    case checkCredential(BrokerProfile, requestID: UInt64)
+    case saveCredential(
+      profileID: BrokerProfile.ID,
+      requestID: UInt64,
+      TransientCredential
+    )
+    case deleteCredential(profileID: BrokerProfile.ID, requestID: UInt64)
   }
 
   public static func reduce(state: inout State, intent: Intent) -> Effect? {
@@ -195,8 +284,16 @@ public enum ServerListFeature {
       state.pendingDeletionProfileID = nil
       return deleteProfile(id, from: &state)
 
+    case .confirmDeleteProfileAndCredential:
+      guard let id = state.pendingDeletionProfileID else { return nil }
+      return beginProfileAndCredentialDeletion(id, in: &state)
+
     case .deleteProfile(let id):
       return deleteProfile(id, from: &state)
+
+    case .deleteProfileAndCredential(let id):
+      guard state.profiles.contains(where: { $0.id == id }) else { return nil }
+      return beginProfileAndCredentialDeletion(id, in: &state)
 
     case .moveProfile(let id, let beforeID):
       guard let sourceIndex = state.profiles.firstIndex(where: { $0.id == id }) else {
@@ -316,14 +413,56 @@ public enum ServerListFeature {
         state.editor?.validationIssues = issues
         return nil
       }
-      state.connectProfile = profile
-      return .connect(profile)
+      let requestID = nextCredentialRequestID(in: &state)
+      state.connectReady = nil
+      state.credentialPrompt = nil
+      state.credentialError = nil
+      guard profile.username != nil else {
+        state.pendingConnectRequest = nil
+        state.connectReady = ConnectReadyState(
+          profile: profile,
+          credentialRevision: 0,
+          requestID: requestID
+        )
+        return nil
+      }
+      state.pendingConnectRequest = PendingCredentialRequest(
+        profileID: id,
+        requestID: requestID
+      )
+      return .checkCredential(profile, requestID: requestID)
+
+    case .submitCredential(let credential):
+      guard var prompt = state.credentialPrompt, !prompt.isSaving else {
+        return nil
+      }
+      prompt.isSaving = true
+      state.credentialPrompt = prompt
+      state.credentialError = nil
+      return .saveCredential(
+        profileID: prompt.profileID,
+        requestID: prompt.requestID,
+        credential
+      )
+
+    case .cancelCredentialPrompt:
+      state.credentialPrompt = nil
+      state.pendingConnectRequest = nil
+      state.credentialError = nil
+
+    case .dismissCredentialError:
+      state.credentialError = nil
+
+    case .consumeConnectReady(let requestID):
+      guard state.connectReady?.requestID == requestID else { return nil }
+      state.connectReady = nil
     }
 
     return nil
   }
 
-  public static func reduce(state: inout State, action: Action) {
+  @discardableResult
+  public static func reduce(state: inout State, action: Action) -> Effect? {
     switch action {
     case .loaded(.success(let profiles)):
       state.profiles = profiles
@@ -343,7 +482,102 @@ public enum ServerListFeature {
     case .persisted(.failure):
       state.persistenceError = true
       state.hasUnpersistedChanges = true
+
+    case .connectCredentialResolved(
+      let profileID,
+      let requestID,
+      .success(let status)
+    ):
+      guard
+        state.pendingConnectRequest
+          == PendingCredentialRequest(profileID: profileID, requestID: requestID),
+        let profile = state.profiles.first(where: { $0.id == profileID })?.profile
+      else { return nil }
+      state.pendingConnectRequest = nil
+      state.credentialStatuses[profileID] = status
+      switch status.availability {
+      case .available:
+        state.connectReady = ConnectReadyState(
+          profile: profile,
+          credentialRevision: status.revision,
+          requestID: requestID
+        )
+      case .missing:
+        state.credentialPrompt = CredentialPromptState(
+          profileID: profileID,
+          profileName: profile.name,
+          requestID: requestID
+        )
+      }
+
+    case .connectCredentialResolved(
+      let profileID,
+      let requestID,
+      .failure(let failure)
+    ):
+      guard
+        state.pendingConnectRequest
+          == PendingCredentialRequest(profileID: profileID, requestID: requestID)
+      else { return nil }
+      state.pendingConnectRequest = nil
+      state.credentialError = presentationError(for: failure)
+
+    case .credentialSaved(
+      let profileID,
+      let requestID,
+      .success(let status)
+    ):
+      guard
+        state.credentialPrompt?.profileID == profileID,
+        state.credentialPrompt?.requestID == requestID,
+        let profile = state.profiles.first(where: { $0.id == profileID })?.profile
+      else { return nil }
+      state.credentialStatuses[profileID] = status
+      state.credentialPrompt = nil
+      state.connectReady = ConnectReadyState(
+        profile: profile,
+        credentialRevision: status.revision,
+        requestID: requestID
+      )
+
+    case .credentialSaved(
+      let profileID,
+      let requestID,
+      .failure(let failure)
+    ):
+      guard
+        state.credentialPrompt?.profileID == profileID,
+        state.credentialPrompt?.requestID == requestID
+      else { return nil }
+      state.credentialPrompt?.isSaving = false
+      state.credentialError = presentationError(for: failure)
+
+    case .credentialDeleted(
+      let profileID,
+      let requestID,
+      .success(let status)
+    ):
+      guard
+        state.pendingCredentialDeletionRequest
+          == PendingCredentialRequest(profileID: profileID, requestID: requestID)
+      else { return nil }
+      state.pendingCredentialDeletionRequest = nil
+      state.credentialStatuses[profileID] = status
+      return deleteProfile(profileID, from: &state)
+
+    case .credentialDeleted(
+      let profileID,
+      let requestID,
+      .failure(let failure)
+    ):
+      guard
+        state.pendingCredentialDeletionRequest
+          == PendingCredentialRequest(profileID: profileID, requestID: requestID)
+      else { return nil }
+      state.pendingCredentialDeletionRequest = nil
+      state.credentialError = presentationError(for: failure)
     }
+    return nil
   }
 
   private static func updateSubscription(
@@ -372,18 +606,60 @@ public enum ServerListFeature {
     (profiles.map(\.reorderRank).max() ?? 0) + 1_024
   }
 
+  private static func nextCredentialRequestID(in state: inout State) -> UInt64 {
+    state.nextCredentialRequestID &+= 1
+    return state.nextCredentialRequestID
+  }
+
+  private static func presentationError(
+    for failure: CredentialEffectFailure
+  ) -> CredentialPresentationError {
+    switch failure {
+    case .cancelled: .cancelled
+    case .denied: .denied
+    case .unavailable: .unavailable
+    }
+  }
+
   private static func deleteProfile(
     _ id: BrokerProfile.ID,
     from state: inout State
   ) -> Effect {
+    if state.pendingDeletionProfileID == id {
+      state.pendingDeletionProfileID = nil
+    }
     state.profiles.removeAll { $0.id == id }
     state.profiles = normalizedRanks(state.profiles)
     if state.selectedProfileID == id {
       state.selectedProfileID = state.profiles.first?.id
     }
     state.hasUnpersistedChanges = true
+    state.credentialStatuses[id] = nil
+    if state.connectReady?.profile.id == id {
+      state.connectReady = nil
+    }
     return .persistProfiles(state.profiles)
   }
+
+  private static func beginProfileAndCredentialDeletion(
+    _ id: BrokerProfile.ID,
+    in state: inout State
+  ) -> Effect {
+    if state.pendingDeletionProfileID == id {
+      state.pendingDeletionProfileID = nil
+    }
+    let requestID = nextCredentialRequestID(in: &state)
+    state.pendingCredentialDeletionRequest = PendingCredentialRequest(
+      profileID: id,
+      requestID: requestID
+    )
+    return .deleteCredential(profileID: id, requestID: requestID)
+  }
+}
+
+struct PendingCredentialRequest: Equatable, Sendable {
+  let profileID: BrokerProfile.ID
+  let requestID: UInt64
 }
 
 public struct ProfileRepositoryFailure: Error, Equatable, Sendable {
@@ -416,15 +692,18 @@ public final class ServerListStore {
   public private(set) var state: ServerListFeature.State
 
   private let repository: any ProfileRepositoryProtocol
+  private let credentialRepository: any CredentialRepositoryProtocol
   private var persistenceTail: Task<Result<Void, ProfileRepositoryFailure>, Never>?
   private var pendingPersistenceCount = 0
 
   public init(
     initialState: ServerListFeature.State = .init(),
-    repository: any ProfileRepositoryProtocol
+    repository: any ProfileRepositoryProtocol,
+    credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared
   ) {
     self.state = initialState
     self.repository = repository
+    self.credentialRepository = credentialRepository
   }
 
   public func send(_ intent: ServerListFeature.Intent) async {
@@ -432,16 +711,20 @@ public final class ServerListStore {
       return
     }
 
+    await execute(effect)
+  }
+
+  private func execute(_ effect: ServerListFeature.Effect) async {
     switch effect {
     case .loadProfiles:
       do {
         let profiles = try await repository.load()
-        ServerListFeature.reduce(
+        _ = ServerListFeature.reduce(
           state: &state,
           action: .loaded(.success(profiles))
         )
       } catch {
-        ServerListFeature.reduce(
+        _ = ServerListFeature.reduce(
           state: &state,
           action: .loaded(.failure(ProfileRepositoryFailure()))
         )
@@ -468,12 +751,12 @@ public final class ServerListStore {
 
       switch result {
       case .success where pendingPersistenceCount == 0:
-        ServerListFeature.reduce(
+        _ = ServerListFeature.reduce(
           state: &state,
           action: .persisted(.success(()))
         )
       case .failure:
-        ServerListFeature.reduce(
+        _ = ServerListFeature.reduce(
           state: &state,
           action: .persisted(.failure(ProfileRepositoryFailure()))
         )
@@ -481,8 +764,82 @@ public final class ServerListStore {
         break
       }
 
-    case .connect:
-      break
+    case .checkCredential(let profile, let requestID):
+      let result: Result<CredentialStatus, CredentialEffectFailure>
+      do {
+        try Task.checkCancellation()
+        let status = try await credentialRepository.status(for: profile.id)
+        try Task.checkCancellation()
+        result = .success(status)
+      } catch {
+        result = .failure(credentialFailure(for: error))
+      }
+      _ = ServerListFeature.reduce(
+        state: &state,
+        action: .connectCredentialResolved(
+          profileID: profile.id,
+          requestID: requestID,
+          result
+        )
+      )
+
+    case .saveCredential(let profileID, let requestID, let credential):
+      let result: Result<CredentialStatus, CredentialEffectFailure>
+      do {
+        try Task.checkCancellation()
+        let status = try await credentialRepository.save(
+          credential,
+          for: profileID
+        )
+        result = .success(status)
+      } catch {
+        result = .failure(credentialFailure(for: error))
+      }
+      _ = ServerListFeature.reduce(
+        state: &state,
+        action: .credentialSaved(
+          profileID: profileID,
+          requestID: requestID,
+          result
+        )
+      )
+
+    case .deleteCredential(let profileID, let requestID):
+      let result: Result<CredentialStatus, CredentialEffectFailure>
+      do {
+        try Task.checkCancellation()
+        let status = try await credentialRepository.delete(for: profileID)
+        result = .success(status)
+      } catch {
+        result = .failure(credentialFailure(for: error))
+      }
+      if let followUp = ServerListFeature.reduce(
+        state: &state,
+        action: .credentialDeleted(
+          profileID: profileID,
+          requestID: requestID,
+          result
+        )
+      ) {
+        await execute(followUp)
+      }
+    }
+  }
+
+  private func credentialFailure(for error: any Error) -> CredentialEffectFailure {
+    if error is CancellationError {
+      return .cancelled
+    }
+    guard let error = error as? CredentialRepositoryError else {
+      return .unavailable
+    }
+    switch error {
+    case .cancelled:
+      return .cancelled
+    case .denied:
+      return .denied
+    case .missing, .staleRevision, .keychainFailure, .revisionOverflow:
+      return .unavailable
     }
   }
 
@@ -634,6 +991,24 @@ public final class ServerListStore {
     set {
       if !newValue {
         sendImmediately(.cancelDeleteProfile)
+      }
+    }
+  }
+
+  public var credentialPromptPresented: Bool {
+    get { state.credentialPrompt != nil }
+    set {
+      if !newValue {
+        sendImmediately(.cancelCredentialPrompt)
+      }
+    }
+  }
+
+  public var credentialErrorPresented: Bool {
+    get { state.credentialError != nil }
+    set {
+      if !newValue {
+        sendImmediately(.dismissCredentialError)
       }
     }
   }
