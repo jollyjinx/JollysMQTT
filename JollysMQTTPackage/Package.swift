@@ -92,7 +92,11 @@ let package = Package(
         ),
         .testTarget(
             name: "JollysMQTTTests",
-            dependencies: ["JollysMQTT"],
+            dependencies: [
+                "JollysMQTT",
+                "JollysMQTTCore",
+                "JollysMQTTStorage",
+            ],
             swiftSettings: strictSwiftSettings
         ),
     ],

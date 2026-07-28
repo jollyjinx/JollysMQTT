@@ -1,14 +1,182 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Broker profiles will appear here." : {
+    "Add Broker" : {
+      "comment" : "Toolbar action that creates a broker profile."
+    },
+    "Add Subscription" : {
+      "comment" : "Action that adds an MQTT subscription filter."
+    },
+    "Add a broker profile to get started." : {
       "comment" : "Description on the initial empty broker-list screen."
+    },
+    "Adds an enabled topic filter at QoS 0." : {
+      "comment" : "Accessibility hint for adding a subscription filter."
+    },
+    "Advanced Settings" : {
+      "comment" : "Disclosure label for uncommon profile settings."
+    },
+    "Authentication" : {
+      "comment" : "Header for broker authentication settings."
+    },
+    "Automatic Reconnect" : {
+      "comment" : "Toggle controlling automatic reconnect attempts."
+    },
+    "Broad subscriptions can be expensive on production brokers." : {
+      "comment" : "Warning about default wildcard MQTT subscriptions."
+    },
+    "Broker Profile" : {
+      "comment" : "Title of the broker profile editor."
+    },
+    "Cancel" : {
+      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving."
+    },
+    "Clean Session" : {
+      "comment" : "Toggle controlling MQTT clean-session behavior."
+    },
+    "Client ID" : {
+      "comment" : "Label for the MQTT client identifier policy."
+    },
+    "Connect" : {
+      "comment" : "Primary action that connects to a selected broker."
+    },
+    "Connection" : {
+      "comment" : "Header for common broker endpoint settings."
+    },
+    "Delete" : {
+      "comment" : "Context action that requests broker profile deletion.\nDestructive action that deletes a broker profile."
+    },
+    "Delete Broker?" : {
+      "comment" : "Title confirming deletion of a broker profile."
+    },
+    "Duplicate" : {
+      "comment" : "Context action that duplicates a broker profile."
+    },
+    "Edit" : {
+      "comment" : "Action that edits the selected broker profile.\nContext action that edits a broker profile."
+    },
+    "Enable at least one unique, valid subscription filter." : {
+      "comment" : "Validation error for MQTT subscriptions."
+    },
+    "Enabled" : {
+      "comment" : "Toggle enabling an MQTT subscription filter."
+    },
+    "Enables drag handles for reordering broker profiles." : {
+      "comment" : "Accessibility hint for editing broker list order."
+    },
+    "Enter a port from 1 through 65535." : {
+      "comment" : "Validation error for an invalid broker port."
+    },
+    "Enter a profile name." : {
+      "comment" : "Validation error for a missing broker profile name."
+    },
+    "Enter a valid broker host." : {
+      "comment" : "Validation error for an invalid broker host."
+    },
+    "Enter a valid client ID." : {
+      "comment" : "Validation error for an invalid MQTT client identifier."
+    },
+    "Enter a valid keepalive interval." : {
+      "comment" : "Validation error for MQTT keepalive."
+    },
+    "Enter a valid username." : {
+      "comment" : "Validation error for an invalid MQTT username."
+    },
+    "Explicit" : {
+      "comment" : "Client ID mode entered by the user."
+    },
+    "Explicit Client ID" : {
+      "comment" : "Label for a fixed MQTT client identifier."
+    },
+    "Fix Before Saving" : {
+      "comment" : "Header for broker profile validation errors."
+    },
+    "Home Broker" : {
+      "comment" : "Example placeholder for a broker display name."
+    },
+    "Host" : {
+      "comment" : "Label for the broker host name or IP address."
+    },
+    "Initial delay: %lld seconds" : {
+      "comment" : "Reconnect initial delay. The variable is a number of seconds."
     },
     "JollysMQTT" : {
       "comment" : "Application title shown in navigation chrome."
     },
+    "Keepalive: %lld seconds" : {
+      "comment" : "MQTT keepalive value. The variable is a number of seconds."
+    },
+    "Loading broker profiles" : {
+      "comment" : "Accessibility label for profile loading progress."
+    },
+    "Maximum delay: %lld seconds" : {
+      "comment" : "Reconnect maximum delay. The variable is a number of seconds."
+    },
+    "Name" : {
+      "comment" : "Label for a broker profile display name."
+    },
     "No Brokers" : {
       "comment" : "Title of the initial empty broker-list screen."
+    },
+    "Opens the broker profile editor." : {
+      "comment" : "Accessibility hint for the add broker action."
+    },
+    "Passwords are stored separately on this device." : {
+      "comment" : "Explains that secret material is outside the profile editor model."
+    },
+    "Persistent sessions require a stable client ID." : {
+      "comment" : "Validation error for incompatible MQTT session settings."
+    },
+    "Port" : {
+      "comment" : "Label for the broker network port."
+    },
+    "Profile changes could not be saved." : {
+      "comment" : "Error shown when local profile persistence fails."
+    },
+    "QoS" : {
+      "comment" : "Label for MQTT requested quality of service."
+    },
+    "Random per Connection" : {
+      "comment" : "Client ID mode that creates an ID for every clean connection."
+    },
+    "Remove" : {
+      "comment" : "Action that removes an MQTT subscription filter."
+    },
+    "Removes this topic filter from the profile." : {
+      "comment" : "Accessibility hint for removing a subscription filter."
+    },
+    "Save" : {
+      "comment" : "Action that validates and saves a broker profile."
+    },
+    "Saving profile changes…" : {
+      "comment" : "Status shown while local profile changes are not yet durable."
+    },
+    "Stable Generated" : {
+      "comment" : "Client ID mode derived stably for the installation and profile."
+    },
+    "Subscriptions" : {
+      "comment" : "Header for MQTT subscription filters."
+    },
+    "TCP" : {
+      "comment" : "Unencrypted TCP broker transport."
+    },
+    "TLS" : {
+      "comment" : "System-trust TLS broker transport."
+    },
+    "The broker profile “%@” will be removed. Credentials are managed separately." : {
+      "comment" : "Deletion warning. The variable is the broker profile name."
+    },
+    "The reconnect delays are incompatible." : {
+      "comment" : "Validation error for reconnect delay settings."
+    },
+    "Topic Filter" : {
+      "comment" : "Label for an MQTT subscription topic filter."
+    },
+    "Transport" : {
+      "comment" : "Label for the broker transport picker."
+    },
+    "Username" : {
+      "comment" : "Label for the optional MQTT username."
     }
   },
   "version" : "1.0"
