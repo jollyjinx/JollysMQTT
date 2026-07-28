@@ -23,6 +23,10 @@ let package = Package(
             name: "JollysMQTTOverloadProbe",
             targets: ["JollysMQTTOverloadProbe"]
         ),
+        .executable(
+            name: "JollysMQTTStorageProbe",
+            targets: ["JollysMQTTStorageProbe"]
+        ),
     ],
     dependencies: [
         .package(
@@ -63,6 +67,11 @@ let package = Package(
             name: "JollysMQTTOverloadProbe",
             dependencies: ["JollysMQTTTransport"],
             resources: [.copy("Resources")],
+            swiftSettings: strictSwiftSettings
+        ),
+        .executableTarget(
+            name: "JollysMQTTStorageProbe",
+            dependencies: ["JollysMQTTStorage"],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(

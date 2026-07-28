@@ -1,0 +1,171 @@
+import Foundation
+
+public struct HistoryMessageInput: Sendable, Equatable {
+  public let historySourceID: String
+  public let topic: String
+  public let receivedAtMicroseconds: Int64
+  public let payload: Data
+
+  public init(
+    historySourceID: String,
+    topic: String,
+    receivedAtMicroseconds: Int64,
+    payload: Data
+  ) {
+    self.historySourceID = historySourceID
+    self.topic = topic
+    self.receivedAtMicroseconds = receivedAtMicroseconds
+    self.payload = payload
+  }
+}
+
+public struct StoredHistoryMessage: Sendable, Equatable {
+  public let durableOrder: Int64
+  public let historySourceID: String
+  public let topic: String
+  public let receivedAtMicroseconds: Int64
+  public let payload: Data
+}
+
+public struct HistoryAppendResult: Sendable, Equatable {
+  public let insertedCount: Int
+  public let firstDurableOrder: Int64?
+  public let lastDurableOrder: Int64?
+}
+
+public struct HistoryPruneResult: Sendable, Equatable {
+  public let deletedCount: Int
+  public let remainingCount: Int
+
+  public init(deletedCount: Int, remainingCount: Int) {
+    self.deletedCount = deletedCount
+    self.remainingCount = remainingCount
+  }
+}
+
+public enum HistoryCheckpointMode: Sendable {
+  case passive
+  case truncate
+}
+
+public struct HistoryCheckpointResult: Sendable, Equatable {
+  public let wasBusy: Bool
+  public let writeAheadLogFrameCount: Int
+  public let checkpointedFrameCount: Int
+}
+
+public enum HistoryAutoVacuumMode: Int32, Sendable {
+  case none = 0
+  case full = 1
+  case incremental = 2
+}
+
+public struct HistoryFileSizes: Sendable, Equatable {
+  public let databaseBytes: Int64
+  public let writeAheadLogBytes: Int64
+  public let sharedMemoryBytes: Int64
+
+  public static func measure(databaseURL: URL) -> HistoryFileSizes {
+    func size(of role: HistoryFileRole) -> Int64 {
+      guard
+        let size = try? FileManager.default.attributesOfItem(
+          atPath: role.url(for: databaseURL).path
+        )[.size] as? NSNumber
+      else {
+        return 0
+      }
+      return size.int64Value
+    }
+
+    return HistoryFileSizes(
+      databaseBytes: size(of: .database),
+      writeAheadLogBytes: size(of: .writeAheadLog),
+      sharedMemoryBytes: size(of: .sharedMemory)
+    )
+  }
+
+  public var totalSQLiteBytes: Int64 {
+    databaseBytes + writeAheadLogBytes + sharedMemoryBytes
+  }
+}
+
+public struct HistoryStoreDiagnostics: Sendable, Equatable {
+  public let schemaVersion: Int
+  public let journalMode: String
+  public let messageCount: Int
+  public let topicCount: Int
+  public let orphanTopicCount: Int
+  public let databaseBytes: Int64
+  public let writeAheadLogBytes: Int64
+  public let sharedMemoryBytes: Int64
+  public let autoVacuumMode: HistoryAutoVacuumMode
+  public let pageSizeBytes: Int
+  public let pageCount: Int
+  public let freePageCount: Int
+
+  public var totalSQLiteBytes: Int64 {
+    databaseBytes + writeAheadLogBytes + sharedMemoryBytes
+  }
+}
+
+public struct HistorySizePruneResult: Sendable, Equatable {
+  public let deletedCount: Int
+  public let deletedTopicCount: Int
+  public let remainingCount: Int
+  public let remainingOrphanTopicCount: Int
+  public let remainingFreePageCount: Int
+  public let targetBytes: Int64
+  public let bytesBefore: Int64
+  public let bytesAfter: Int64
+
+  public var targetReached: Bool {
+    bytesAfter <= targetBytes
+  }
+
+  public var requiresMorePruning: Bool {
+    targetReached == false
+      && (remainingCount > 0 || remainingOrphanTopicCount > 0
+        || remainingFreePageCount > 0)
+  }
+}
+
+public enum InvalidHistoryMessageReason: Sendable, Equatable {
+  case emptyHistorySourceID
+  case emptyTopic
+  case containsNullCharacter
+  case payloadTooLarge(byteCount: Int)
+}
+
+public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvertible {
+  case invalidDatabaseURL
+  case invalidLimit(Int)
+  case invalidRetention(keepingNewest: Int, batchLimit: Int)
+  case invalidSizeRetention(
+    maximumBytes: Int64,
+    batchLimit: Int,
+    vacuumPageLimit: Int
+  )
+  case invalidMessage(index: Int, reason: InvalidHistoryMessageReason)
+  case sqlite(code: Int32, operation: String, message: String)
+
+  public var description: String {
+    switch self {
+    case .invalidDatabaseURL:
+      "History database URL must be a file URL."
+    case .invalidLimit(let limit):
+      "History query limit \(limit) is outside the supported range."
+    case .invalidRetention(let keepingNewest, let batchLimit):
+      "History retention values are invalid: keepingNewest=\(keepingNewest), batchLimit=\(batchLimit)."
+    case .invalidSizeRetention(
+      let maximumBytes,
+      let batchLimit,
+      let vacuumPageLimit
+    ):
+      "History size retention values are invalid: maximumBytes=\(maximumBytes), batchLimit=\(batchLimit), vacuumPageLimit=\(vacuumPageLimit)."
+    case .invalidMessage(let index, let reason):
+      "History message at index \(index) is invalid: \(reason)."
+    case .sqlite(let code, let operation, let message):
+      "SQLite \(operation) failed with code \(code): \(message)"
+    }
+  }
+}
