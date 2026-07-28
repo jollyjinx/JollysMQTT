@@ -20,6 +20,12 @@ let package = Package(
         .library(name: "JollysMQTTStorage", targets: ["JollysMQTTStorage"]),
         .library(name: "JollysMQTT", targets: ["JollysMQTT"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/swift-server-community/mqtt-nio.git",
+            exact: "3.0.0-alpha.2"
+        ),
+    ],
     targets: [
         .systemLibrary(name: "CSQLite"),
         .target(
@@ -28,7 +34,10 @@ let package = Package(
         ),
         .target(
             name: "JollysMQTTTransport",
-            dependencies: ["JollysMQTTCore"],
+            dependencies: [
+                "JollysMQTTCore",
+                .product(name: "MQTTNIO", package: "mqtt-nio"),
+            ],
             swiftSettings: strictSwiftSettings
         ),
         .target(
@@ -54,6 +63,7 @@ let package = Package(
         .testTarget(
             name: "JollysMQTTTransportTests",
             dependencies: ["JollysMQTTTransport"],
+            resources: [.copy("Fixtures")],
             swiftSettings: strictSwiftSettings
         ),
         .testTarget(
