@@ -60,6 +60,13 @@ public actor SQLiteHistoryStore {
       database: connection,
       filePolicy: filePolicy
     )
+    // Protect the newly created database before schema configuration writes
+    // anything to it. Refresh again after WAL setup so both sidecars receive
+    // the same policy.
+    try await filePolicy.apply(
+      to: databaseURL,
+      role: .database
+    )
     try await store.configureAndMigrate()
     try await store.refreshFilePolicy()
     return store

@@ -25,6 +25,47 @@ struct WorkspaceFeatureTests {
     #expect(effect == .save(first.record))
   }
 
+  @Test("Deleting a broker scrubs its private workspace presentation")
+  func brokerDeletionScrubsPrivateWorkspacePresentation() {
+    let deletedBrokerID = UUID()
+    let fallbackBrokerID = UUID()
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .connected(profileID: deletedBrokerID),
+        selectedProfileID: deletedBrokerID,
+        selectedTopic: "private/site/temperature",
+        expandedTopics: ["private", "private/site"],
+        topicSearchText: "customer-secret",
+        numericChartDashboard: NumericChartDashboardConfiguration(
+          cards: [
+            numericChartCard(
+              brokerID: deletedBrokerID,
+              topic: "private/site/temperature"
+            )
+          ]
+        )
+      ),
+      isLoaded: true
+    )
+
+    let effect = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .profileDeleted(
+        profileID: deletedBrokerID,
+        fallbackSelection: fallbackBrokerID
+      )
+    )
+
+    #expect(state.record.route == .serverList)
+    #expect(state.record.selectedProfileID == fallbackBrokerID)
+    #expect(state.record.selectedTopic == nil)
+    #expect(state.record.expandedTopics.isEmpty)
+    #expect(state.record.topicSearchText.isEmpty)
+    #expect(state.record.numericChartDashboard.cards.isEmpty)
+    #expect(effect == .save(state.record))
+  }
+
   @Test("Pinning one chart persists it and changing brokers clears that broker-specific series")
   func chartConfigurationFollowsBrokerIdentity() {
     let firstBroker = UUID()
@@ -583,6 +624,69 @@ struct WorkspaceFeatureTests {
     #expect(restoredFirst.workspace.state.record.selectedTopic == "first/topic")
     #expect(restoredSecond.workspace.state.record.route == .serverList)
     #expect(restoredSecond.selectedProfileID == secondProfile.id)
+  }
+
+  @Test("Relaunch scrubs private presentation for a profile deleted by another replica")
+  @MainActor
+  func staleRestoredProfileIsScrubbedAndPersisted() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let staleProfileID = UUID()
+    let fallback = workspaceRankedProfile(name: "Available", rank: 1)
+    let profileRepository = LocalProfileRepository(
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceFeatureTestInstallationID
+    )
+    try await profileRepository.replaceAll([fallback])
+    let workspaceRepository = LocalWorkspaceRepository(
+      directoryURL: directory.appending(
+        path: "workspaces",
+        directoryHint: .isDirectory
+      )
+    )
+    let workspaceID = WorkspaceID()
+    try await workspaceRepository.save(
+      WorkspaceRecord(
+        id: workspaceID,
+        route: .connected(profileID: staleProfileID),
+        selectedProfileID: staleProfileID,
+        selectedTopic: "private/site/temperature",
+        expandedTopics: ["private", "private/site"],
+        topicSearchText: "customer-secret",
+        numericChartDashboard: NumericChartDashboardConfiguration(
+          cards: [
+            numericChartCard(
+              brokerID: staleProfileID,
+              topic: "private/site/temperature"
+            )
+          ]
+        )
+      )
+    )
+
+    let scene = JollysMQTTAppDependencies(
+      profileRepository: profileRepository,
+      workspaceRepository: workspaceRepository
+    ).makeSceneStore(id: workspaceID)
+    await scene.start()
+
+    #expect(scene.workspace.state.record.route == .serverList)
+    #expect(scene.selectedProfileID == fallback.id)
+    #expect(scene.workspace.state.record.selectedTopic == nil)
+    #expect(scene.workspace.state.record.expandedTopics.isEmpty)
+    #expect(scene.workspace.state.record.topicSearchText.isEmpty)
+    #expect(scene.workspace.state.record.numericChartDashboard.cards.isEmpty)
+    #expect(scene.topics.state.searchText.isEmpty)
+    #expect(scene.numericChartDashboard.state.configuration.cards.isEmpty)
+
+    let persisted = try await workspaceRepository.load(id: workspaceID)
+    #expect(persisted.route == .serverList)
+    #expect(persisted.selectedProfileID == fallback.id)
+    #expect(persisted.selectedTopic == nil)
+    #expect(persisted.expandedTopics.isEmpty)
+    #expect(persisted.topicSearchText.isEmpty)
+    #expect(persisted.numericChartDashboard.cards.isEmpty)
   }
 
   @Test("Committed profile deletion synchronizes scene selection and maintenance context")

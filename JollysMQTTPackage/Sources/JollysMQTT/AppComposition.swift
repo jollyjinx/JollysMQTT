@@ -260,7 +260,12 @@ public struct JollysMQTTAppDependencies: Sendable {
       brokerFeedGenerationCoordinator: registry,
       historyRepositoryProvider: historyRepositoryProvider,
       historyMaintenanceProvider: historyMaintenanceProvider,
-      historyRetentionSettings: historyRetentionSettings
+      historyRetentionSettings: historyRetentionSettings,
+      deletionCleanupJournal: LocalBrokerDeletionCleanupJournal(
+        fileURL: root.appending(
+          path: "pending-broker-deletion-cleanup.json"
+        )
+      )
     )
   }()
 
@@ -274,6 +279,7 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let historyRepositoryProvider: BrokerHistoryRepositoryProvider
   public let historyMaintenanceProvider: BrokerHistoryMaintenanceProvider
   public let historyRetentionSettings: any HistoryRetentionSettingsRepositoryProtocol
+  let deletionCleanupJournal: any BrokerDeletionCleanupJournaling
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
@@ -291,7 +297,10 @@ public struct JollysMQTTAppDependencies: Sendable {
       BrokerHistoryMaintenanceProvider = .empty,
     historyRetentionSettings:
       any HistoryRetentionSettingsRepositoryProtocol =
-      MemoryHistoryRetentionSettingsRepository()
+      MemoryHistoryRetentionSettingsRepository(),
+    deletionCleanupJournal:
+      any BrokerDeletionCleanupJournaling =
+      MemoryBrokerDeletionCleanupJournal()
   ) {
     self.profileRepository = profileRepository
     self.profileSynchronizingRepository =
@@ -307,6 +316,7 @@ public struct JollysMQTTAppDependencies: Sendable {
     self.historyRepositoryProvider = historyRepositoryProvider
     self.historyMaintenanceProvider = historyMaintenanceProvider
     self.historyRetentionSettings = historyRetentionSettings
+    self.deletionCleanupJournal = deletionCleanupJournal
   }
 
   @MainActor
@@ -402,7 +412,9 @@ public final class WorkspaceSceneStore {
       historyMaintenanceProvider:
         dependencies.historyMaintenanceProvider,
       historyRetentionSettings:
-        dependencies.historyRetentionSettings
+        dependencies.historyRetentionSettings,
+      deletionCleanupJournal:
+        dependencies.deletionCleanupJournal
     )
     self.serverList = serverList
     self.workspaceRepository = dependencies.workspaceRepository
@@ -574,6 +586,45 @@ public final class WorkspaceSceneStore {
     serverList.sendImmediately(.select(restoredSelection))
     await serverList.send(.load)
 
+    let staleProfileID: UUID? =
+      switch workspace.state.record.route {
+      case .connected(let profileID)
+      where !serverList.state.profiles.contains(where: {
+        $0.id == profileID
+      }):
+        profileID
+      default:
+        if let restoredSelection,
+          !serverList.state.profiles.contains(where: {
+            $0.id == restoredSelection
+          })
+        {
+          restoredSelection
+        } else {
+          nil
+        }
+      }
+    if let staleProfileID {
+      let fallbackSelection = serverList.state.selectedProfileID
+      workspace.sendImmediately(
+        .profileDeleted(
+          profileID: staleProfileID,
+          fallbackSelection: fallbackSelection
+        )
+      )
+      topics.restorePresentation(
+        selectedTopic: nil,
+        expandedTopics: [],
+        searchText: "",
+        sortMode: workspace.state.record.topicSortMode,
+        expectedBrokerID: nil
+      )
+      numericChartDashboard.restore(.init())
+      serverList.sendImmediately(.select(fallbackSelection))
+      updateHistoryMaintenanceBrokerContext(fallbackSelection)
+      await workspace.flush()
+    }
+
     if !workspace.state.persistenceError,
       case .serverList = workspace.state.record.route
     {
@@ -700,7 +751,20 @@ public final class WorkspaceSceneStore {
   ) {
     guard outcome.profile == .removed else { return }
     let selection = serverList.state.selectedProfileID
+    workspace.sendImmediately(
+      .profileDeleted(
+        profileID: outcome.profileID,
+        fallbackSelection: selection
+      )
+    )
     selectedProfileID = selection
+    topics.restorePresentation(
+      selectedTopic: nil,
+      expandedTopics: [],
+      searchText: "",
+      sortMode: workspace.state.record.topicSortMode,
+      expectedBrokerID: nil
+    )
     numericChartDashboard.restore(
       workspace.state.record.numericChartDashboard
     )

@@ -152,7 +152,16 @@ public actor LocalProfileRepository: ProfileReplicaRepositoryProtocol {
       let currentData = try? Data(contentsOf: fileURL),
       (try? readValidatedReplica(data: currentData)) != nil
     {
-      try currentData.write(to: backupURL, options: [.atomic])
+      // A stale backup containing a live profile must never be able to undo a
+      // committed deletion after primary-file corruption. Once the replica
+      // contains any permanent tombstone, keep the recovery copy at the same
+      // deletion-safe state. Non-deletion writes retain the prior-known-good
+      // rollback behavior.
+      let backupData =
+        replica.records.contains(where: { $0.tombstone != nil })
+        ? encoded
+        : currentData
+      try backupData.write(to: backupURL, options: [.atomic])
       wroteBackup = true
     } else if !fileManager.fileExists(atPath: backupURL.path) {
       try encoded.write(to: backupURL, options: [.atomic])

@@ -119,6 +119,37 @@ struct LocalProfileRepositoryTests {
     #expect(restoredPrimary == [original])
   }
 
+  @Test("A deletion tombstone survives primary corruption and backup recovery")
+  func deletedProfileCannotResurrectFromBackup() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let fileURL = directory.appending(path: "profiles.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let profileID = UUID()
+    let original = RankedBrokerProfile(
+      profile: fixtureProfile(id: profileID, name: "Delete Permanently"),
+      reorderRank: 10
+    )
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
+
+    try await repository.replaceAll([original])
+    try await repository.replaceAll([])
+    try Data("{corrupt-primary".utf8).write(to: fileURL)
+
+    let recovered = try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).loadReplica()
+
+    #expect(recovered.visibleProfiles.isEmpty)
+    #expect(recovered.records.count == 1)
+    #expect(recovered.records.first?.id == profileID)
+    #expect(recovered.records.first?.tombstone != nil)
+  }
+
   @Test("The first successful write immediately establishes a recovery backup")
   func firstWriteEstablishesBackup() async throws {
     let directory = FileManager.default.temporaryDirectory

@@ -1,11 +1,28 @@
 import Foundation
 import JollysMQTTCore
+import Logging
 import MQTTNIO
 import NIOCore
 import NIOTransportServices
 import Network
 import Security
 import Synchronization
+
+enum MQTTUpstreamLoggingPolicy: Equatable, Sendable {
+  case disabled
+}
+
+enum TLSTrustDiagnosticResult: Equatable, Sendable {
+  case accepted
+  case rejected
+  case inconclusive
+}
+
+private func makePrivacySafeMQTTLogger() -> Logger {
+  Logger(label: "eu.jinx.JollysMQTT.mqtt-nio") { _ in
+    SwiftLogNoOpLogHandler()
+  }
+}
 
 public struct MQTTBrokerEndpoint: Equatable, Sendable {
   public enum Security: Equatable, Sendable {
@@ -154,9 +171,14 @@ public struct MQTTInboundBoundaryPolicy: Equatable, Sendable {
 /// broker session to resume across reconnects in this process only.
 public final class MQTTInProcessSession: Sendable {
   let base: MQTTSession
+  let upstreamLoggingPolicy: MQTTUpstreamLoggingPolicy
 
   public init(clientID: String) {
-    self.base = MQTTSession(clientID: clientID)
+    self.upstreamLoggingPolicy = .disabled
+    self.base = MQTTSession(
+      clientID: clientID,
+      logger: makePrivacySafeMQTTLogger()
+    )
   }
 }
 
@@ -341,6 +363,8 @@ public struct MQTTTransportClient: Sendable {
   let connectTimeout: Duration
   let responseTimeout: Duration
   let testHooks: TestHooks
+  let upstreamLogger: Logger
+  let upstreamLoggingPolicy: MQTTUpstreamLoggingPolicy
 
   public init(
     connectTimeout: Duration = .seconds(10),
@@ -349,7 +373,8 @@ public struct MQTTTransportClient: Sendable {
     self.init(
       trustPolicy: .systemDefault,
       connectTimeout: connectTimeout,
-      responseTimeout: responseTimeout
+      responseTimeout: responseTimeout,
+      upstreamLogger: makePrivacySafeMQTTLogger()
     )
   }
 
@@ -357,12 +382,15 @@ public struct MQTTTransportClient: Sendable {
     trustPolicy: TLSTrustPolicy,
     connectTimeout: Duration = .seconds(10),
     responseTimeout: Duration = .seconds(10),
-    testHooks: TestHooks = .init()
+    testHooks: TestHooks = .init(),
+    upstreamLogger: Logger = makePrivacySafeMQTTLogger()
   ) {
     self.trustPolicy = trustPolicy
     self.connectTimeout = connectTimeout
     self.responseTimeout = responseTimeout
     self.testHooks = testHooks
+    self.upstreamLogger = upstreamLogger
+    self.upstreamLoggingPolicy = .disabled
   }
 
   static var usesAppleTransportServices: Bool {
@@ -399,7 +427,8 @@ public struct MQTTTransportClient: Sendable {
               keepAliveInterval: keepAliveInterval
             ),
             identifier: clientID,
-            eventLoop: NIOTSEventLoopGroup.singleton.any()
+            eventLoop: NIOTSEventLoopGroup.singleton.any(),
+            logger: upstreamLogger
           ) { connection in
             cancellationBridge.register(connection)
             defer { cancellationBridge.clear(connection) }
@@ -424,7 +453,8 @@ public struct MQTTTransportClient: Sendable {
               keepAliveInterval: keepAliveInterval
             ),
             session: session.base,
-            eventLoop: NIOTSEventLoopGroup.singleton.any()
+            eventLoop: NIOTSEventLoopGroup.singleton.any(),
+            logger: upstreamLogger
           ) { connection, resumedSession in
             cancellationBridge.register(connection)
             defer { cancellationBridge.clear(connection) }
@@ -446,9 +476,24 @@ public struct MQTTTransportClient: Sendable {
         if Task.isCancelled {
           throw CancellationError()
         }
+        // mqtt-nio alpha.2 can discard the NIOTS trust status and surface only
+        // an ambiguous channel close/timeout. Confirm trust independently
+        // before assigning the certificate-specific failure.
+        let diagnosedTrust: TLSTrustDiagnosticResult?
+        if endpoint.security.isTLS,
+          Self.isAmbiguousTLSConnectionFailure(error)
+        {
+          diagnosedTrust = await diagnoseTLSTrust(for: endpoint)
+          if Task.isCancelled {
+            throw CancellationError()
+          }
+        } else {
+          diagnosedTrust = nil
+        }
         throw Self.map(
           error,
-          tlsEnabled: endpoint.security.isTLS
+          tlsEnabled: endpoint.security.isTLS,
+          diagnosedTrust: diagnosedTrust
         )
       }
       return try operationResult.get()
@@ -513,10 +558,17 @@ public struct MQTTTransportClient: Sendable {
 
   static func map(
     _ error: any Error,
-    tlsEnabled: Bool
+    tlsEnabled: Bool,
+    diagnosedTrust: TLSTrustDiagnosticResult? = nil
   ) -> MQTTTransportFailure {
     if let transportFailure = error as? MQTTTransportFailure {
       return transportFailure
+    }
+    if tlsEnabled,
+      diagnosedTrust == .rejected,
+      isAmbiguousTLSConnectionFailure(error)
+    {
+      return .tlsTrustFailed
     }
     if tlsEnabled, isTLSTrustFailure(error) {
       return .tlsTrustFailed
@@ -581,19 +633,6 @@ public struct MQTTTransportClient: Sendable {
   }
 
   private static func isTLSTrustFailure(_ error: any Error) -> Bool {
-    // mqtt-nio alpha.2/NIOTS currently surfaces a failed TLS trust handshake
-    // as a channel close/connect timeout rather than preserving NWError.
-    // Restrict this compatibility mapping to TLS setup; ordinary TCP/DNS
-    // failures remain broker-availability failures.
-    if let channelError = error as? ChannelError {
-      switch channelError {
-      case .ioOnClosedChannel, .connectTimeout:
-        return true
-      default:
-        break
-      }
-    }
-
     if let networkError = error as? NWError,
       case .tls(let status) = networkError
     {
@@ -624,6 +663,177 @@ public struct MQTTTransportClient: Sendable {
       return isTLSTrustFailure(underlying)
     }
     return false
+  }
+
+  private static func isAmbiguousTLSConnectionFailure(
+    _ error: any Error
+  ) -> Bool {
+    if let channelError = error as? ChannelError {
+      switch channelError {
+      case .connectTimeout, .ioOnClosedChannel:
+        return true
+      default:
+        break
+      }
+    }
+
+    let nsError = error as NSError
+    if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? any Error {
+      return isAmbiguousTLSConnectionFailure(underlying)
+    }
+    return false
+  }
+
+  private func diagnoseTLSTrust(
+    for endpoint: MQTTBrokerEndpoint
+  ) async -> TLSTrustDiagnosticResult {
+    guard
+      case .systemTrustTLS(let configuredServerName) = endpoint.security,
+      let rawPort = UInt16(exactly: endpoint.port),
+      let port = NWEndpoint.Port(rawValue: rawPort)
+    else {
+      return .inconclusive
+    }
+
+    let resolution = TLSTrustDiagnosticResolution()
+    let verifyQueue = DispatchQueue(
+      label: "eu.jinx.JollysMQTT.tls-trust-diagnostic"
+    )
+    let tlsOptions = NWProtocolTLS.Options()
+    sec_protocol_options_set_min_tls_protocol_version(
+      tlsOptions.securityProtocolOptions,
+      .TLSv12
+    )
+    let serverName = configuredServerName ?? endpoint.host
+    serverName.withCString { pointer in
+      sec_protocol_options_set_tls_server_name(
+        tlsOptions.securityProtocolOptions,
+        pointer
+      )
+    }
+    sec_protocol_options_set_verify_block(
+      tlsOptions.securityProtocolOptions,
+      { _, secTrust, complete in
+        let trust = sec_trust_copy_ref(secTrust).takeRetainedValue()
+        guard configureTrustAnchors(trust, policy: trustPolicy) else {
+          resolution.resolve(.inconclusive)
+          complete(false)
+          return
+        }
+        SecTrustEvaluateAsyncWithError(
+          trust,
+          verifyQueue
+        ) { _, accepted, _ in
+          resolution.resolve(accepted ? .accepted : .rejected)
+          complete(accepted)
+        }
+      },
+      verifyQueue
+    )
+
+    let connection = NWConnection(
+      host: NWEndpoint.Host(endpoint.host),
+      port: port,
+      using: NWParameters(tls: tlsOptions)
+    )
+    connection.stateUpdateHandler = { state in
+      switch state {
+      case .failed, .cancelled:
+        resolution.resolve(.inconclusive)
+      default:
+        break
+      }
+    }
+
+    let diagnosticTimeout = min(connectTimeout, .seconds(2))
+    let timeoutTask = Task {
+      do {
+        try await Task.sleep(for: diagnosticTimeout)
+        resolution.resolve(.inconclusive)
+      } catch {
+        // The trust evaluation resolved first.
+      }
+    }
+    connection.start(queue: verifyQueue)
+
+    return await withTaskCancellationHandler {
+      let result = await resolution.value()
+      timeoutTask.cancel()
+      connection.cancel()
+      return result
+    } onCancel: {
+      resolution.resolve(.inconclusive)
+      connection.cancel()
+    }
+  }
+
+  private func configureTrustAnchors(
+    _ trust: SecTrust,
+    policy: TLSTrustPolicy
+  ) -> Bool {
+    switch policy {
+    case .systemDefault:
+      return true
+    case .testRootDER(let path):
+      guard
+        let certificateData = try? Data(
+          contentsOf: URL(fileURLWithPath: path)
+        ),
+        let certificate = SecCertificateCreateWithData(
+          nil,
+          certificateData as CFData
+        ),
+        SecTrustSetAnchorCertificates(
+          trust,
+          [certificate] as CFArray
+        ) == errSecSuccess,
+        SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess
+      else {
+        return false
+      }
+      return true
+    }
+  }
+}
+
+private final class TLSTrustDiagnosticResolution: Sendable {
+  private struct State {
+    var result: TLSTrustDiagnosticResult?
+    var continuation: CheckedContinuation<TLSTrustDiagnosticResult, Never>?
+  }
+
+  private let state = Mutex(State())
+
+  func resolve(_ result: TLSTrustDiagnosticResult) {
+    let continuation:
+      CheckedContinuation<
+        TLSTrustDiagnosticResult,
+        Never
+      >? = state.withLock { state in
+        guard state.result == nil else {
+          return nil
+        }
+        state.result = result
+        let continuation = state.continuation
+        state.continuation = nil
+        return continuation
+      }
+    continuation?.resume(returning: result)
+  }
+
+  func value() async -> TLSTrustDiagnosticResult {
+    await withCheckedContinuation { continuation in
+      let result: TLSTrustDiagnosticResult? = state.withLock { state in
+        if let result = state.result {
+          return result
+        }
+        state.continuation = continuation
+        return nil
+      }
+      if let result {
+        continuation.resume(returning: result)
+      }
+    }
   }
 }
 

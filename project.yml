@@ -8,6 +8,12 @@ options:
   developmentLanguage: en
   xcodeVersion: "27.0"
 
+configs:
+  Debug: debug
+  Release: release
+  Official Development: debug
+  Official Release: release
+
 packages:
   JollysMQTTPackage:
     path: JollysMQTTPackage
@@ -20,6 +26,10 @@ settings:
   configs:
     Debug:
       CODE_SIGNING_ALLOWED: NO
+    Official Development:
+      CODE_SIGNING_ALLOWED: YES
+    Official Release:
+      CODE_SIGNING_ALLOWED: YES
 
 targets:
   JollysMQTT:
@@ -36,6 +46,9 @@ targets:
         CFBundleDisplayName: JollysMQTT
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        JollysMQTTCloudKitContainerIdentifier: $(JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER)
+        JollysMQTTCloudKitZoneName: $(JOLLYS_MQTT_CLOUDKIT_ZONE_NAME)
+        JollysMQTTProfileSyncMode: $(JOLLYS_MQTT_PROFILE_SYNC_MODE)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSLocalNetworkUsageDescription: JollysMQTT uses the local network to connect to MQTT brokers you configure.
         UIApplicationSceneManifest:
@@ -66,6 +79,35 @@ targets:
         SUPPORTS_MACCATALYST: NO
         SWIFT_EMIT_LOC_STRINGS: YES
         TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Debug:
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: ""
+          JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: ""
+          JOLLYS_MQTT_PROFILE_SYNC_MODE: localOnly
+        Release:
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: ""
+          JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: ""
+          JOLLYS_MQTT_PROFILE_SYNC_MODE: localOnly
+        Official Development:
+          "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": JollysMQTTApp/JollysMQTT.official.iOS.entitlements
+          "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": JollysMQTTApp/JollysMQTT.official.iOS.entitlements
+          "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": JollysMQTTApp/JollysMQTT.official.macOS.entitlements
+          CODE_SIGN_IDENTITY: Apple Development
+          JOLLYS_MQTT_APS_ENVIRONMENT: development
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.JollysMQTT
+          JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT: Development
+          JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: EncryptedBrokerProfiles
+          JOLLYS_MQTT_PROFILE_SYNC_MODE: cloudKit
+        Official Release:
+          "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": JollysMQTTApp/JollysMQTT.official.iOS.entitlements
+          "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": JollysMQTTApp/JollysMQTT.official.iOS.entitlements
+          "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": JollysMQTTApp/JollysMQTT.official.macOS.entitlements
+          CODE_SIGN_IDENTITY: Apple Distribution
+          JOLLYS_MQTT_APS_ENVIRONMENT: production
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.JollysMQTT
+          JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT: Production
+          JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: EncryptedBrokerProfiles
+          JOLLYS_MQTT_PROFILE_SYNC_MODE: cloudKit
 
 schemes:
   JollysMQTT:

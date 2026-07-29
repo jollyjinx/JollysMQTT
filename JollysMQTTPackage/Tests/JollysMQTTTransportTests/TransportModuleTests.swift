@@ -1,4 +1,6 @@
 import Foundation
+import NIOCore
+import Security
 import Testing
 
 import enum JollysMQTTCore.BrokerFeedFailure
@@ -19,6 +21,15 @@ struct TransportModuleTests {
 
     #expect(MQTTTransportClient.usesAppleTransportServices)
     #expect(client.usesDefaultSystemTrustRoots)
+  }
+
+  @Test("Default mqtt-nio logging is isolated from task-local trace logging")
+  func defaultUpstreamLoggingIsPrivacySafe() {
+    let client = MQTTTransportClient()
+    let session = MQTTInProcessSession(clientID: "private-client-id")
+
+    #expect(client.upstreamLoggingPolicy == .disabled)
+    #expect(session.upstreamLoggingPolicy == .disabled)
   }
 
   @Test("Failures have redacted descriptions")
@@ -70,6 +81,64 @@ struct TransportModuleTests {
     )
 
     #expect(failure == .brokerUnavailable)
+  }
+
+  @Test(
+    "TLS channel closure and timeout do not claim certificate rejection",
+    arguments: [
+      ChannelError.ioOnClosedChannel,
+      ChannelError.connectTimeout(.seconds(1)),
+    ]
+  )
+  func ambiguousTLSChannelFailure(error: ChannelError) {
+    let failure = MQTTTransportClient.map(error, tlsEnabled: true)
+
+    #expect(failure == .brokerUnavailable)
+  }
+
+  @Test(
+    "An explicit diagnostic trust rejection classifies an ambiguous TLS timeout"
+  )
+  func diagnosedTrustRejection() {
+    let failure = MQTTTransportClient.map(
+      ChannelError.connectTimeout(.seconds(1)),
+      tlsEnabled: true,
+      diagnosedTrust: .rejected
+    )
+
+    #expect(failure == .tlsTrustFailed)
+  }
+
+  @Test(
+    "Accepted or inconclusive trust diagnostics leave an ambiguous TLS timeout generic",
+    arguments: [
+      TLSTrustDiagnosticResult.accepted,
+      TLSTrustDiagnosticResult.inconclusive,
+    ]
+  )
+  func nonRejectingTrustDiagnostic(
+    diagnosedTrust: TLSTrustDiagnosticResult
+  ) {
+    let failure = MQTTTransportClient.map(
+      ChannelError.connectTimeout(.seconds(1)),
+      tlsEnabled: true,
+      diagnosedTrust: diagnosedTrust
+    )
+
+    #expect(failure == .brokerUnavailable)
+  }
+
+  @Test("An explicit system trust rejection remains a typed TLS failure")
+  func explicitTLSTrustFailure() {
+    let failure = MQTTTransportClient.map(
+      NSError(
+        domain: NSOSStatusErrorDomain,
+        code: Int(errSecNotTrusted)
+      ),
+      tlsEnabled: true
+    )
+
+    #expect(failure == .tlsTrustFailed)
   }
 
   @Test("Typed transport failures survive transport mapping")

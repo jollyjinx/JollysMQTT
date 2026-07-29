@@ -594,6 +594,126 @@ struct ServerListFeatureTests {
     }
   }
 
+  @Test("A relaunched store resumes crash-interrupted optional cleanup")
+  @MainActor
+  func resumesDurableDeletionCleanupAfterRelaunch() async {
+    let profileID = UUID()
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .success(CredentialStatus(availability: .missing, revision: 1))
+      ]
+    )
+    let historyRecorder = DeletionHistoryRecorder()
+    let journal = MemoryBrokerDeletionCleanupJournal(
+      entries: [
+        BrokerDeletionCleanupEntry(
+          profileID: profileID,
+          options: BrokerDeletionOptions(
+            deleteHistory: true,
+            deleteCredential: true
+          )
+        )
+      ]
+    )
+    let store = ServerListStore(
+      repository: MemoryProfileRepository(profiles: []),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider {
+        brokerID in
+        RecordingDeletionHistoryMaintenance(
+          brokerID: brokerID,
+          recorder: historyRecorder
+        )
+      },
+      deletionCleanupJournal: journal
+    )
+
+    await store.send(.load)
+
+    #expect(await historyRecorder.brokerIDs == [profileID])
+    #expect(await credentials.operations() == [.delete(profileID)])
+    #expect(await journal.pendingEntries().isEmpty)
+    #expect(store.state.deletionOutcome?.succeeded == true)
+  }
+
+  @Test("Local deletion journal persists only cleanup identity and choices")
+  func localDeletionCleanupJournalRoundTripIsMinimal() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let fileURL = directory.appending(path: "cleanup.json")
+    let profileID = UUID()
+    let entry = BrokerDeletionCleanupEntry(
+      profileID: profileID,
+      options: BrokerDeletionOptions(
+        deleteHistory: true,
+        deleteCredential: false
+      )
+    )
+    let journal = LocalBrokerDeletionCleanupJournal(fileURL: fileURL)
+
+    try await journal.save(entry)
+
+    #expect(try await journal.pendingEntries() == [entry])
+    let document = try String(contentsOf: fileURL, encoding: .utf8)
+    #expect(document.contains(profileID.uuidString))
+    #expect(document.contains("deleteHistory"))
+    #expect(document.contains("deleteCredential"))
+    #expect(!document.contains("host"))
+    #expect(!document.contains("username"))
+    #expect(!document.contains("topic"))
+    #expect(!document.contains("payload"))
+    #expect(!document.contains("password"))
+
+    try await journal.remove(profileID: profileID)
+
+    #expect(try await journal.pendingEntries().isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+  }
+
+  @Test("A journal entry cannot delete resources while its profile still exists")
+  @MainActor
+  func liveProfileMakesDeletionJournalEntryStale() async throws {
+    let profile = uniqueRankedProfile(name: "Still Present", rank: 1)
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .success(CredentialStatus(availability: .missing, revision: 1))
+      ]
+    )
+    let historyRecorder = DeletionHistoryRecorder()
+    let journal = MemoryBrokerDeletionCleanupJournal(
+      entries: [
+        BrokerDeletionCleanupEntry(
+          profileID: profile.id,
+          options: BrokerDeletionOptions(
+            deleteHistory: true,
+            deleteCredential: true
+          )
+        )
+      ]
+    )
+    let store = ServerListStore(
+      repository: MemoryProfileRepository(profiles: [profile]),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider {
+        brokerID in
+        RecordingDeletionHistoryMaintenance(
+          brokerID: brokerID,
+          recorder: historyRecorder
+        )
+      },
+      deletionCleanupJournal: journal
+    )
+
+    await store.send(.load)
+
+    #expect(store.state.profiles == [profile])
+    #expect(await historyRecorder.brokerIDs.isEmpty)
+    #expect(await credentials.operations().isEmpty)
+    #expect(await journal.pendingEntries().isEmpty)
+    #expect(store.state.deletionOutcome == nil)
+  }
+
   @Test("A second deletion cannot replace an active deletion request")
   func overlappingDeletionConfirmationIsRejected() throws {
     let first = uniqueRankedProfile(name: "First", rank: 1)

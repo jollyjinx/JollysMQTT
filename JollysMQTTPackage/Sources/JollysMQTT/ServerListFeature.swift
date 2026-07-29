@@ -109,7 +109,7 @@ public enum CredentialEffectFailure: Error, Equatable, Sendable {
   case unavailable
 }
 
-public struct BrokerDeletionOptions: Equatable, Sendable {
+public struct BrokerDeletionOptions: Codable, Equatable, Sendable {
   public let deleteHistory: Bool
   public let deleteCredential: Bool
 
@@ -130,6 +130,7 @@ public enum BrokerDeletionFailureResource: Equatable, Hashable, Sendable {
   case history
   case credential
   case retentionSettings
+  case cleanupJournal
   case profile
 }
 
@@ -944,6 +945,7 @@ public final class ServerListStore {
   private let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
   private let historyMaintenanceProvider: BrokerHistoryMaintenanceProvider
   private let historyRetentionSettings: any HistoryRetentionSettingsRepositoryProtocol
+  private let deletionCleanupJournal: any BrokerDeletionCleanupJournaling
   private var persistenceTail: Task<Result<Void, ProfileRepositoryFailure>, Never>?
   private var pendingPersistenceCount = 0
 
@@ -957,7 +959,10 @@ public final class ServerListStore {
     historyMaintenanceProvider: BrokerHistoryMaintenanceProvider = .empty,
     historyRetentionSettings:
       any HistoryRetentionSettingsRepositoryProtocol =
-      MemoryHistoryRetentionSettingsRepository()
+      MemoryHistoryRetentionSettingsRepository(),
+    deletionCleanupJournal:
+      any BrokerDeletionCleanupJournaling =
+      MemoryBrokerDeletionCleanupJournal()
   ) {
     self.state = initialState
     self.repository = repository
@@ -966,6 +971,7 @@ public final class ServerListStore {
       brokerFeedGenerationCoordinator
     self.historyMaintenanceProvider = historyMaintenanceProvider
     self.historyRetentionSettings = historyRetentionSettings
+    self.deletionCleanupJournal = deletionCleanupJournal
   }
 
   public func send(_ intent: ServerListFeature.Intent) async {
@@ -985,6 +991,7 @@ public final class ServerListStore {
           state: &state,
           action: .loaded(.success(profiles))
         )
+        await resumePendingDeletionCleanups()
       } catch {
         _ = ServerListFeature.reduce(
           state: &state,
@@ -1114,11 +1121,37 @@ public final class ServerListStore {
         _ = await previousPersistence.value
       }
       do {
+        try await deletionCleanupJournal.save(
+          BrokerDeletionCleanupEntry(
+            profileID: profileID,
+            options: options
+          )
+        )
+      } catch {
+        finishProfileDeletion(
+          profileID: profileID,
+          requestID: requestID,
+          profiles: state.profiles,
+          outcome: BrokerDeletionOutcome(
+            profileID: profileID,
+            options: options,
+            history: .kept,
+            credential: .kept,
+            retentionSettings: .kept,
+            profile: .failed,
+            failure: .cleanupJournal,
+            secureHistoryCleanupPending: false
+          )
+        )
+        return
+      }
+      do {
         try await repository.replaceAll(profiles)
         await brokerFeedGenerationCoordinator.profilesDidChange(
           profiles.map(\.profile)
         )
       } catch {
+        try? await deletionCleanupJournal.remove(profileID: profileID)
         finishProfileDeletion(
           profileID: profileID,
           requestID: requestID,
@@ -1196,6 +1229,13 @@ public final class ServerListStore {
       }
       if settingsStatus == .failed {
         failures.append(.retentionSettings)
+      }
+      if failures.isEmpty, !secureCleanupPending {
+        do {
+          try await deletionCleanupJournal.remove(profileID: profileID)
+        } catch {
+          failures.append(.cleanupJournal)
+        }
       }
       finishProfileDeletion(
         profileID: profileID,
@@ -1288,6 +1328,13 @@ public final class ServerListStore {
       if settingsStatus == .failed {
         failures.append(.retentionSettings)
       }
+      if failures.isEmpty, !secureCleanupPending {
+        do {
+          try await deletionCleanupJournal.remove(profileID: profileID)
+        } catch {
+          failures.append(.cleanupJournal)
+        }
+      }
       finishProfileDeletion(
         profileID: profileID,
         requestID: requestID,
@@ -1302,6 +1349,55 @@ public final class ServerListStore {
           failures: failures,
           secureHistoryCleanupPending: secureCleanupPending,
           historyContinuation: historyContinuation
+        )
+      )
+    }
+  }
+
+  private func resumePendingDeletionCleanups() async {
+    let entries: [BrokerDeletionCleanupEntry]
+    do {
+      entries = try await deletionCleanupJournal.pendingEntries()
+    } catch {
+      state.persistenceError = true
+      return
+    }
+    for entry in entries {
+      if state.profiles.contains(where: { $0.id == entry.profileID }) {
+        do {
+          try await deletionCleanupJournal.remove(
+            profileID: entry.profileID
+          )
+        } catch {
+          state.persistenceError = true
+        }
+        continue
+      }
+      guard state.pendingProfileDeletionRequest == nil else { return }
+      let requestID = state.nextCredentialRequestID &+ 1
+      state.nextCredentialRequestID = requestID
+      state.pendingProfileDeletionRequest = PendingCredentialRequest(
+        profileID: entry.profileID,
+        requestID: requestID
+      )
+      let previous = BrokerDeletionOutcome(
+        profileID: entry.profileID,
+        options: entry.options,
+        history: entry.options.deleteHistory ? .failed : .kept,
+        credential: entry.options.deleteCredential ? .failed : .kept,
+        retentionSettings: .failed,
+        profile: .removed,
+        failures: [
+          entry.options.deleteHistory ? .history : nil,
+          entry.options.deleteCredential ? .credential : nil,
+          .retentionSettings,
+        ].compactMap { $0 },
+        secureHistoryCleanupPending: false
+      )
+      await execute(
+        .retryProfileResourceCleanup(
+          requestID: requestID,
+          previous
         )
       )
     }

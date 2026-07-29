@@ -377,9 +377,38 @@ struct SQLiteHistoryStoreTests {
         )
       )
       let roleApplications = applications.filter { $0.role == role }
-      #expect(roleApplications.count == 2)
+      let expectedApplicationCount = role == .database ? 3 : 2
+      #expect(roleApplications.count == expectedApplicationCount)
       #expect(roleApplications.allSatisfy { $0.url == role.url(for: databaseURL) })
     }
+  }
+
+  @Test("Database protection is applied before schema or WAL configuration")
+  func databaseProtectionPrecedesConfiguration() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appending(path: "history.sqlite")
+    let policy = RecordingHistoryFilePolicy()
+
+    _ = try await SQLiteHistoryStore.open(
+      databaseURL: databaseURL,
+      filePolicy: policy
+    )
+
+    let applications = await policy.applications
+    #expect(applications.first?.role == .database)
+    #expect(
+      applications.map(\.role)
+        == [.database, .database, .writeAheadLog, .sharedMemory]
+    )
   }
 
   @Test("Per-topic retention does not evict sparse topics")

@@ -2663,10 +2663,10 @@ struct ServerListView: View {
       }
     } message: {
       Text(
-        "Choose independently whether to delete local history and the device password for “\(store.pendingDeletionName)”. Per-broker retention settings are always attempted after the profile deletion commits.",
+        "Deleting “\(store.pendingDeletionName)” creates a permanent synchronization tombstone. Broker-specific topic, search, and chart state is removed from this workspace; other restored workspaces are scrubbed when they observe the deletion. Choose independently whether to delete local history and the device password. Per-broker retention settings are always removed.",
         bundle: #bundle,
         comment:
-          "Deletion warning describing independent history/password choices and the post-commit retention-settings cleanup attempt. The variable is the broker profile name."
+          "Deletion warning describing the permanent tombstone, workspace privacy cleanup, independent history/password choices, and retention-settings cleanup. The variable is the broker profile name."
       )
     }
     .alert(
@@ -3047,6 +3047,20 @@ extension BrokerDeletionOutcome {
         comment:
           "Retention settings cleanup failure after profile deletion committed."
       )
+    case .cleanupJournal:
+      return profile == .removed
+        ? LocalizedStringResource(
+          "The selected cleanup completed, but its crash-recovery journal could not be removed. Retry to finish securely.",
+          bundle: #bundle,
+          comment:
+            "Deletion cleanup succeeded but its durable retry journal could not be removed."
+        )
+        : LocalizedStringResource(
+          "The profile was not deleted because its crash-safe cleanup choices could not be saved. No history, password, workspace, or retention data was removed.",
+          bundle: #bundle,
+          comment:
+            "Deletion was refused because durable cleanup intent could not be recorded first."
+        )
     case .profile:
       return LocalizedStringResource(
         "The profile deletion could not be saved. The profile remains, and no selected history, password, or retention settings were touched.",

@@ -371,8 +371,8 @@ struct ProfileSyncTests {
     #expect(await local.load() == [localProfile])
   }
 
-  @Test("Corrupt primary local data restores through the atomic backup before sync")
-  func localBackupRemainsLastKnownGood() async throws {
+  @Test("Corrupt primary local data restores the deletion-safe committed backup before sync")
+  func localBackupPreservesCommittedDeletionState() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     let fileURL = directory.appending(path: "profiles.json")
@@ -397,8 +397,8 @@ struct ProfileSyncTests {
       sync: sync
     )
 
-    #expect(try await repository.load() == [original])
-    #expect(await sync.latestStagedProfiles() == [original])
+    #expect(try await repository.load() == [newer])
+    #expect(await sync.latestStagedProfiles() == [newer])
   }
 
   @Test("Empty remote change set is not an authoritative delete-all")

@@ -25,6 +25,10 @@ public enum WorkspaceFeature {
     case selectProfile(UUID?)
     case connect(profileID: UUID)
     case showServerList
+    case profileDeleted(
+      profileID: UUID,
+      fallbackSelection: UUID?
+    )
     case selectTopic(String?)
     case setTopicOutlinePresentation(
       expandedTopics: Set<String>,
@@ -77,6 +81,31 @@ public enum WorkspaceFeature {
     case .showServerList:
       state.record.route = .serverList
       state.record.selectedTopic = nil
+      state.record.closedAt = nil
+      return .save(state.record)
+
+    case .profileDeleted(let profileID, let fallbackSelection):
+      let routeReferencesProfile =
+        if case .connected(let connectedProfileID) = state.record.route {
+          connectedProfileID == profileID
+        } else {
+          false
+        }
+      guard
+        routeReferencesProfile
+          || state.record.selectedProfileID == profileID
+          || state.record.numericChartDashboard.cards.contains(where: {
+            $0.chart.series.id.brokerID == profileID
+          })
+      else {
+        return nil
+      }
+      state.record.route = .serverList
+      state.record.selectedProfileID = fallbackSelection
+      state.record.selectedTopic = nil
+      state.record.expandedTopics = []
+      state.record.topicSearchText = ""
+      state.record.numericChartDashboard = .init()
       state.record.closedAt = nil
       return .save(state.record)
 
