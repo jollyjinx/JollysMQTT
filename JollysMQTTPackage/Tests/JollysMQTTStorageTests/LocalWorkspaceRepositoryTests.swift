@@ -46,6 +46,48 @@ struct LocalWorkspaceRepositoryTests {
     #expect(try await relaunched.load(id: id) == expected)
   }
 
+  @Test("One complete numeric chart configuration round-trips in a version-one workspace")
+  func numericChartRoundTrip() async throws {
+    let fixture = try WorkspaceFixture()
+    defer { fixture.remove() }
+    let id = WorkspaceID()
+    let brokerID = UUID()
+    let chart = NumericChartConfiguration(
+      series: NumericChartSeries(
+        id: NumericChartSeriesID(
+          brokerID: brokerID,
+          topic: "factory/line/metrics",
+          jsonPointer: PayloadJSONPointer(rawValue: "/temperature")
+        ),
+        conversion: NumericChartValueConversion(
+          kind: .number,
+          multiplier: 0.1
+        )
+      ),
+      isPaused: true,
+      autoScroll: false,
+      visibleRange: try NumericChartVisibleRange.fixed(
+        lowerBoundMicroseconds: 1_000_000,
+        upperBoundMicroseconds: 61_000_000
+      ),
+      yAxis: try NumericChartYAxis.fixed(
+        lowerBound: -20,
+        upperBound: 80
+      )
+    )
+    let expected = WorkspaceRecord(id: id, numericChart: chart)
+    let repository = LocalWorkspaceRepository(directoryURL: fixture.directory)
+
+    try await repository.save(expected)
+
+    let encoded = try Data(contentsOf: fixture.fileURL(for: id))
+    let document = try #require(
+      JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    #expect(document["version"] as? Int == 1)
+    #expect(try await repository.load(id: id) == expected)
+  }
+
   @Test("Version-one workspaces without outline fields receive safe defaults")
   func legacyWorkspaceDefaultsOutlinePresentation() async throws {
     let fixture = try WorkspaceFixture()
@@ -70,6 +112,7 @@ struct LocalWorkspaceRepositoryTests {
     #expect(record.expandedTopics.isEmpty)
     #expect(record.topicSearchText.isEmpty)
     #expect(record.topicSortMode == .name)
+    #expect(record.numericChart == nil)
   }
 
   @Test("An undecodable current workspace recovers to the server list")

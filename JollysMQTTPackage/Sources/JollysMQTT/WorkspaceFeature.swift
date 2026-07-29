@@ -31,6 +31,7 @@ public enum WorkspaceFeature {
       searchText: String,
       sortMode: BrokerTopicSortMode
     )
+    case setNumericChart(NumericChartConfiguration?)
     case dismissPersistenceError
   }
 
@@ -52,12 +53,18 @@ public enum WorkspaceFeature {
     case .selectProfile(let id):
       guard state.record.selectedProfileID != id else { return nil }
       state.record.selectedProfileID = id
+      if state.record.numericChart?.series.id.brokerID != id {
+        state.record.numericChart = nil
+      }
       return .save(state.record)
 
     case .connect(let profileID):
       if state.record.selectedProfileID != profileID {
         state.record.selectedTopic = nil
         state.record.expandedTopics = []
+      }
+      if state.record.numericChart?.series.id.brokerID != profileID {
+        state.record.numericChart = nil
       }
       state.record.route = .connected(profileID: profileID)
       state.record.selectedProfileID = profileID
@@ -93,6 +100,19 @@ public enum WorkspaceFeature {
       state.record.topicSortMode = sortMode
       return .save(state.record)
 
+    case .setNumericChart(let configuration):
+      let configuration = configuration?.normalizingAutoScroll()
+      if let configuration {
+        guard case .connected(let profileID) = state.record.route,
+          configuration.series.id.brokerID == profileID
+        else {
+          return nil
+        }
+      }
+      guard state.record.numericChart != configuration else { return nil }
+      state.record.numericChart = configuration
+      return .save(state.record)
+
     case .dismissPersistenceError:
       state.persistenceError = false
       return nil
@@ -103,6 +123,13 @@ public enum WorkspaceFeature {
     switch action {
     case .loaded(.success(var record)):
       record.closedAt = nil
+      record.numericChart =
+        record.numericChart?.normalizingAutoScroll()
+      if case .connected(let profileID) = record.route,
+        record.numericChart?.series.id.brokerID != profileID
+      {
+        record.numericChart = nil
+      }
       state.record = record
       state.isLoaded = true
       state.persistenceError = false

@@ -144,6 +144,86 @@ public struct HistoryPage: Sendable, Equatable {
 
 public protocol BrokerHistoryReading: Sendable {
   func page(_ request: HistoryPageRequest) async throws -> HistoryPage
+  func numericChartHistory(
+    _ request: NumericChartHistoryRequest
+  ) async throws -> NumericChartHistoryResult
+}
+
+public struct NumericChartHistoryRequest: Sendable, Equatable {
+  public let historySourceID: String
+  public let topic: String
+  public let maximumMessageCount: Int
+  public let maximumPayloadBytesPerSample: Int
+  public let maximumPayloadBytes: Int
+
+  public init(
+    historySourceID: String,
+    topic: String,
+    maximumMessageCount: Int,
+    maximumPayloadBytesPerSample: Int,
+    maximumPayloadBytes: Int
+  ) {
+    precondition(!historySourceID.isEmpty)
+    precondition(!topic.isEmpty)
+    precondition((1...4_096).contains(maximumMessageCount))
+    precondition((1...65_536).contains(maximumPayloadBytesPerSample))
+    precondition((1...(16 * 1_024 * 1_024)).contains(maximumPayloadBytes))
+    precondition(maximumPayloadBytesPerSample <= maximumPayloadBytes)
+    self.historySourceID = historySourceID
+    self.topic = topic
+    self.maximumMessageCount = maximumMessageCount
+    self.maximumPayloadBytesPerSample = maximumPayloadBytesPerSample
+    self.maximumPayloadBytes = maximumPayloadBytes
+  }
+}
+
+public struct NumericChartHistoryResult: Sendable, Equatable {
+  public let messages: [StoredHistoryMessage]
+  public let payloadByteCount: Int
+
+  public init(
+    messages: [StoredHistoryMessage],
+    payloadByteCount: Int
+  ) {
+    self.messages = messages
+    self.payloadByteCount = payloadByteCount
+  }
+}
+
+extension BrokerHistoryReading {
+  public func numericChartHistory(
+    _ request: NumericChartHistoryRequest
+  ) async throws -> NumericChartHistoryResult {
+    let page = try await page(
+      HistoryPageRequest(
+        historySourceID: request.historySourceID,
+        topic: request.topic,
+        limit: request.maximumMessageCount,
+        coverageGapLimit: 0
+      )
+    )
+    var payloadByteCount = 0
+    var messages: [StoredHistoryMessage] = []
+    messages.reserveCapacity(request.maximumMessageCount)
+    for message in page.messages {
+      guard message.direction == .received,
+        message.connectionEpoch != nil,
+        message.connectionOrdinal != nil,
+        message.hasStoredPayload,
+        message.payload.count <= request.maximumPayloadBytesPerSample,
+        payloadByteCount <= request.maximumPayloadBytes - message.payload.count
+      else {
+        continue
+      }
+      payloadByteCount += message.payload.count
+      messages.append(message)
+    }
+    messages.reverse()
+    return NumericChartHistoryResult(
+      messages: messages,
+      payloadByteCount: payloadByteCount
+    )
+  }
 }
 
 public protocol BrokerHistoryMaintaining: Sendable {

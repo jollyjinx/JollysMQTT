@@ -236,6 +236,20 @@ public actor SQLiteBrokerHistoryWriter:
     }
   }
 
+  public func numericChartHistory(
+    _ request: NumericChartHistoryRequest
+  ) async throws -> NumericChartHistoryResult {
+    let store = try await acquireStore()
+    do {
+      let history = try await store.numericChartHistory(request)
+      finishOperation()
+      return history
+    } catch {
+      finishOperation()
+      throw error
+    }
+  }
+
   public func shutdown() async throws {
     while isClosing {
       await waitUntilAvailable()

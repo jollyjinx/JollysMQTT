@@ -14,6 +14,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
   public var expandedTopics: [String]
   public var topicSearchText: String
   public var topicSortMode: BrokerTopicSortMode
+  public var numericChart: NumericChartConfiguration?
   public var closedAt: Date?
 
   public init(
@@ -24,6 +25,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     expandedTopics: [String] = [],
     topicSearchText: String = "",
     topicSortMode: BrokerTopicSortMode = .name,
+    numericChart: NumericChartConfiguration? = nil,
     closedAt: Date? = nil
   ) {
     self.id = id
@@ -33,6 +35,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     self.expandedTopics = Array(Set(expandedTopics)).sorted()
     self.topicSearchText = topicSearchText
     self.topicSortMode = topicSortMode
+    self.numericChart = numericChart
     self.closedAt = closedAt
   }
 
@@ -44,6 +47,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     case expandedTopics
     case topicSearchText
     case topicSortMode
+    case numericChart
     case closedAt
   }
 
@@ -79,6 +83,10 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
         BrokerTopicSortMode.self,
         forKey: .topicSortMode
       ) ?? .name
+    numericChart = try container.decodeIfPresent(
+      NumericChartConfiguration.self,
+      forKey: .numericChart
+    )
     closedAt = try container.decodeIfPresent(Date.self, forKey: .closedAt)
   }
 }

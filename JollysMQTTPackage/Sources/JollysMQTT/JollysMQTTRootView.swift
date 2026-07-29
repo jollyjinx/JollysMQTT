@@ -245,24 +245,36 @@ private struct SelectedPayloadWorkspace: View {
   @Bindable var publishStore: PublishStore
 
   var body: some View {
+    let layout = SelectedPayloadWorkspaceLayout(
+      hasPinnedChart:
+        sceneStore.numericChart.state.configuration != nil
+    )
     ViewThatFits(in: .horizontal) {
-      HStack(alignment: .top, spacing: 16) {
-        TopicExplorerView(
-          state: topicState,
-          sceneStore: sceneStore
-        )
-        .frame(minWidth: 320)
-        Divider()
-        PayloadInspectorPane(
-          store: inspectorStore,
-          historyStore: historyStore,
-          historyMaintenanceStore: sceneStore.historyMaintenance,
-          layout: .wide
-        )
-        .frame(minWidth: 360)
-        Divider()
-        PublishComposerView(store: publishStore)
+      VStack(spacing: 16) {
+        HStack(alignment: .top, spacing: 16) {
+          TopicExplorerView(
+            state: topicState,
+            sceneStore: sceneStore
+          )
           .frame(minWidth: 320)
+          Divider()
+          PayloadInspectorPane(
+            store: inspectorStore,
+            historyStore: historyStore,
+            historyMaintenanceStore: sceneStore.historyMaintenance,
+            numericChartStore: sceneStore.numericChart,
+            onPinNumericChart: sceneStore.pinNumericChart,
+            layout: .wide
+          )
+          .frame(minWidth: 360)
+          Divider()
+          PublishComposerView(store: publishStore)
+            .frame(minWidth: 320)
+        }
+        if layout.showsWideChart {
+          NumericChartPane(store: sceneStore.numericChart)
+            .frame(minHeight: 260)
+        }
       }
       PayloadCompactWorkspace(
         topicState: topicState,
@@ -272,6 +284,30 @@ private struct SelectedPayloadWorkspace: View {
         publishStore: publishStore
       )
     }
+  }
+}
+
+struct SelectedPayloadWorkspaceLayout: Equatable {
+  enum WideRegion: Equatable {
+    case topicExplorer
+    case payloadInspector
+    case publishComposer
+    case numericChart
+  }
+
+  let wideCandidateRegions: [WideRegion]
+
+  init(hasPinnedChart: Bool) {
+    wideCandidateRegions =
+      [
+        .topicExplorer,
+        .payloadInspector,
+        .publishComposer,
+      ] + (hasPinnedChart ? [.numericChart] : [])
+  }
+
+  var showsWideChart: Bool {
+    wideCandidateRegions.contains(.numericChart)
   }
 }
 
@@ -303,6 +339,12 @@ private struct PayloadCompactWorkspace: View {
         )
         .tag(PayloadInspectorCompactSection.details)
         Text(
+          "Chart",
+          bundle: #bundle,
+          comment: "Compact connected-workspace numeric-chart destination."
+        )
+        .tag(PayloadInspectorCompactSection.chart)
+        Text(
           "Publish",
           bundle: #bundle,
           comment: "Compact connected-workspace publish destination."
@@ -328,8 +370,32 @@ private struct PayloadCompactWorkspace: View {
           store: inspectorStore,
           historyStore: historyStore,
           historyMaintenanceStore: sceneStore.historyMaintenance,
+          numericChartStore: sceneStore.numericChart,
+          onPinNumericChart: sceneStore.pinNumericChart,
           layout: .compact
         )
+      case .chart:
+        if sceneStore.numericChart.state.configuration != nil {
+          NumericChartPane(store: sceneStore.numericChart)
+        } else {
+          ContentUnavailableView {
+            Label {
+              Text(
+                "No Pinned Chart",
+                bundle: #bundle,
+                comment: "Empty compact-chart destination title."
+              )
+            } icon: {
+              Image(systemName: "chart.xyaxis.line")
+            }
+          } description: {
+            Text(
+              "Select a numeric or Boolean payload value in Details, then pin it.",
+              bundle: #bundle,
+              comment: "Explains how to create the one numeric chart."
+            )
+          }
+        }
       case .publish:
         PublishComposerView(store: publishStore)
       }
@@ -617,6 +683,8 @@ private struct PayloadInspectorPane: View {
   @Bindable var store: PayloadInspectorStore
   @Bindable var historyStore: HistoryStore
   @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+  @Bindable var numericChartStore: NumericChartStore
+  let onPinNumericChart: (NumericChartSeries) -> Void
   let layout: PayloadInspectorLayout
 
   var body: some View {
@@ -626,6 +694,13 @@ private struct PayloadInspectorPane: View {
           VStack(alignment: .leading, spacing: 16) {
             PayloadMetadataHeader(message: inspection.message)
             PayloadCopyControls(store: store)
+            NumericChartPinControls(
+              inspection: inspection,
+              selectedJSONPointer: store.state.selectedJSONPointer,
+              pinnedSeries:
+                numericChartStore.state.configuration?.series,
+              onPin: onPinNumericChart
+            )
             PayloadPresentationView(
               inspection: inspection,
               jsonMode: store.state.jsonMode,

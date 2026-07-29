@@ -229,6 +229,129 @@ public actor SQLiteHistoryStore {
     )
   }
 
+  public func numericChartHistory(
+    _ request: NumericChartHistoryRequest
+  ) throws -> NumericChartHistoryResult {
+    let statement = try prepare(
+      """
+      SELECT
+          messages.id,
+          topics.history_source_id,
+          topics.topic,
+          messages.connection_epoch,
+          messages.connection_ordinal,
+          messages.operation_id,
+          messages.direction,
+          messages.qos,
+          messages.retained,
+          messages.received_at_microseconds,
+          messages.payload,
+          messages.payload_original_byte_count,
+          messages.payload_omission_reason
+      FROM messages
+      JOIN topics ON topics.id = messages.topic_id
+      WHERE topics.history_source_id = ? AND topics.topic = ?
+        AND messages.direction = 'received'
+        AND messages.connection_epoch IS NOT NULL
+        AND messages.connection_ordinal IS NOT NULL
+        AND messages.payload_omission_reason IS NULL
+        AND length(messages.payload) <= ?
+      ORDER BY messages.id DESC
+      LIMIT ?
+      """,
+      operation: "prepare bounded numeric chart history query"
+    )
+    defer { sqlite3_finalize(statement) }
+
+    try bind(
+      request.historySourceID,
+      to: 1,
+      in: statement,
+      operation: "bind chart history source"
+    )
+    try bind(
+      request.topic,
+      to: 2,
+      in: statement,
+      operation: "bind chart topic"
+    )
+    try check(
+      sqlite3_bind_int(
+        statement,
+        3,
+        Int32(request.maximumPayloadBytesPerSample)
+      ),
+      operation: "bind chart payload limit"
+    )
+    try check(
+      sqlite3_bind_int(
+        statement,
+        4,
+        Int32(request.maximumMessageCount)
+      ),
+      operation: "bind chart message limit"
+    )
+
+    var payloadByteCount = 0
+    var messages: [StoredHistoryMessage] = []
+    messages.reserveCapacity(request.maximumMessageCount)
+    while true {
+      let result = sqlite3_step(statement)
+      switch result {
+      case SQLITE_ROW:
+        let byteCount = Int(sqlite3_column_bytes(statement, 10))
+        guard
+          payloadByteCount <= request.maximumPayloadBytes - byteCount
+        else {
+          continue
+        }
+        let message = StoredHistoryMessage(
+          durableOrder: sqlite3_column_int64(statement, 0),
+          historySourceID: textColumn(statement, index: 1),
+          connectionEpoch: optionalTextColumn(statement, index: 3)
+            .flatMap(UUID.init(uuidString:)),
+          connectionOrdinal:
+            sqlite3_column_type(statement, 4) == SQLITE_NULL
+            ? nil
+            : UInt64(bitPattern: sqlite3_column_int64(statement, 4)),
+          operationID: optionalTextColumn(statement, index: 5)
+            .flatMap(UUID.init(uuidString:))
+            .map(PublishOperationID.init(rawValue:)),
+          direction:
+            PayloadDeliveryDirection(
+              rawValue: textColumn(statement, index: 6)
+            ) ?? .received,
+          topic: textColumn(statement, index: 2),
+          qos:
+            MQTTQualityOfService(
+              rawValue: Int(sqlite3_column_int(statement, 7))
+            ) ?? .atMostOnce,
+          retained: sqlite3_column_int(statement, 8) != 0,
+          receivedAtMicroseconds: sqlite3_column_int64(statement, 9),
+          payload: dataColumn(statement, index: 10),
+          payloadStorage: try payloadStorage(
+            storedByteCount: byteCount,
+            originalByteCount: Int(sqlite3_column_int64(statement, 11)),
+            omissionReason: optionalTextColumn(statement, index: 12)
+          )
+        )
+        payloadByteCount += byteCount
+        messages.append(message)
+      case SQLITE_DONE:
+        messages.reverse()
+        return NumericChartHistoryResult(
+          messages: messages,
+          payloadByteCount: payloadByteCount
+        )
+      default:
+        throw sqliteError(
+          code: result,
+          operation: "read bounded numeric chart history"
+        )
+      }
+    }
+  }
+
   private func historyMessages(
     historySourceID: String,
     topic: String,

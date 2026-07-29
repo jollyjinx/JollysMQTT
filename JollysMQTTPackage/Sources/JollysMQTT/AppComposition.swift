@@ -315,6 +315,7 @@ public final class WorkspaceSceneStore {
   public let retainedDeletion: RetainedDeletionStore
   public let history: HistoryStore
   public let historyMaintenance: HistoryMaintenanceStore
+  public let numericChart: NumericChartStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -349,6 +350,10 @@ public final class WorkspaceSceneStore {
       repositories: dependencies.historyRepositoryProvider
     )
     self.history = history
+    let numericChart = NumericChartStore(
+      repositories: dependencies.historyRepositoryProvider
+    )
+    self.numericChart = numericChart
     let historyMaintenance = HistoryMaintenanceStore(
       maintenance: dependencies.historyMaintenanceProvider,
       settings: dependencies.historyRetentionSettings
@@ -441,6 +446,16 @@ public final class WorkspaceSceneStore {
         )
       )
     }
+    self.topics.onNumericChartSnapshotChange = {
+      [weak numericChart] snapshot, expectedBrokerID in
+      numericChart?.updateSnapshot(
+        snapshot,
+        expectedBrokerID: expectedBrokerID
+      )
+    }
+    numericChart.onConfigurationChange = { [weak workspace] configuration in
+      workspace?.sendImmediately(.setNumericChart(configuration))
+    }
   }
 
   public var selectedProfileID: UUID? {
@@ -448,6 +463,7 @@ public final class WorkspaceSceneStore {
     set {
       workspace.selectedProfileID = newValue
       serverList.sendImmediately(.select(newValue))
+      numericChart.restore(workspace.state.record.numericChart)
       if case .serverList = workspace.state.record.route {
         updateHistoryMaintenanceBrokerContext(newValue)
       }
@@ -502,6 +518,7 @@ public final class WorkspaceSceneStore {
       // Pruning old closed records must not block opening the current scene.
     }
     await workspace.load()
+    numericChart.restore(workspace.state.record.numericChart)
     let expectedBrokerID: UUID?
     switch workspace.state.record.route {
     case .serverList:
@@ -536,6 +553,7 @@ public final class WorkspaceSceneStore {
 
   public func connectCurrentWorkspace(_ ready: ConnectReadyState) async {
     workspace.sendImmediately(.connect(profileID: ready.profile.id))
+    numericChart.restore(workspace.state.record.numericChart)
     topics.restorePresentation(
       selectedTopic: workspace.state.record.selectedTopic,
       expandedTopics: Set(workspace.state.record.expandedTopics),
@@ -563,6 +581,16 @@ public final class WorkspaceSceneStore {
       sortMode: topics.state.sortMode,
       expectedBrokerID: nil
     )
+  }
+
+  public func pinNumericChart(_ series: NumericChartSeries) {
+    guard
+      case .connected(let profileID) = workspace.state.record.route,
+      series.id.brokerID == profileID
+    else {
+      return
+    }
+    numericChart.pin(series)
   }
 
   public func setSceneActive(_ isActive: Bool) async {
@@ -635,6 +663,7 @@ public final class WorkspaceSceneStore {
     guard outcome.profile == .removed else { return }
     let selection = serverList.state.selectedProfileID
     selectedProfileID = selection
+    numericChart.restore(workspace.state.record.numericChart)
     updateHistoryMaintenanceBrokerContext(selection)
   }
 
@@ -696,6 +725,13 @@ public final class TopicOutlineStore {
         BrokerTopicTreeSnapshot
       ) -> Void
     )?
+  var onNumericChartSnapshotChange:
+    (
+      @MainActor @Sendable (
+        BrokerTopicTreeSnapshot,
+        UUID?
+      ) -> Void
+    )?
 
   init(feed: any BrokerFeedLeaseControlling) {
     self.feed = feed
@@ -720,6 +756,7 @@ public final class TopicOutlineStore {
       state.payloadSelection,
       state.liveSnapshot
     )
+    notifyNumericChartSnapshot()
     notifyRetainedDeletionContext()
   }
 
@@ -730,6 +767,7 @@ public final class TopicOutlineStore {
       state.payloadSelection,
       state.liveSnapshot
     )
+    notifyNumericChartSnapshot()
     notifyRetainedDeletionContext()
   }
 
@@ -749,6 +787,7 @@ public final class TopicOutlineStore {
       state.payloadSelection,
       state.liveSnapshot
     )
+    notifyNumericChartSnapshot()
     notifyRetainedDeletionContext()
   }
 
@@ -781,6 +820,13 @@ public final class TopicOutlineStore {
         }()
       ),
       state.liveSnapshot
+    )
+  }
+
+  private func notifyNumericChartSnapshot() {
+    onNumericChartSnapshotChange?(
+      state.liveSnapshot,
+      state.expectedBrokerID
     )
   }
 }

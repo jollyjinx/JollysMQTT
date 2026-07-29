@@ -151,6 +151,91 @@ struct SQLiteHistoryStoreTests {
     #expect(message.connectionOrdinal == 42)
   }
 
+  @Test("Chart history is received-only, chronological, and bounded by count and payload bytes")
+  func boundedChartHistoryQuery() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    let epoch = UUID()
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 1,
+        topic: "metrics",
+        receivedAtMicroseconds: 100,
+        payload: Data("1.0".utf8)
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 2,
+        topic: "metrics",
+        receivedAtMicroseconds: 100,
+        payload: Data("2.0".utf8)
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        operationID: PublishOperationID(),
+        direction: .published,
+        topic: "metrics",
+        receivedAtMicroseconds: 101,
+        payload: Data("9.0".utf8)
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 3,
+        topic: "metrics",
+        receivedAtMicroseconds: 102,
+        payload: Data(),
+        payloadStorage: .omittedByRetentionLimit(originalByteCount: 99)
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 4,
+        topic: "metrics",
+        receivedAtMicroseconds: 103,
+        payload: Data("4.0".utf8)
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-b",
+        connectionEpoch: epoch,
+        connectionOrdinal: 5,
+        topic: "metrics",
+        receivedAtMicroseconds: 104,
+        payload: Data("5.0".utf8)
+      ),
+    ])
+
+    let result = try await store.numericChartHistory(
+      NumericChartHistoryRequest(
+        historySourceID: "source-a",
+        topic: "metrics",
+        maximumMessageCount: 2,
+        maximumPayloadBytesPerSample: 4,
+        maximumPayloadBytes: 6
+      )
+    )
+
+    #expect(result.messages.map(\.connectionOrdinal) == [2, 4])
+    #expect(result.messages.map(\.receivedAtMicroseconds) == [100, 103])
+    #expect(result.messages.reduce(0) { $0 + $1.payload.count } <= 6)
+    #expect(result.messages.allSatisfy { $0.hasStoredPayload })
+    #expect(result.messages.allSatisfy { $0.direction == .received })
+  }
+
   @Test("Equal receive timestamps use durable insertion order newest first")
   func equalTimestampOrdering() async throws {
     let directory = FileManager.default.temporaryDirectory

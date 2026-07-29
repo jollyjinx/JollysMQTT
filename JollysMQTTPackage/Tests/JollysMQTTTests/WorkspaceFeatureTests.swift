@@ -25,6 +25,237 @@ struct WorkspaceFeatureTests {
     #expect(effect == .save(first.record))
   }
 
+  @Test("Pinning one chart persists it and changing brokers clears that broker-specific series")
+  func chartConfigurationFollowsBrokerIdentity() {
+    let firstBroker = UUID()
+    let secondBroker = UUID()
+    let chart = NumericChartConfiguration(
+      series: NumericChartSeries(
+        id: NumericChartSeriesID(
+          brokerID: firstBroker,
+          topic: "factory/temperature"
+        ),
+        conversion: NumericChartValueConversion(kind: .number)
+      ),
+      isPaused: true,
+      autoScroll: false
+    )
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .connected(profileID: firstBroker),
+        selectedProfileID: firstBroker
+      ),
+      isLoaded: true
+    )
+
+    let save = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .setNumericChart(chart)
+    )
+
+    #expect(state.record.numericChart == chart)
+    #expect(save == .save(state.record))
+
+    _ = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .connect(profileID: secondBroker)
+    )
+
+    #expect(state.record.numericChart == nil)
+  }
+
+  @Test("Connecting the selected broker still clears a foreign chart")
+  func connectingSelectedBrokerClearsForeignChart() {
+    let chartBroker = UUID()
+    let selectedBroker = UUID()
+    let chart = numericChartConfiguration(brokerID: chartBroker)
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .serverList,
+        selectedProfileID: selectedBroker,
+        numericChart: chart
+      )
+    )
+
+    _ = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .connect(profileID: selectedBroker)
+    )
+
+    #expect(state.record.route == .connected(profileID: selectedBroker))
+    #expect(state.record.numericChart == nil)
+  }
+
+  @Test("A chart can only be set for the connected broker")
+  func chartSettingRequiresMatchingConnectedRoute() {
+    let brokerID = UUID()
+    let chart = numericChartConfiguration(brokerID: brokerID)
+    var serverList = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .serverList,
+        selectedProfileID: brokerID
+      )
+    )
+    var wrongConnection = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .connected(profileID: UUID())
+      )
+    )
+
+    #expect(
+      WorkspaceFeature.reduce(
+        state: &serverList,
+        intent: .setNumericChart(chart)
+      ) == nil
+    )
+    #expect(serverList.record.numericChart == nil)
+    #expect(
+      WorkspaceFeature.reduce(
+        state: &wrongConnection,
+        intent: .setNumericChart(chart)
+      ) == nil
+    )
+    #expect(wrongConnection.record.numericChart == nil)
+  }
+
+  @Test("Loading sanitizes a foreign connected chart but retains it at the broker list")
+  func loadingSanitizesChartAgainstConnectedRoute() {
+    let chartBroker = UUID()
+    let connectedBroker = UUID()
+    let chart = numericChartConfiguration(brokerID: chartBroker)
+    var connected = WorkspaceFeature.State(
+      record: WorkspaceRecord(id: WorkspaceID())
+    )
+    var serverList = WorkspaceFeature.State(
+      record: WorkspaceRecord(id: WorkspaceID())
+    )
+
+    WorkspaceFeature.reduce(
+      state: &connected,
+      action: .loaded(
+        .success(
+          WorkspaceRecord(
+            id: connected.record.id,
+            route: .connected(profileID: connectedBroker),
+            selectedProfileID: connectedBroker,
+            numericChart: chart
+          )
+        )
+      )
+    )
+    WorkspaceFeature.reduce(
+      state: &serverList,
+      action: .loaded(
+        .success(
+          WorkspaceRecord(
+            id: serverList.record.id,
+            route: .serverList,
+            selectedProfileID: chartBroker,
+            numericChart: chart
+          )
+        )
+      )
+    )
+
+    #expect(connected.record.numericChart == nil)
+    #expect(serverList.record.numericChart == chart)
+  }
+
+  @Test("The wide layout keeps topic, payload, publish, and chart in one candidate")
+  func wideChartCoexistsWithTopicExplorer() {
+    let layout = SelectedPayloadWorkspaceLayout(hasPinnedChart: true)
+
+    #expect(
+      layout.wideCandidateRegions == [
+        .topicExplorer,
+        .payloadInspector,
+        .publishComposer,
+        .numericChart,
+      ]
+    )
+    #expect(layout.showsWideChart)
+  }
+
+  @Test("The scene rejects chart pinning outside its connected broker")
+  @MainActor
+  func scenePinningRequiresConnectedBroker() {
+    let scene = JollysMQTTAppDependencies(
+      profileRepository: SceneProfileRepository(profiles: []),
+      workspaceRepository: RecordingWorkspaceRepository()
+    ).makeSceneStore(id: WorkspaceID())
+    let chart = numericChartConfiguration(brokerID: UUID())
+
+    scene.pinNumericChart(chart.series)
+
+    #expect(scene.numericChart.state.configuration == nil)
+    #expect(scene.workspace.state.record.numericChart == nil)
+  }
+
+  @Test("The scene restores, feeds, and persists its numeric chart")
+  @MainActor
+  func sceneNumericChartComposition() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let brokerID = UUID()
+    let workspaceID = WorkspaceID()
+    let chart = numericChartConfiguration(brokerID: brokerID)
+    let profileRepository = LocalProfileRepository(
+      fileURL: directory.appending(path: "profiles.json")
+    )
+    try await profileRepository.replaceAll([
+      workspaceRankedProfile(id: brokerID, name: "Chart", rank: 1)
+    ])
+    let workspaceRepository = LocalWorkspaceRepository(
+      directoryURL: directory.appending(
+        path: "workspaces",
+        directoryHint: .isDirectory
+      )
+    )
+    try await workspaceRepository.save(
+      WorkspaceRecord(
+        id: workspaceID,
+        route: .connected(profileID: brokerID),
+        selectedProfileID: brokerID,
+        numericChart: chart
+      )
+    )
+    let historyRepository = EmptyChartWorkspaceHistoryRepository()
+    let scene = JollysMQTTAppDependencies(
+      profileRepository: profileRepository,
+      workspaceRepository: workspaceRepository,
+      historyRepositoryProvider: .init { _ in historyRepository }
+    ).makeSceneStore(id: workspaceID)
+
+    await scene.start()
+    #expect(scene.numericChart.state.configuration == chart)
+
+    scene.topics.receive(
+      await workspaceTopicSnapshot(
+        brokerID: brokerID,
+        historySourceID: "current-source"
+      )
+    )
+    for _ in 0..<1_000 {
+      if scene.numericChart.state.samples.map(\.id.ordinal) == [1] {
+        break
+      }
+      await Task.yield()
+    }
+
+    #expect(scene.numericChart.state.historySourceID == "current-source")
+    #expect(scene.numericChart.state.samples.map(\.value) == [42])
+
+    scene.numericChart.send(.setPaused(true))
+    await scene.workspace.flush()
+    let persisted = try await workspaceRepository.load(id: workspaceID)
+    #expect(persisted.numericChart?.isPaused == true)
+  }
+
   @Test("The observable store restores routing and presentation on relaunch")
   @MainActor
   func storeRestoresWorkspace() async throws {
@@ -446,6 +677,20 @@ struct WorkspaceFeatureTests {
   }
 }
 
+private func numericChartConfiguration(
+  brokerID: UUID
+) -> NumericChartConfiguration {
+  NumericChartConfiguration(
+    series: NumericChartSeries(
+      id: NumericChartSeriesID(
+        brokerID: brokerID,
+        topic: "factory/temperature"
+      ),
+      conversion: NumericChartValueConversion(kind: .number)
+    )
+  )
+}
+
 private actor RecordingWorkspaceRepository: WorkspaceRepositoryProtocol {
   private var closed: [WorkspaceID] = []
 
@@ -562,12 +807,13 @@ private actor FutureWorkspaceRepository: WorkspaceRepositoryProtocol {
 }
 
 private func workspaceRankedProfile(
+  id: UUID = UUID(),
   name: String,
   rank: Int64
 ) -> RankedBrokerProfile {
   RankedBrokerProfile(
     profile: BrokerProfile(
-      id: UUID(),
+      id: id,
       name: name,
       host: "\(name.lowercased()).example",
       port: 1_883,
@@ -583,4 +829,36 @@ private func workspaceRankedProfile(
     ),
     reorderRank: rank
   )
+}
+
+private func workspaceTopicSnapshot(
+  brokerID: UUID,
+  historySourceID: String
+) async -> BrokerTopicTreeSnapshot {
+  let ingestion = BrokerFeedIngestion(
+    brokerID: brokerID,
+    historySourceID: historySourceID,
+    historyWriter: DisabledBrokerHistoryWriter()
+  )
+  await ingestion.ingest(
+    BrokerInboundMessage(
+      connectionEpoch: ConnectionEpochID(),
+      ordinal: 1,
+      topic: "factory/temperature",
+      payload: Data("42".utf8),
+      qos: .atMostOnce,
+      retained: false,
+      duplicate: false,
+      receivedAtMicroseconds: 42
+    )
+  )
+  return await ingestion.flush()
+}
+
+private actor EmptyChartWorkspaceHistoryRepository:
+  BrokerHistoryReading
+{
+  func page(_ request: HistoryPageRequest) -> HistoryPage {
+    HistoryPage(messages: [], nextCursor: nil)
+  }
 }
