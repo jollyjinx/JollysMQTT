@@ -1,19 +1,19 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "%@, %lld topics, %llu messages" : {
-      "comment" : "Accessible live topic row with exact topic and subtree counters.",
+    "%lld bytes" : {
+      "comment" : "Exact MQTT payload size in bytes."
+    },
+    "%lld completed, %lld retryable" : {
+      "comment" : "Retained deletion result summary. Variables are completed and retryable topic counts.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "%1$@, %2$lld topics, %3$llu messages"
+            "value" : "%1$lld completed, %2$lld retryable"
           }
         }
       }
-    },
-    "%lld bytes" : {
-      "comment" : "Exact MQTT payload size in bytes."
     },
     "%lld descendant topics, %llu descendant messages" : {
       "comment" : "Accessible branch-only MQTT topic metadata. Variables are descendant value-topic and message counts.",
@@ -22,6 +22,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$lld descendant topics, %2$llu descendant messages"
+          }
+        }
+      }
+    },
+    "%lld of %lld completed" : {
+      "comment" : "Active retained deletion progress. Variables are completed and total topic counts.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld completed"
           }
         }
       }
@@ -88,11 +99,11 @@
     "Broker Unavailable" : {
       "comment" : "Connected-workspace heading when its saved broker profile is unavailable."
     },
-    "Broker Workspace" : {
-      "comment" : "Title of the connected broker workspace."
-    },
     "Cancel" : {
-      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry.\nCancels the current broker connection or retry."
+      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels a retained-value deletion confirmation.\nCancels broker password entry.\nCancels the current broker connection or retry."
+    },
+    "Cancel after current topic" : {
+      "comment" : "Stops recursive retained deletion after the current acknowledged publish settles."
     },
     "Changes visibility of descendants under %@." : {
       "comment" : "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
@@ -111,6 +122,15 @@
     },
     "Command-Return" : {
       "comment" : "Keyboard shortcut hint for publishing the current draft."
+    },
+    "Completed" : {
+      "comment" : "Accessible status for a successfully acknowledged retained deletion."
+    },
+    "Confirm deleting %lld retained values" : {
+      "comment" : "Accessible recursive destructive confirmation label. The variable is the exact topic count."
+    },
+    "Confirm deleting the retained value for %@" : {
+      "comment" : "Accessible destructive confirmation label. The variable is the exact MQTT topic."
     },
     "Connect" : {
       "comment" : "Primary action that connects to a selected broker."
@@ -154,8 +174,17 @@
     "Copy Topic" : {
       "comment" : "Copies the exact selected MQTT topic."
     },
+    "Current retained deletion topic %@" : {
+      "comment" : "Accessible label for the MQTT topic whose retained delete is in flight. The variable is the exact topic."
+    },
     "Delete" : {
       "comment" : "Context action that requests broker profile deletion."
+    },
+    "Delete %lld retained values" : {
+      "comment" : "Confirms recursive retained-value deletion. The variable is the exact target count."
+    },
+    "Delete %lld retained values?" : {
+      "comment" : "Recursive retained-value confirmation title. The variable is the exact target count."
     },
     "Delete Broker?" : {
       "comment" : "Title confirming deletion of a broker profile."
@@ -166,6 +195,18 @@
     "Delete Profile and Password" : {
       "comment" : "Destructive action that deletes a broker profile and its device password."
     },
+    "Delete retained value" : {
+      "comment" : "Confirms one retained-value deletion.\nDestructive action that publishes one zero-byte retained MQTT message after confirmation."
+    },
+    "Delete retained value?" : {
+      "comment" : "Fallback destructive retained-value confirmation title.\nSingle retained-value destructive confirmation title."
+    },
+    "Delete retained values in subtree" : {
+      "comment" : "Destructive action that targets locally known value topics in the selected subtree."
+    },
+    "Deleting retained values" : {
+      "comment" : "Progress label for a retained deletion operation."
+    },
     "Details" : {
       "comment" : "Compact connected-workspace payload-details destination."
     },
@@ -174,6 +215,9 @@
     },
     "Disconnecting" : {
       "comment" : "Broker connection phase shown while owned work is being closed."
+    },
+    "Dismiss" : {
+      "comment" : "Dismisses a retained deletion result report."
     },
     "Duplicate" : {
       "comment" : "Context action that duplicates a broker profile."
@@ -219,6 +263,9 @@
     },
     "Enter valid JSON for JSON mode." : {
       "comment" : "Validation error for malformed publish JSON."
+    },
+    "Enumerates the current local snapshot and asks you to confirm the exact topic count." : {
+      "comment" : "Accessible hint explaining recursive retained-value target enumeration."
     },
     "Expand Topic" : {
       "comment" : "Accessible action that expands a topic branch."
@@ -352,6 +399,15 @@
     "No Matching Topics" : {
       "comment" : "Empty topic explorer title when search has no matches."
     },
+    "No current retryable retained values" : {
+      "comment" : "Accessible summary when retained deletion reconfirmation has no current targets."
+    },
+    "No non-stale locally known value-bearing topics are available in the selected scope." : {
+      "comment" : "Explains why a retained deletion request produced no current local targets."
+    },
+    "None of the retryable topics is a current locally known value on this connection." : {
+      "comment" : "Explains why reconnect reconfirmation found no still-current retryable targets."
+    },
     "Normalized text view of the original non-UTF-8 JSON bytes" : {
       "comment" : "Clarifies that non-UTF-8 JSON is transcoded for its raw text view."
     },
@@ -415,6 +471,9 @@
     "Published" : {
       "comment" : "Direction of an outgoing MQTT publish."
     },
+    "Publishes zero-byte retained MQTT messages and waits for broker acknowledgements." : {
+      "comment" : "Accessible confirmation hint for acknowledged retained-value deletion."
+    },
     "Publishing" : {
       "comment" : "Publish button label while awaiting transport completion."
     },
@@ -436,9 +495,6 @@
     "Raw" : {
       "comment" : "JSON inspector raw source presentation mode."
     },
-    "Ready to connect to %@." : {
-      "comment" : "Placeholder connected state. The variable is a broker profile name."
-    },
     "Ready to publish" : {
       "comment" : "Neutral MQTT publish composer state."
     },
@@ -451,6 +507,9 @@
     "Recent Activity" : {
       "comment" : "Sorts topic siblings by latest subtree activity."
     },
+    "Reconfirm on current connection" : {
+      "comment" : "Begins a new exact-count confirmation after the broker connection changed."
+    },
     "Reconnect All Windows to Apply" : {
       "comment" : "Reconnects every workspace for a broker using the pending profile settings."
     },
@@ -459,6 +518,9 @@
     },
     "Removes this topic filter from the profile." : {
       "comment" : "Accessibility hint for removing a subscription filter."
+    },
+    "Requires confirmation, then attempts to clear this topic’s broker-retained value." : {
+      "comment" : "Accessible hint explaining the single retained-value deletion action."
     },
     "Resolving broker" : {
       "comment" : "Broker connection phase shown before opening the transport."
@@ -503,6 +565,12 @@
     "Retry History" : {
       "comment" : "Attempts to resume durable MQTT history persistence."
     },
+    "Retry remaining topics" : {
+      "comment" : "Retries failed or cancelled retained deletions on the same connection."
+    },
+    "Retryable" : {
+      "comment" : "Accessible status for a retained deletion not yet attempted."
+    },
     "Save" : {
       "comment" : "Action that validates and saves a broker profile."
     },
@@ -520,9 +588,6 @@
     },
     "Select a Topic" : {
       "comment" : "Inspector title when no MQTT topic is selected."
-    },
-    "Selected topic: %@" : {
-      "comment" : "Restored topic selection. The variable is an MQTT topic."
     },
     "Show Brokers" : {
       "comment" : "Returns a connected workspace to the broker list."
@@ -602,6 +667,9 @@
     "The broker configuration is invalid." : {
       "comment" : "Explains a terminal invalid broker configuration."
     },
+    "The broker connection changed before the publish could be sent." : {
+      "comment" : "Publish failure when a destructive operation belongs to an earlier broker connection."
+    },
     "The broker is unavailable." : {
       "comment" : "Explains a transient broker availability failure."
     },
@@ -616,6 +684,9 @@
     },
     "The broker reported an MQTT protocol error." : {
       "comment" : "Explains a terminal MQTT protocol failure."
+    },
+    "The connection changed. This newly confirms exactly %lld still-current retryable topics on the present connection. This is not the broker’s complete retained-message inventory." : {
+      "comment" : "Explains renewed authorization for retryable retained deletions after reconnect. The variable is the new exact count."
     },
     "The device password is unavailable." : {
       "comment" : "Explains a terminal device-local credential failure."
@@ -644,14 +715,20 @@
     "The reconnect delays are incompatible." : {
       "comment" : "Validation error for reconnect delay settings."
     },
-    "The saved broker profile is unavailable." : {
-      "comment" : "Shown when a restored workspace refers to a missing profile."
-    },
     "The updated fixed client ID is already in use by another connection to this broker. Choose a different client ID before reconnecting." : {
       "comment" : "Explains why updated broker settings cannot reconnect all windows."
     },
+    "These actions attempt to clear broker-retained state. Locally observed topics are not the broker’s complete retained-message inventory." : {
+      "comment" : "Safety explanation that local retained deletion cannot claim a complete broker inventory."
+    },
     "This cached topic has not been observed in the current connection. Its old payload is not shown as current." : {
       "comment" : "Explains why a stale cached MQTT payload is suppressed."
+    },
+    "This publishes a zero-byte retained message to %@. It attempts to clear that broker-retained value; local delivery metadata does not prove the broker currently stores it." : {
+      "comment" : "Explains MQTT semantics before one retained-value deletion. The variable is the exact topic."
+    },
+    "This publishes zero-byte retained messages to exactly %lld unique, non-stale, locally known value-bearing topics in the selected subtree. This is not the broker’s complete retained-message inventory." : {
+      "comment" : "Explains recursive retained deletion scope. The variable is the exact snapshotted target count."
     },
     "Topic" : {
       "comment" : "Label for the exact MQTT publication topic."
@@ -691,6 +768,9 @@
     },
     "Waiting for Topics" : {
       "comment" : "Empty topic explorer title before live messages arrive."
+    },
+    "Waiting for broker acknowledgement" : {
+      "comment" : "Accessible status for an in-flight retained deletion."
     },
     "Waiting to reconnect" : {
       "comment" : "Broker connection phase shown during automatic backoff."

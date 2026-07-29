@@ -560,6 +560,12 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
     guard !isReleased, current.phase == .connected else {
       return .failure(.notConnected)
     }
+    guard
+      request.expectedBrokerID == nil
+        || request.expectedBrokerID == configuration?.profile.id
+    else {
+      return .failure(.connectionChanged)
+    }
     return await attempt.publish(request)
   }
 

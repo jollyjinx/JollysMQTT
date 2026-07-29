@@ -272,6 +272,7 @@ public final class WorkspaceSceneStore {
   public let topics: TopicOutlineStore
   public let payloadInspector: PayloadInspectorStore
   public let publishComposer: PublishStore
+  public let retainedDeletion: RetainedDeletionStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -300,6 +301,8 @@ public final class WorkspaceSceneStore {
     self.payloadInspector = payloadInspector
     let publishComposer = PublishStore(publisher: feed)
     self.publishComposer = publishComposer
+    let retainedDeletion = RetainedDeletionStore(publisher: feed)
+    self.retainedDeletion = retainedDeletion
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
@@ -327,6 +330,10 @@ public final class WorkspaceSceneStore {
       publishComposer?.send(
         .selectionChanged(selection.topic)
       )
+    }
+    self.topics.onRetainedDeletionContextChange = {
+      [weak retainedDeletion] context, snapshot in
+      retainedDeletion?.updateContext(context, snapshot: snapshot)
     }
   }
 
@@ -537,6 +544,13 @@ public final class TopicOutlineStore {
 
   private let feed: any BrokerFeedLeaseControlling
   var onPayloadSelectionChange: (@MainActor @Sendable (PayloadTopicSelection) -> Void)?
+  var onRetainedDeletionContextChange:
+    (
+      @MainActor @Sendable (
+        RetainedDeletionContext?,
+        BrokerTopicTreeSnapshot
+      ) -> Void
+    )?
 
   init(feed: any BrokerFeedLeaseControlling) {
     self.feed = feed
@@ -557,11 +571,13 @@ public final class TopicOutlineStore {
       expectedBrokerID: expectedBrokerID
     )
     onPayloadSelectionChange?(state.payloadSelection)
+    notifyRetainedDeletionContext()
   }
 
   func send(_ intent: TopicOutlineFeature.Intent) {
     TopicOutlineFeature.reduce(state: &state, intent: intent)
     onPayloadSelectionChange?(state.payloadSelection)
+    notifyRetainedDeletionContext()
   }
 
   func receive(_ snapshot: BrokerTopicTreeSnapshot) {
@@ -576,6 +592,7 @@ public final class TopicOutlineStore {
       action: .snapshotReceived(snapshot)
     )
     onPayloadSelectionChange?(state.payloadSelection)
+    notifyRetainedDeletionContext()
   }
 
   func observe() async {
@@ -584,6 +601,30 @@ public final class TopicOutlineStore {
       if Task.isCancelled { return }
       receive(snapshot)
     }
+  }
+
+  private func notifyRetainedDeletionContext() {
+    guard
+      let brokerID =
+        state.expectedBrokerID
+        ?? state.liveSnapshot.roots.first?.id.brokerID,
+      let connectionEpoch = state.liveSnapshot.connectionEpoch
+    else {
+      onRetainedDeletionContextChange?(nil, state.liveSnapshot)
+      return
+    }
+    onRetainedDeletionContextChange?(
+      RetainedDeletionContext(
+        brokerID: brokerID,
+        connectionEpoch: connectionEpoch,
+        selectedTopic: state.selectedTopic,
+        selectedHasCurrentValue: {
+          if case .current = state.payloadSelection { return true }
+          return false
+        }()
+      ),
+      state.liveSnapshot
+    )
   }
 }
 

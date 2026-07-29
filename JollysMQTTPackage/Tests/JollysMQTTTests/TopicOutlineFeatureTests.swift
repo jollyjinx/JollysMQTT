@@ -515,6 +515,7 @@ struct TopicOutlineFeatureTests {
 
     #expect(state.isFrozen)
     #expect(state.snapshot.revision == 1)
+    #expect(state.liveSnapshot.revision == 50)
     #expect(state.pendingChangeCount == 999)
     #expect(state.pendingChangeCountIsCapped)
 

@@ -211,6 +211,30 @@ struct BrokerFeedTransportTests {
   ) {
     #expect(BrokerPublishCompletion(successfulQoS: qos) == completion)
   }
+
+  @Test("A destructive publish cannot enter a different connection epoch queue")
+  func expectedConnectionEpochIsCheckedBeforeQueueAdmission() async {
+    let activeEpoch = ConnectionEpochID()
+    let queue = BrokerFeedPublishCommandQueue(
+      connectionEpoch: activeEpoch,
+      capacity: 2
+    )
+    let request = BrokerPublishRequest(
+      operationID: PublishOperationID(),
+      topic: "factory/retained",
+      payload: Data(),
+      qos: .atLeastOnce,
+      retain: true,
+      expectedBrokerID: UUID(),
+      expectedConnectionEpoch: ConnectionEpochID()
+    )
+
+    #expect(await queue.submit(request) == .failure(.connectionChanged))
+    #expect(await queue.pendingOperationCount() == 0)
+    var iterator = await queue.commands().makeAsyncIterator()
+    await queue.close()
+    #expect(await iterator.next() == nil)
+  }
 }
 
 private func waitForPendingOperationCount(

@@ -1261,6 +1261,13 @@ extension BrokerPublishFailure {
         bundle: #bundle,
         comment: "Publish failure when its connection or owning feed is cancelled."
       )
+    case .connectionChanged:
+      LocalizedStringResource(
+        "The broker connection changed before the publish could be sent.",
+        bundle: #bundle,
+        comment:
+          "Publish failure when a destructive operation belongs to an earlier broker connection."
+      )
     }
   }
 }
@@ -1368,8 +1375,453 @@ private struct TopicExplorerView: View {
           }
         }
       }
+      RetainedDeletionControls(store: sceneStore.retainedDeletion)
     }
     .frame(minHeight: 320)
+  }
+}
+
+private struct RetainedDeletionControls: View {
+  @Bindable var store: RetainedDeletionStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      RetainedDeletionActionButtons(store: store)
+
+      Text(
+        "These actions attempt to clear broker-retained state. Locally observed topics are not the broker’s complete retained-message inventory.",
+        bundle: #bundle,
+        comment:
+          "Safety explanation that local retained deletion cannot claim a complete broker inventory."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+
+      if store.state.targetEnumerationEmpty {
+        Text(
+          "No non-stale locally known value-bearing topics are available in the selected scope.",
+          bundle: #bundle,
+          comment:
+            "Explains why a retained deletion request produced no current local targets."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      if store.state.reconfirmationUnavailable {
+        Text(
+          "None of the retryable topics is a current locally known value on this connection.",
+          bundle: #bundle,
+          comment:
+            "Explains why reconnect reconfirmation found no still-current retryable targets."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(
+          Text(
+            "No current retryable retained values",
+            bundle: #bundle,
+            comment:
+              "Accessible summary when retained deletion reconfirmation has no current targets."
+          )
+        )
+      }
+
+      if let operation = store.state.operation {
+        RetainedDeletionOperationView(
+          operation: operation,
+          canRetry: store.state.canRetryCurrentAuthorization,
+          canReconfirm:
+            store.state.canReconfirmRetryableRemainder,
+          onCancel: {
+            store.send(.cancel)
+          },
+          onRetry: store.retry,
+          onReconfirm: store.reconfirmRetryableRemainder,
+          onDismiss: {
+            store.send(.dismissReport)
+          }
+        )
+      }
+    }
+    .confirmationDialog(
+      confirmationTitle(store.state.confirmation),
+      isPresented: Binding(
+        get: { store.state.confirmation != nil },
+        set: { presented in
+          if !presented {
+            store.send(.dismissConfirmation)
+          }
+        }
+      ),
+      titleVisibility: .visible,
+      presenting: store.state.confirmation
+    ) { confirmation in
+      Button(role: .destructive) {
+        store.confirm()
+      } label: {
+        confirmationButtonLabel(confirmation)
+      }
+      .accessibilityLabel(
+        confirmationAccessibilityLabel(confirmation)
+      )
+      .accessibilityHint(
+        Text(
+          "Publishes zero-byte retained MQTT messages and waits for broker acknowledgements.",
+          bundle: #bundle,
+          comment:
+            "Accessible confirmation hint for acknowledged retained-value deletion."
+        )
+      )
+      Button(role: .cancel) {
+        store.send(.dismissConfirmation)
+      } label: {
+        Text(
+          "Cancel",
+          bundle: #bundle,
+          comment: "Cancels a retained-value deletion confirmation."
+        )
+      }
+    } message: { confirmation in
+      confirmationMessage(confirmation)
+    }
+  }
+
+  private func confirmationTitle(
+    _ confirmation: RetainedDeletionConfirmation?
+  ) -> Text {
+    guard let confirmation else {
+      return Text(
+        "Delete retained value?",
+        bundle: #bundle,
+        comment: "Fallback destructive retained-value confirmation title."
+      )
+    }
+    switch confirmation.scope {
+    case .single:
+      return Text(
+        "Delete retained value?",
+        bundle: #bundle,
+        comment: "Single retained-value destructive confirmation title."
+      )
+    case .subtree, .retryableRemainder:
+      return Text(
+        "Delete \(confirmation.topicCount) retained values?",
+        bundle: #bundle,
+        comment:
+          "Recursive retained-value confirmation title. The variable is the exact target count."
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func confirmationButtonLabel(
+    _ confirmation: RetainedDeletionConfirmation
+  ) -> some View {
+    switch confirmation.scope {
+    case .single:
+      Text(
+        "Delete retained value",
+        bundle: #bundle,
+        comment: "Confirms one retained-value deletion."
+      )
+    case .subtree, .retryableRemainder:
+      Text(
+        "Delete \(confirmation.topicCount) retained values",
+        bundle: #bundle,
+        comment:
+          "Confirms recursive retained-value deletion. The variable is the exact target count."
+      )
+    }
+  }
+
+  private func confirmationAccessibilityLabel(
+    _ confirmation: RetainedDeletionConfirmation
+  ) -> Text {
+    switch confirmation.accessibilityTarget {
+    case .exactTopic(let topic):
+      Text(
+        "Confirm deleting the retained value for \(topic)",
+        bundle: #bundle,
+        comment:
+          "Accessible destructive confirmation label. The variable is the exact MQTT topic."
+      )
+    case .exactCount(let count):
+      Text(
+        "Confirm deleting \(count) retained values",
+        bundle: #bundle,
+        comment:
+          "Accessible recursive destructive confirmation label. The variable is the exact topic count."
+      )
+    }
+  }
+
+  private func confirmationMessage(
+    _ confirmation: RetainedDeletionConfirmation
+  ) -> Text {
+    switch confirmation.scope {
+    case .single(let topic):
+      Text(
+        "This publishes a zero-byte retained message to \(topic). It attempts to clear that broker-retained value; local delivery metadata does not prove the broker currently stores it.",
+        bundle: #bundle,
+        comment:
+          "Explains MQTT semantics before one retained-value deletion. The variable is the exact topic."
+      )
+    case .subtree:
+      Text(
+        "This publishes zero-byte retained messages to exactly \(confirmation.topicCount) unique, non-stale, locally known value-bearing topics in the selected subtree. This is not the broker’s complete retained-message inventory.",
+        bundle: #bundle,
+        comment:
+          "Explains recursive retained deletion scope. The variable is the exact snapshotted target count."
+      )
+    case .retryableRemainder:
+      Text(
+        "The connection changed. This newly confirms exactly \(confirmation.topicCount) still-current retryable topics on the present connection. This is not the broker’s complete retained-message inventory.",
+        bundle: #bundle,
+        comment:
+          "Explains renewed authorization for retryable retained deletions after reconnect. The variable is the new exact count."
+      )
+    }
+  }
+}
+
+private struct RetainedDeletionActionButtons: View {
+  @Bindable var store: RetainedDeletionStore
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 8) {
+        singleButton
+        subtreeButton
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        singleButton
+        subtreeButton
+      }
+    }
+  }
+
+  private var singleButton: some View {
+    Button(role: .destructive) {
+      store.requestSingleDeletion()
+    } label: {
+      Text(
+        "Delete retained value",
+        bundle: #bundle,
+        comment:
+          "Destructive action that publishes one zero-byte retained MQTT message after confirmation."
+      )
+    }
+    .disabled(
+      !store.state.canDeleteSingle
+        || store.state.operation?.isActive == true
+    )
+    .accessibilityHint(
+      Text(
+        "Requires confirmation, then attempts to clear this topic’s broker-retained value.",
+        bundle: #bundle,
+        comment:
+          "Accessible hint explaining the single retained-value deletion action."
+      )
+    )
+  }
+
+  private var subtreeButton: some View {
+    Button(role: .destructive) {
+      store.requestSubtreeDeletion()
+    } label: {
+      Text(
+        "Delete retained values in subtree",
+        bundle: #bundle,
+        comment:
+          "Destructive action that targets locally known value topics in the selected subtree."
+      )
+    }
+    .disabled(
+      !store.state.canDeleteSubtree
+        || store.state.operation?.isActive == true
+    )
+    .accessibilityHint(
+      Text(
+        "Enumerates the current local snapshot and asks you to confirm the exact topic count.",
+        bundle: #bundle,
+        comment:
+          "Accessible hint explaining recursive retained-value target enumeration."
+      )
+    )
+  }
+}
+
+private struct RetainedDeletionOperationView: View {
+  let operation: RetainedDeletionOperation
+  let canRetry: Bool
+  let canReconfirm: Bool
+  let onCancel: () -> Void
+  let onRetry: () -> Void
+  let onReconfirm: () -> Void
+  let onDismiss: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Group {
+        if operation.isActive {
+          Text(
+            "\(operation.completedTopicCount) of \(operation.topics.count) completed",
+            bundle: #bundle,
+            comment:
+              "Active retained deletion progress. Variables are completed and total topic counts."
+          )
+        } else {
+          Text(
+            "\(operation.completedTopics.count) completed, \(operation.retryableTopics.count) retryable",
+            bundle: #bundle,
+            comment:
+              "Retained deletion result summary. Variables are completed and retryable topic counts."
+          )
+        }
+      }
+      .font(.subheadline.weight(.semibold))
+
+      if operation.isActive {
+        ProgressView()
+          .accessibilityLabel(
+            Text(
+              "Deleting retained values",
+              bundle: #bundle,
+              comment: "Progress label for a retained deletion operation."
+            )
+          )
+        if let currentTopic = operation.currentTopic {
+          Text(verbatim: currentTopic)
+            .font(.caption.monospaced())
+            .lineLimit(1)
+            .accessibilityLabel(
+              Text(
+                "Current retained deletion topic \(currentTopic)",
+                bundle: #bundle,
+                comment:
+                  "Accessible label for the MQTT topic whose retained delete is in flight. The variable is the exact topic."
+              )
+            )
+        }
+        Button(role: .cancel, action: onCancel) {
+          Text(
+            "Cancel after current topic",
+            bundle: #bundle,
+            comment:
+              "Stops recursive retained deletion after the current acknowledged publish settles."
+          )
+        }
+        .disabled(operation.phase == .cancelling)
+      } else {
+        HStack(spacing: 8) {
+          if canRetry {
+            Button(action: onRetry) {
+              Text(
+                "Retry remaining topics",
+                bundle: #bundle,
+                comment:
+                  "Retries failed or cancelled retained deletions on the same connection."
+              )
+            }
+          } else if canReconfirm {
+            Button(role: .destructive, action: onReconfirm) {
+              Text(
+                "Reconfirm on current connection",
+                bundle: #bundle,
+                comment:
+                  "Begins a new exact-count confirmation after the broker connection changed."
+              )
+            }
+          }
+          Button(action: onDismiss) {
+            Text(
+              "Dismiss",
+              bundle: #bundle,
+              comment: "Dismisses a retained deletion result report."
+            )
+          }
+        }
+      }
+
+      if !operation.isActive {
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 4) {
+            ForEach(operation.topics) { topic in
+              RetainedDeletionTopicResultRow(topic: topic)
+            }
+          }
+        }
+        .frame(maxHeight: 160)
+      }
+    }
+    .padding(10)
+    .background(.quaternary, in: .rect(cornerRadius: 8))
+    .accessibilityElement(children: .contain)
+  }
+}
+
+private struct RetainedDeletionTopicResultRow: View {
+  let topic: RetainedDeletionTopicOperation
+
+  var body: some View {
+    Label {
+      Text(verbatim: topic.topic)
+        .lineLimit(1)
+    } icon: {
+      Image(systemName: systemImage)
+    }
+    .font(.caption)
+    .foregroundStyle(foregroundStyle)
+    .accessibilityElement(children: .combine)
+    .accessibilityValue(accessibilityValue)
+  }
+
+  private var systemImage: String {
+    switch topic.status {
+    case .pending:
+      "circle"
+    case .publishing:
+      "clock.arrow.circlepath"
+    case .succeeded:
+      "checkmark.circle"
+    case .failed:
+      "exclamationmark.triangle"
+    }
+  }
+
+  private var foregroundStyle: Color {
+    switch topic.status {
+    case .failed:
+      .red
+    default:
+      .secondary
+    }
+  }
+
+  private var accessibilityValue: Text {
+    switch topic.status {
+    case .pending:
+      Text(
+        "Retryable",
+        bundle: #bundle,
+        comment: "Accessible status for a retained deletion not yet attempted."
+      )
+    case .publishing:
+      Text(
+        "Waiting for broker acknowledgement",
+        bundle: #bundle,
+        comment: "Accessible status for an in-flight retained deletion."
+      )
+    case .succeeded:
+      Text(
+        "Completed",
+        bundle: #bundle,
+        comment: "Accessible status for a successfully acknowledged retained deletion."
+      )
+    case .failed(let failure):
+      Text(failure.localizedDescription)
+    }
   }
 }
 

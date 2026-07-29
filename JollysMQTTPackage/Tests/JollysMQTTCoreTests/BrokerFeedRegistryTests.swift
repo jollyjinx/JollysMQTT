@@ -5,6 +5,30 @@ import Testing
 
 @Suite("Broker feed registry")
 struct BrokerFeedRegistryTests {
+  @Test("Registry rejects a destructive request authorized for another broker")
+  func publishBrokerAuthorization() async {
+    let factory = RegistryRawFeedFactory()
+    let registry = BrokerFeedRegistry(makeFeed: factory.makeFeed)
+    let lease = registry.makeLease(workspaceID: WorkspaceID())
+    let profile = BrokerProfile.registryTest()
+    await lease.connect(
+      BrokerFeedConfiguration(profile: profile, credentialRevision: 0)
+    )
+    let request = BrokerPublishRequest(
+      operationID: PublishOperationID(),
+      topic: "root/value",
+      payload: Data(),
+      qos: .atLeastOnce,
+      retain: true,
+      expectedBrokerID: UUID(),
+      expectedConnectionEpoch: ConnectionEpochID()
+    )
+
+    #expect(await lease.publish(request) == .failure(.connectionChanged))
+    #expect(await factory.onlyFeed()?.publishCount() == 0)
+    await lease.release()
+  }
+
   @Test("Display-only edits keep the same effective connection key")
   func displayOnlyEditKeepsConnectionKey() {
     let profileID = UUID()
@@ -710,6 +734,7 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
   private var connections = 0
   private var releases = 0
   private var sceneActivities: [Bool] = []
+  private var publishes = 0
   private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
   init() {
@@ -743,6 +768,10 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
   }
 
   func retry() {}
+  func publish(_ request: BrokerPublishRequest) -> BrokerPublishResult {
+    publishes += 1
+    return .failure(.transportUnavailable)
+  }
   func cancel() {}
   func setSceneActive(_ isActive: Bool) {
     sceneActivities.append(isActive)
@@ -765,6 +794,10 @@ private actor RegistryRawFeed: BrokerFeedLeaseControlling {
 
   func releaseCount() -> Int {
     releases
+  }
+
+  func publishCount() -> Int {
+    publishes
   }
 
   func waitForReleaseCount(_ count: Int) async {

@@ -15,14 +15,19 @@ private struct BrokerFeedLocalOverload: Error, Sendable {
 }
 
 actor BrokerFeedPublishCommandQueue {
+  private let connectionEpoch: ConnectionEpochID
   private let stream: AsyncStream<BrokerFeedPublishCommand>
   private let continuation: AsyncStream<BrokerFeedPublishCommand>.Continuation
   private var completions: [PublishOperationID: CheckedContinuation<BrokerPublishResult, Never>] =
     [:]
   private var isClosed = false
 
-  init(capacity: Int = 32) {
+  init(
+    connectionEpoch: ConnectionEpochID = ConnectionEpochID(),
+    capacity: Int = 32
+  ) {
     precondition(capacity > 0)
+    self.connectionEpoch = connectionEpoch
     (stream, continuation) = AsyncStream.makeStream(
       of: BrokerFeedPublishCommand.self,
       bufferingPolicy: .bufferingOldest(capacity)
@@ -32,6 +37,12 @@ actor BrokerFeedPublishCommandQueue {
   func submit(_ request: BrokerPublishRequest) async -> BrokerPublishResult {
     guard !isClosed else {
       return .failure(.notConnected)
+    }
+    guard
+      request.expectedConnectionEpoch == nil
+        || request.expectedConnectionEpoch == connectionEpoch
+    else {
+      return .failure(.connectionChanged)
     }
     // Caller cancellation does not revoke an MQTT operation once queued. The
     // connection session owns it until completion or structured teardown.
@@ -305,6 +316,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     await ingestion?.beginConnectionEpoch(connection.connectionEpoch)
     await events.subscribing()
     let publishCommands = BrokerFeedPublishCommandQueue(
+      connectionEpoch: connection.connectionEpoch,
       capacity: publishQueueCapacity
     )
     let commandStream = await publishCommands.commands()

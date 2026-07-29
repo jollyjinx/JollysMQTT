@@ -136,19 +136,25 @@ public struct BrokerPublishRequest: Equatable, Sendable {
   public let payload: Data
   public let qos: MQTTQualityOfService
   public let retain: Bool
+  public let expectedBrokerID: UUID?
+  public let expectedConnectionEpoch: ConnectionEpochID?
 
   public init(
     operationID: PublishOperationID,
     topic: String,
     payload: Data,
     qos: MQTTQualityOfService,
-    retain: Bool
+    retain: Bool,
+    expectedBrokerID: UUID? = nil,
+    expectedConnectionEpoch: ConnectionEpochID? = nil
   ) {
     self.operationID = operationID
     self.topic = topic
     self.payload = payload
     self.qos = qos
     self.retain = retain
+    self.expectedBrokerID = expectedBrokerID
+    self.expectedConnectionEpoch = expectedConnectionEpoch
   }
 }
 
@@ -186,6 +192,7 @@ public enum BrokerPublishFailure: Error, Equatable, Sendable {
   case queueFull
   case transportUnavailable
   case cancelled
+  case connectionChanged
 }
 
 public typealias BrokerPublishResult =

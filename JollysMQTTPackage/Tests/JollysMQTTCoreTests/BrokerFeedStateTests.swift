@@ -617,6 +617,30 @@ struct BrokerFeedStateTests {
     #expect(await attempt.attemptCount() == 1)
   }
 
+  @Test("Feed rejects a destructive request authorized for another broker")
+  func publishBrokerAuthorization() async {
+    let attempt = HoldingSuccessfulAttempt()
+    let feed = BrokerFeed(attempt: attempt)
+    let profile = BrokerProfile.feedTestProfile()
+    await feed.connect(
+      BrokerFeedConfiguration(profile: profile, credentialRevision: 0)
+    )
+    await attempt.waitUntilConnected()
+    let request = BrokerPublishRequest(
+      operationID: PublishOperationID(),
+      topic: "root/value",
+      payload: Data(),
+      qos: .atLeastOnce,
+      retain: true,
+      expectedBrokerID: UUID(),
+      expectedConnectionEpoch: ConnectionEpochID()
+    )
+
+    #expect(await feed.publish(request) == .failure(.connectionChanged))
+    #expect(await attempt.publishCount() == 0)
+    await feed.release()
+  }
+
   @Test("Final release terminates raw snapshot monitoring")
   func releaseTerminatesSnapshots() async {
     let feed = BrokerFeed(
@@ -743,6 +767,7 @@ private actor HoldingSuccessfulAttempt: BrokerFeedAttempting {
   private var didConnect = false
   private var connectedWaiters: [CheckedContinuation<Void, Never>] = []
   private var closes = 0
+  private var publishes = 0
 
   init() {
     (holdStream, holdContinuation) = AsyncStream.makeStream()
@@ -770,6 +795,11 @@ private actor HoldingSuccessfulAttempt: BrokerFeedAttempting {
     holdContinuation.finish()
   }
 
+  func publish(_ request: BrokerPublishRequest) -> BrokerPublishResult {
+    publishes += 1
+    return .failure(.transportUnavailable)
+  }
+
   func waitUntilConnected() async {
     guard !didConnect else { return }
     await withCheckedContinuation { continuation in
@@ -779,6 +809,10 @@ private actor HoldingSuccessfulAttempt: BrokerFeedAttempting {
 
   func closeCount() -> Int {
     closes
+  }
+
+  func publishCount() -> Int {
+    publishes
   }
 }
 

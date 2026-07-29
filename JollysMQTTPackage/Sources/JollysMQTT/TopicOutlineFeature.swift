@@ -47,6 +47,10 @@ public enum TopicOutlineFeature {
       )
     }
 
+    public var liveSnapshot: BrokerTopicTreeSnapshot {
+      newestSnapshot
+    }
+
     public init(
       selectedTopic: String? = nil,
       expandedTopics: Set<String> = [],

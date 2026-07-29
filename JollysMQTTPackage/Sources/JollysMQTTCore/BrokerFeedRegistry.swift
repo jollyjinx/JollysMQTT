@@ -402,6 +402,12 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     else {
       return .failure(.notConnected)
     }
+    guard
+      request.expectedBrokerID == nil
+        || request.expectedBrokerID == profileID
+    else {
+      return .failure(.connectionChanged)
+    }
     return await feed.publish(request)
   }
 
