@@ -225,8 +225,10 @@ public struct JollysMQTTAppDependencies: Sendable {
       return BrokerFeed(attempt: attempt)
     }
     return JollysMQTTAppDependencies(
-      profileRepository: LocalProfileRepository(
-        fileURL: root.appending(path: "profiles.json")
+      profileRepository: LocalFirstProfileRepository(
+        local: LocalProfileRepository(
+          fileURL: root.appending(path: "profiles.json")
+        )
       ),
       credentialRepository: CredentialRepository.shared,
       workspaceRepository: LocalWorkspaceRepository(

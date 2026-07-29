@@ -121,18 +121,22 @@ public actor LocalProfileRepository: ProfileRepositoryProtocol {
       withIntermediateDirectories: true
     )
 
+    var wroteBackup = false
     if fileManager.fileExists(atPath: fileURL.path),
       let currentData = try? Data(contentsOf: fileURL),
       (try? readValidatedDocument(data: currentData)) != nil
     {
       try currentData.write(to: backupURL, options: [.atomic])
-      try await filePolicy.apply(to: backupURL, role: .backup)
+      wroteBackup = true
     } else if !fileManager.fileExists(atPath: backupURL.path) {
       try encoded.write(to: backupURL, options: [.atomic])
-      try await filePolicy.apply(to: backupURL, role: .backup)
+      wroteBackup = true
     }
 
     try encoded.write(to: fileURL, options: [.atomic])
+    if wroteBackup {
+      try await filePolicy.apply(to: backupURL, role: .backup)
+    }
     try await filePolicy.apply(to: fileURL, role: .primary)
   }
 
