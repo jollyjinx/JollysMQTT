@@ -26,12 +26,36 @@ public struct ProfileSyncFailure: Error, Equatable, Sendable {
   }
 }
 
+public struct ProfileSyncRecovery: Error, Equatable, Sendable {
+  public enum Reason: String, Equatable, Sendable {
+    case signedOut
+    case accountChanged
+    case zoneDeleted
+    case zonePurged
+    case encryptedDataReset
+  }
+
+  public let reason: Reason
+
+  public init(reason: Reason) {
+    self.reason = reason
+  }
+}
+
+public enum ProfileSyncRecoveryDecision: Equatable, Sendable {
+  case keepLocalOnly
+  case resumeCloudSyncUsingLocalProfiles
+}
+
 public enum ProfileSyncStatus: Equatable, Sendable {
   case localOnly
+  case cloudSyncDisabled
+  case cloudSyncPreferenceSaveFailed
   case available
   case syncing
   case retryScheduled(ProfileSyncFailure)
   case failed(ProfileSyncFailure)
+  case recoveryRequired(ProfileSyncRecovery)
 }
 
 public struct ProfileSyncExchange: Equatable, Sendable {
@@ -82,6 +106,10 @@ public struct ProfileSyncSnapshot: Equatable, Sendable {
 public protocol ProfileSyncEngine: Sendable {
   func stageLocalProfiles(_ snapshot: ProfileSyncSnapshot) async throws
   func synchronize() async throws -> ProfileSyncExchange
+  func pendingRecovery() async -> ProfileSyncRecovery?
+  func resumeAfterRecovery(
+    using snapshot: ProfileSyncSnapshot
+  ) async throws
   func cancel() async
 }
 
@@ -96,7 +124,25 @@ public protocol ProfileSyncing: Sendable {
   ) async -> ProfileSyncStatus
 
   func synchronize() async throws -> ProfileSyncExchange
+  func resolveRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    localSnapshot: ProfileSyncSnapshot
+  ) async -> ProfileSyncStatus
   func cancel() async
+}
+
+extension ProfileSyncing {
+  public func resolveRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    localSnapshot: ProfileSyncSnapshot
+  ) async -> ProfileSyncStatus {
+    switch decision {
+    case .keepLocalOnly:
+      return .localOnly
+    case .resumeCloudSyncUsingLocalProfiles:
+      return await stageLocalProfiles(localSnapshot)
+    }
+  }
 }
 
 public protocol ProfileSynchronizingRepositoryProtocol:
@@ -104,6 +150,10 @@ public protocol ProfileSynchronizingRepositoryProtocol:
 {
   func syncStatus() async -> ProfileSyncStatus
   func synchronize() async throws -> ProfileSyncStatus
+  func resolveSyncRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    expectedRecovery: ProfileSyncRecovery?
+  ) async throws -> ProfileSyncStatus
   func cancelSynchronization() async
 }
 
@@ -122,6 +172,13 @@ public actor LocalOnlyProfileSync: ProfileSyncing {
 
   public func synchronize() -> ProfileSyncExchange {
     .noChanges
+  }
+
+  public func resolveRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    localSnapshot: ProfileSyncSnapshot
+  ) -> ProfileSyncStatus {
+    .localOnly
   }
 
   public func cancel() {}
@@ -144,6 +201,8 @@ public actor LocalFirstProfileRepository:
   private var persistenceTailID: UInt64?
   private var nextPersistenceOperationID: UInt64 = 0
   private var currentStatus: ProfileSyncStatus
+  private var isResolvingSyncRecovery = false
+  private var recoveryResolutionWaiters: [CheckedContinuation<ProfileSyncStatus, Never>] = []
 
   public init(
     local: any ProfileRepositoryProtocol,
@@ -234,10 +293,22 @@ public actor LocalFirstProfileRepository:
 
   public func syncStatus() async -> ProfileSyncStatus {
     let adapterStatus = await sync.status()
+    if case .recoveryRequired = adapterStatus {
+      currentStatus = adapterStatus
+      return adapterStatus
+    }
+    if adapterStatus == .localOnly
+      || adapterStatus == .cloudSyncDisabled
+      || adapterStatus == .cloudSyncPreferenceSaveFailed
+    {
+      currentStatus = adapterStatus
+      return adapterStatus
+    }
     switch currentStatus {
-    case .retryScheduled, .failed:
+    case .retryScheduled, .failed, .recoveryRequired,
+      .cloudSyncPreferenceSaveFailed:
       return currentStatus
-    case .localOnly, .available, .syncing:
+    case .localOnly, .cloudSyncDisabled, .available, .syncing:
       return adapterStatus
     }
   }
@@ -268,6 +339,12 @@ public actor LocalFirstProfileRepository:
       }
       currentStatus =
         failure.isRetryable ? .retryScheduled(failure) : .failed(failure)
+      return currentStatus
+    } catch let recovery as ProfileSyncRecovery {
+      guard syncAttempt == latestSyncAttempt else {
+        return currentStatus
+      }
+      currentStatus = .recoveryRequired(recovery)
       return currentStatus
     } catch {
       guard syncAttempt == latestSyncAttempt else {
@@ -352,6 +429,44 @@ public actor LocalFirstProfileRepository:
         throw error
       }
     }
+  }
+
+  public func resolveSyncRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    expectedRecovery: ProfileSyncRecovery? = nil
+  ) async throws -> ProfileSyncStatus {
+    guard !isResolvingSyncRecovery else {
+      return await withCheckedContinuation { continuation in
+        recoveryResolutionWaiters.append(continuation)
+      }
+    }
+    isResolvingSyncRecovery = true
+    defer {
+      isResolvingSyncRecovery = false
+      let waiters = recoveryResolutionWaiters
+      recoveryResolutionWaiters.removeAll()
+      for waiter in waiters {
+        waiter.resume(returning: currentStatus)
+      }
+    }
+    if let expectedRecovery {
+      let syncStatus = await sync.status()
+      guard syncStatus == .recoveryRequired(expectedRecovery) else {
+        currentStatus = syncStatus
+        return currentStatus
+      }
+    }
+    if let persistenceTail {
+      _ = try? await persistenceTail.value
+    }
+    let snapshot = try await makeSnapshot(
+      generation: snapshotGeneration
+    )
+    currentStatus = await sync.resolveRecovery(
+      decision,
+      localSnapshot: snapshot
+    )
+    return currentStatus
   }
 
   public func cancelSynchronization() async {

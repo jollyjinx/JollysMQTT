@@ -22,6 +22,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>JollysMQTTCloudKitContainerIdentifier</key>
+	<string>$(JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER)</string>
+	<key>JollysMQTTCloudKitZoneName</key>
+	<string>$(JOLLYS_MQTT_CLOUDKIT_ZONE_NAME)</string>
+	<key>JollysMQTTProfileSyncMode</key>
+	<string>$(JOLLYS_MQTT_PROFILE_SYNC_MODE)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>JollysMQTT uses the local network to connect to MQTT brokers you configure.</string>
 	<key>UIApplicationSceneManifest</key>

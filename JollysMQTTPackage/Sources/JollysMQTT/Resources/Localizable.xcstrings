@@ -1330,6 +1330,60 @@
     "Y-axis" : {
       "comment" : "Label for numeric chart Y-axis scaling mode."
     },
+    "An iCloud profile record could not be used. The last known local profiles were preserved." : {
+      "comment" : "Explains rejected remote profile data and preservation of local data."
+    },
+    "Broker profiles remain available on this device while the network is offline." : {
+      "comment" : "Explains that an offline CloudKit failure did not remove local profiles."
+    },
+    "Cloud sync is off for this session, but the device-only choice could not be saved. Retry before closing the app." : {
+      "comment" : "Warns that the fail-safe CloudKit opt-out is active but could not be persisted."
+    },
+    "Enable iCloud Profile Sync" : {
+      "comment" : "Explicitly re-enables CloudKit profile synchronization on this device."
+    },
+    "iCloud asked JollysMQTT to wait. Broker profiles remain available on this device." : {
+      "comment" : "Explains a rate-limited CloudKit retry without exposing private profile data."
+    },
+    "iCloud profile sync did not finish. Broker profiles remain available on this device." : {
+      "comment" : "Generic CloudKit sync failure preserving local broker profiles."
+    },
+    "iCloud profile sync is unavailable. Broker profiles remain available on this device." : {
+      "comment" : "Explains unavailable CloudKit sync while preserving local profiles."
+    },
+    "iCloud profile sync is off on this device. Broker profiles remain stored locally." : {
+      "comment" : "Explains the durable, device-local CloudKit opt-out."
+    },
+    "iCloud purged the profile zone. Local profiles were preserved. Choose whether to recreate the zone from them." : {
+      "comment" : "Prompts after CloudKit purges the custom profile zone."
+    },
+    "iCloud reset the encrypted-data key. Local profiles were preserved. Choose whether to upload them again under the new key." : {
+      "comment" : "Prompts after an encrypted CloudKit data-key reset."
+    },
+    "iCloud was signed out. Sign in first, then choose whether to use these local profiles with that account or keep them only on this device." : {
+      "comment" : "Prompts for an explicit choice after the iCloud account signs out."
+    },
+    "Keep Profiles Only on This Device" : {
+      "comment" : "Disables remote profile sync while preserving every local profile."
+    },
+    "Retry iCloud Sync" : {
+      "comment" : "Retries a transient or unavailable CloudKit profile sync operation."
+    },
+    "Retry Saving Device-Only Choice" : {
+      "comment" : "Retries persistence of the device-local CloudKit opt-out."
+    },
+    "Syncing broker profiles with iCloud…" : {
+      "comment" : "Progress shown while CloudKit profile sync is active."
+    },
+    "The iCloud account changed. Local profiles were preserved and will not be uploaded to the new account without your permission." : {
+      "comment" : "Warns that profiles from a prior account are not automatically uploaded to a new account."
+    },
+    "The iCloud profile zone was deleted. Local profiles were preserved. Choose whether to recreate the zone from them." : {
+      "comment" : "Prompts after a user-deleted CloudKit custom zone."
+    },
+    "Use Local Profiles with This iCloud Account" : {
+      "comment" : "Explicitly resumes CloudKit by uploading the preserved local profiles to the current account."
+    },
     "factory/line/status" : {
       "comment" : "Example MQTT publication topic in the composer."
     }

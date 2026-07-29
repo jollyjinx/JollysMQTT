@@ -28,6 +28,9 @@
     private var latestSynchronizationAttempt: UInt64 = 0
     private var cancellationGeneration: UInt64 = 0
     private var synchronizationTail: Task<ProfileSyncExchange, any Error>?
+    private var pendingSnapshot: ProfileSyncSnapshot?
+    private var unresolvedRecovery: ProfileSyncRecovery?
+    private var remoteSyncDisabled = false
 
     public init(engine: any ProfileSyncEngine) {
       self.engine = engine
@@ -44,19 +47,37 @@
       return CloudKitProfileSync(engine: driver)
     }
 
-    public func status() -> ProfileSyncStatus {
-      currentStatus
+    public func status() async -> ProfileSyncStatus {
+      if !remoteSyncDisabled,
+        let recovery = await engine.pendingRecovery()
+      {
+        unresolvedRecovery = recovery
+        currentStatus = .recoveryRequired(recovery)
+      }
+      return currentStatus
     }
 
     public func stageLocalProfiles(
       _ snapshot: ProfileSyncSnapshot
     ) async -> ProfileSyncStatus {
+      if snapshot.generation >= (pendingSnapshot?.generation ?? 0) {
+        pendingSnapshot = snapshot
+      }
+      if remoteSyncDisabled {
+        currentStatus = .localOnly
+        return currentStatus
+      }
+      if let unresolvedRecovery {
+        currentStatus = .recoveryRequired(unresolvedRecovery)
+        return currentStatus
+      }
       do {
         try await engine.stageLocalProfiles(snapshot)
         switch currentStatus {
-        case .syncing, .retryScheduled, .failed:
+        case .syncing, .retryScheduled, .failed, .recoveryRequired,
+          .cloudSyncPreferenceSaveFailed:
           return currentStatus
-        case .localOnly, .available:
+        case .localOnly, .cloudSyncDisabled, .available:
           currentStatus = .available
         }
       } catch is CancellationError {
@@ -77,6 +98,14 @@
 
     public func synchronize() async throws -> ProfileSyncExchange {
       try Task.checkCancellation()
+      if remoteSyncDisabled {
+        currentStatus = .localOnly
+        return .noChanges
+      }
+      if let unresolvedRecovery {
+        currentStatus = .recoveryRequired(unresolvedRecovery)
+        throw unresolvedRecovery
+      }
       latestSynchronizationAttempt &+= 1
       let attempt = latestSynchronizationAttempt
       let startingCancellationGeneration = cancellationGeneration
@@ -123,7 +152,22 @@
           synchronizationTail = nil
         }
         throw failure
+      } catch let recovery as ProfileSyncRecovery {
+        unresolvedRecovery = recovery
+        if attempt == latestSynchronizationAttempt {
+          currentStatus = .recoveryRequired(recovery)
+          synchronizationTail = nil
+        }
+        throw recovery
       } catch {
+        if let recovery = CloudKitProfileSync.classifyRecovery(error) {
+          unresolvedRecovery = recovery
+          if attempt == latestSynchronizationAttempt {
+            currentStatus = .recoveryRequired(recovery)
+            synchronizationTail = nil
+          }
+          throw recovery
+        }
         let failure = CloudKitProfileSync.classify(error)
         if attempt == latestSynchronizationAttempt {
           currentStatus =
@@ -134,10 +178,60 @@
       }
     }
 
+    public func resolveRecovery(
+      _ decision: ProfileSyncRecoveryDecision,
+      localSnapshot: ProfileSyncSnapshot
+    ) async -> ProfileSyncStatus {
+      pendingSnapshot = localSnapshot
+      switch decision {
+      case .keepLocalOnly:
+        remoteSyncDisabled = true
+        unresolvedRecovery = nil
+        await engine.cancel()
+        currentStatus = .localOnly
+      case .resumeCloudSyncUsingLocalProfiles:
+        remoteSyncDisabled = false
+        do {
+          try await engine.resumeAfterRecovery(
+            using: localSnapshot
+          )
+          unresolvedRecovery = nil
+          currentStatus = .available
+        } catch let recovery as ProfileSyncRecovery {
+          unresolvedRecovery = recovery
+          currentStatus = .recoveryRequired(recovery)
+        } catch let failure as ProfileSyncFailure {
+          currentStatus =
+            failure.isRetryable ? .retryScheduled(failure) : .failed(failure)
+        } catch {
+          let failure = CloudKitProfileSync.classify(error)
+          currentStatus =
+            failure.isRetryable ? .retryScheduled(failure) : .failed(failure)
+        }
+      }
+      return currentStatus
+    }
+
     public func cancel() async {
       cancellationGeneration &+= 1
       await engine.cancel()
       currentStatus = .available
+    }
+
+    fileprivate static func classifyRecovery(
+      _ error: any Error
+    ) -> ProfileSyncRecovery? {
+      guard let cloudError = error as? CKError else {
+        return nil
+      }
+      switch cloudError.code {
+      case .notAuthenticated:
+        return ProfileSyncRecovery(reason: .signedOut)
+      case .userDeletedZone:
+        return ProfileSyncRecovery(reason: .zoneDeleted)
+      default:
+        return nil
+      }
     }
 
     fileprivate static func classify(
@@ -166,8 +260,7 @@
           isRetryable: true,
           retryAfterSeconds: retryAfter
         )
-      case .notAuthenticated, .missingEntitlement,
-        .permissionFailure:
+      case .missingEntitlement, .permissionFailure:
         return ProfileSyncFailure(
           kind: .unavailable,
           isRetryable: false
@@ -368,6 +461,7 @@
     private var fetchedRecords: [BrokerProfile.ID: ProfileReplicaRecord] = [:]
     private var transportBases: [BrokerProfile.ID: CKRecord] = [:]
     private var operationFailure: ProfileSyncFailure?
+    private var recovery: ProfileSyncRecovery?
 
     init(
       codec: CloudKitProfileRecordCodec,
@@ -377,12 +471,22 @@
       self.stateStore = stateStore
     }
 
-    func stage(_ snapshot: ProfileSyncSnapshot) {
+    @discardableResult
+    func stage(_ snapshot: ProfileSyncSnapshot) -> Bool {
+      guard recovery == nil else { return false }
       guard
         snapshot.generation
           >= (stagedSnapshot?.generation ?? 0)
-      else { return }
+      else { return true }
       stagedSnapshot = snapshot
+      return true
+    }
+
+    func resumeAfterRecovery(
+      using snapshot: ProfileSyncSnapshot
+    ) {
+      stagedSnapshot = snapshot
+      recovery = nil
     }
 
     func beginOperation() {
@@ -397,6 +501,9 @@
     /// returns this exchange to the repository, which merges and re-stages the
     /// converged snapshot before a later send operation.
     func takeFetchedExchangeBeforeSend() throws -> ProfileSyncExchange? {
+      if let recovery {
+        throw recovery
+      }
       if let operationFailure {
         self.operationFailure = nil
         throw operationFailure
@@ -415,6 +522,7 @@
     }
 
     func acceptFetchedRecord(_ record: CKRecord) {
+      guard recovery == nil else { return }
       do {
         let replicaRecord = try codec.decodeReplicaRecord(record)
         fetchedRecords[replicaRecord.id] = replicaRecord
@@ -431,9 +539,54 @@
       }
     }
 
+    func beginRecovery(_ recovery: ProfileSyncRecovery) {
+      self.recovery = recovery
+      stagedSnapshot = nil
+      fetchedRecords.removeAll(keepingCapacity: false)
+      transportBases.removeAll(keepingCapacity: false)
+      operationFailure = nil
+    }
+
+    func pendingRecovery() -> ProfileSyncRecovery? {
+      recovery
+    }
+
+    static func recoveryReason(
+      for change:
+        CKSyncEngine.Event.AccountChange.ChangeType
+    ) -> ProfileSyncRecovery.Reason {
+      switch change {
+      case .signOut:
+        return .signedOut
+      case .signIn, .switchAccounts:
+        return .accountChanged
+      @unknown default:
+        return .accountChanged
+      }
+    }
+
+    static func recoveryReason(
+      for deletion:
+        CKDatabase.DatabaseChange.Deletion.Reason
+    ) -> ProfileSyncRecovery.Reason {
+      switch deletion {
+      case .deleted:
+        return .zoneDeleted
+      case .purged:
+        return .zonePurged
+      case .encryptedDataReset:
+        return .encryptedDataReset
+      @unknown default:
+        return .zonePurged
+      }
+    }
+
     func acceptFailedRecordSaves(
       _ failures: [CloudKitFailedProfileSave]
     ) {
+      guard recovery == nil else {
+        return
+      }
       for failed in failures.sorted(by: {
         $0.record.recordID.recordName
           < $1.record.recordID.recordName
@@ -454,7 +607,8 @@
     }
 
     func record(for recordID: CKRecord.ID) throws -> CKRecord? {
-      guard recordID.zoneID == codec.zoneID,
+      guard recovery == nil,
+        recordID.zoneID == codec.zoneID,
         let id = UUID(uuidString: recordID.recordName),
         let replicaRecord = try stagedRecords().first(
           where: { $0.id == id }
@@ -521,6 +675,30 @@
           )
         }
 
+      case .accountChange(let change):
+        beginRecovery(
+          ProfileSyncRecovery(
+            reason: Self.recoveryReason(
+              for: change.changeType
+            )
+          )
+        )
+        clearPendingChanges(in: syncEngine)
+
+      case .fetchedDatabaseChanges(let changes):
+        if let deletion = changes.deletions.first(
+          where: { $0.zoneID == codec.zoneID }
+        ) {
+          beginRecovery(
+            ProfileSyncRecovery(
+              reason: Self.recoveryReason(
+                for: deletion.reason
+              )
+            )
+          )
+          clearPendingChanges(in: syncEngine)
+        }
+
       case .fetchedRecordZoneChanges(let changes):
         for modification in changes.modifications
         where modification.record.recordID.zoneID == codec.zoneID {
@@ -528,6 +706,9 @@
         }
 
       case .sentRecordZoneChanges(let sent):
+        guard recovery == nil else {
+          break
+        }
         for saved in sent.savedRecords {
           if let id = UUID(uuidString: saved.recordID.recordName) {
             transportBases[id] = saved
@@ -552,6 +733,9 @@
         }
 
       case .sentDatabaseChanges(let sent):
+        guard recovery == nil else {
+          break
+        }
         if let failed = sent.failedZoneSaves.first {
           operationFailure = CloudKitProfileSync.classify(
             failed.error
@@ -565,8 +749,7 @@
           operationFailure = CloudKitProfileSync.classify(error)
         }
 
-      case .accountChange, .fetchedDatabaseChanges,
-        .willFetchChanges, .willFetchRecordZoneChanges,
+      case .willFetchChanges, .willFetchRecordZoneChanges,
         .didFetchChanges, .willSendChanges, .didSendChanges:
         break
       @unknown default:
@@ -582,11 +765,25 @@
       }
     }
 
+    private func clearPendingChanges(
+      in syncEngine: CKSyncEngine
+    ) {
+      syncEngine.state.remove(
+        pendingRecordZoneChanges:
+          syncEngine.state.pendingRecordZoneChanges
+      )
+      syncEngine.state.remove(
+        pendingDatabaseChanges:
+          syncEngine.state.pendingDatabaseChanges
+      )
+    }
+
     func nextRecordZoneChangeBatch(
       _ context: CKSyncEngine.SendChangesContext,
       syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
-      await CKSyncEngine.RecordZoneChangeBatch(
+      guard recovery == nil else { return nil }
+      return await CKSyncEngine.RecordZoneChangeBatch(
         pendingChanges:
           syncEngine.state.pendingRecordZoneChanges.filter {
             context.options.scope.contains($0)
@@ -656,7 +853,21 @@
       _ snapshot: ProfileSyncSnapshot
     ) async throws {
       try Task.checkCancellation()
-      await delegate.stage(snapshot)
+      guard await delegate.stage(snapshot) else { return }
+      schedule(snapshot)
+    }
+
+    func resumeAfterRecovery(
+      using snapshot: ProfileSyncSnapshot
+    ) async throws {
+      try Task.checkCancellation()
+      await delegate.resumeAfterRecovery(using: snapshot)
+      schedule(snapshot)
+    }
+
+    private func schedule(
+      _ snapshot: ProfileSyncSnapshot
+    ) {
       engine.state.add(
         pendingDatabaseChanges: [
           .saveZone(CKRecordZone(zoneID: codec.zoneID))
@@ -701,6 +912,10 @@
         await engine.cancelOperations()
         throw CancellationError()
       }
+    }
+
+    func pendingRecovery() async -> ProfileSyncRecovery? {
+      await delegate.pendingRecovery()
     }
 
     func cancel() async {

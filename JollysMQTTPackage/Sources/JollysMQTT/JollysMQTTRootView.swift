@@ -2574,6 +2574,14 @@ struct ServerListView: View {
         comment: "Application title shown in navigation chrome."
       )
     )
+    .safeAreaInset(edge: .top) {
+      ProfileSyncStatusBanner(
+        store: sceneStore.profileSync
+      )
+    }
+    .task {
+      await sceneStore.profileSync.run()
+    }
     .sheet(isPresented: $store.editorPresented) {
       if let editor = store.state.editor {
         ProfileEditorView(store: store, profileID: editor.id)
@@ -2729,6 +2737,260 @@ struct ServerListView: View {
     } message: {
       CredentialErrorMessage(error: store.state.credentialError)
     }
+  }
+}
+
+private struct ProfileSyncStatusBanner: View {
+  @Bindable var store: ProfileSyncControlStore
+
+  var body: some View {
+    switch store.status {
+    case .localOnly, .available:
+      EmptyView()
+    case .cloudSyncDisabled:
+      VStack(alignment: .leading, spacing: 8) {
+        Text(
+          "iCloud profile sync is off on this device. Broker profiles remain stored locally.",
+          bundle: #bundle,
+          comment:
+            "Explains the durable, device-local CloudKit opt-out."
+        )
+        Button {
+          Task { await store.enableCloudSync() }
+        } label: {
+          Text(
+            "Enable iCloud Profile Sync",
+            bundle: #bundle,
+            comment:
+              "Explicitly re-enables CloudKit profile synchronization on this device."
+          )
+        }
+        .disabled(store.isWorking)
+      }
+      .profileSyncBannerStyle()
+    case .cloudSyncPreferenceSaveFailed:
+      VStack(alignment: .leading, spacing: 8) {
+        Text(
+          "Cloud sync is off for this session, but the device-only choice could not be saved. Retry before closing the app.",
+          bundle: #bundle,
+          comment:
+            "Warns that the fail-safe CloudKit opt-out is active but could not be persisted."
+        )
+        Button {
+          Task { await store.keepLocalOnly() }
+        } label: {
+          Text(
+            "Retry Saving Device-Only Choice",
+            bundle: #bundle,
+            comment:
+              "Retries persistence of the device-local CloudKit opt-out."
+          )
+        }
+        .disabled(store.isWorking)
+      }
+      .profileSyncBannerStyle()
+    case .syncing:
+      HStack(spacing: 8) {
+        ProgressView()
+        Text(
+          "Syncing broker profiles with iCloud…",
+          bundle: #bundle,
+          comment: "Progress shown while CloudKit profile sync is active."
+        )
+      }
+      .profileSyncBannerStyle()
+    case .retryScheduled(let failure):
+      ProfileSyncChoiceBanner(
+        message: retryMessage(for: failure),
+        primaryTitle: LocalizedStringResource(
+          "Retry iCloud Sync",
+          bundle: #bundle,
+          comment: "Retries a transient CloudKit profile sync failure."
+        ),
+        primaryAction: { await store.retry() },
+        keepLocalAction: { await store.keepLocalOnly() },
+        isWorking: store.isWorking
+      )
+    case .failed(let failure):
+      ProfileSyncChoiceBanner(
+        message: failureMessage(for: failure),
+        primaryTitle: LocalizedStringResource(
+          "Retry iCloud Sync",
+          bundle: #bundle,
+          comment: "Retries an unavailable CloudKit profile sync operation."
+        ),
+        primaryAction: { await store.retry() },
+        keepLocalAction: { await store.keepLocalOnly() },
+        isWorking: store.isWorking
+      )
+    case .recoveryRequired(let recovery):
+      ProfileSyncChoiceBanner(
+        message: recoveryMessage(for: recovery.reason),
+        primaryTitle: LocalizedStringResource(
+          "Use Local Profiles with This iCloud Account",
+          bundle: #bundle,
+          comment:
+            "Explicitly resumes CloudKit by uploading the preserved local profiles to the current account."
+        ),
+        primaryAction: {
+          await store.resumeUsingLocalProfiles()
+        },
+        keepLocalAction: { await store.keepLocalOnly() },
+        isWorking: store.isWorking
+      )
+    }
+  }
+
+  private func retryMessage(
+    for failure: ProfileSyncFailure
+  ) -> LocalizedStringResource {
+    switch failure.kind {
+    case .offline:
+      LocalizedStringResource(
+        "Broker profiles remain available on this device while the network is offline.",
+        bundle: #bundle,
+        comment:
+          "Explains that an offline CloudKit failure did not remove local profiles."
+      )
+    case .rateLimited:
+      LocalizedStringResource(
+        "iCloud asked JollysMQTT to wait. Broker profiles remain available on this device.",
+        bundle: #bundle,
+        comment:
+          "Explains a rate-limited CloudKit retry without exposing private profile data."
+      )
+    case .unavailable, .invalidRemoteProfile, .corruptRemotePayload,
+      .internalFailure:
+      failureMessage(for: failure)
+    }
+  }
+
+  private func failureMessage(
+    for failure: ProfileSyncFailure
+  ) -> LocalizedStringResource {
+    switch failure.kind {
+    case .unavailable:
+      LocalizedStringResource(
+        "iCloud profile sync is unavailable. Broker profiles remain available on this device.",
+        bundle: #bundle,
+        comment:
+          "Explains unavailable CloudKit sync while preserving local profiles."
+      )
+    case .invalidRemoteProfile, .corruptRemotePayload:
+      LocalizedStringResource(
+        "An iCloud profile record could not be used. The last known local profiles were preserved.",
+        bundle: #bundle,
+        comment:
+          "Explains rejected remote profile data and preservation of local data."
+      )
+    case .offline, .rateLimited, .internalFailure:
+      LocalizedStringResource(
+        "iCloud profile sync did not finish. Broker profiles remain available on this device.",
+        bundle: #bundle,
+        comment:
+          "Generic CloudKit sync failure preserving local broker profiles."
+      )
+    }
+  }
+
+  private func recoveryMessage(
+    for reason: ProfileSyncRecovery.Reason
+  ) -> LocalizedStringResource {
+    switch reason {
+    case .signedOut:
+      LocalizedStringResource(
+        "iCloud was signed out. Sign in first, then choose whether to use these local profiles with that account or keep them only on this device.",
+        bundle: #bundle,
+        comment:
+          "Prompts for an explicit choice after the iCloud account signs out."
+      )
+    case .accountChanged:
+      LocalizedStringResource(
+        "The iCloud account changed. Local profiles were preserved and will not be uploaded to the new account without your permission.",
+        bundle: #bundle,
+        comment:
+          "Warns that profiles from a prior account are not automatically uploaded to a new account."
+      )
+    case .zoneDeleted:
+      LocalizedStringResource(
+        "The iCloud profile zone was deleted. Local profiles were preserved. Choose whether to recreate the zone from them.",
+        bundle: #bundle,
+        comment:
+          "Prompts after a user-deleted CloudKit custom zone."
+      )
+    case .zonePurged:
+      LocalizedStringResource(
+        "iCloud purged the profile zone. Local profiles were preserved. Choose whether to recreate the zone from them.",
+        bundle: #bundle,
+        comment:
+          "Prompts after CloudKit purges the custom profile zone."
+      )
+    case .encryptedDataReset:
+      LocalizedStringResource(
+        "iCloud reset the encrypted-data key. Local profiles were preserved. Choose whether to upload them again under the new key.",
+        bundle: #bundle,
+        comment:
+          "Prompts after an encrypted CloudKit data-key reset."
+      )
+    }
+  }
+}
+
+private struct ProfileSyncChoiceBanner: View {
+  let message: LocalizedStringResource
+  let primaryTitle: LocalizedStringResource
+  let primaryAction: @MainActor () async -> Void
+  let keepLocalAction: @MainActor () async -> Void
+  let isWorking: Bool
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(message)
+      ViewThatFits(in: .horizontal) {
+        actionButtons(axis: .horizontal)
+        actionButtons(axis: .vertical)
+      }
+    }
+    .profileSyncBannerStyle()
+  }
+
+  @ViewBuilder
+  private func actionButtons(
+    axis: Axis
+  ) -> some View {
+    let layout =
+      axis == .horizontal
+      ? AnyLayout(HStackLayout(spacing: 8))
+      : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+    layout {
+      Button {
+        Task { await primaryAction() }
+      } label: {
+        Text(primaryTitle)
+      }
+      .disabled(isWorking)
+      Button {
+        Task { await keepLocalAction() }
+      } label: {
+        Text(
+          "Keep Profiles Only on This Device",
+          bundle: #bundle,
+          comment:
+            "Disables remote profile sync while preserving every local profile."
+        )
+      }
+      .disabled(isWorking)
+    }
+  }
+}
+
+extension View {
+  fileprivate func profileSyncBannerStyle() -> some View {
+    self
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(12)
+      .background(.regularMaterial)
+      .accessibilityElement(children: .contain)
   }
 }
 

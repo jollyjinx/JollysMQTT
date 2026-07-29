@@ -204,6 +204,26 @@ public struct JollysMQTTAppDependencies: Sendable {
       brokerID in
       historyRepositories.repository(for: brokerID)
     }
+    let profileSync = ProvisionedProfileSync(
+      selection: .current(),
+      stateStore: LocalProfileSyncStateStore(
+        fileURL: root.appending(
+          path: "cloudkit-profile-sync-state.plist"
+        )
+      ),
+      preferenceStore: LocalProfileSyncPreferenceStore(
+        fileURL: root.appending(
+          path: "cloudkit-profile-sync-preferences.json"
+        )
+      )
+    )
+    let profileRepository = LocalFirstProfileRepository(
+      local: LocalProfileRepository(
+        fileURL: root.appending(path: "profiles.json"),
+        installationID: installationID
+      ),
+      sync: profileSync
+    )
     let registry = BrokerFeedRegistry { configuration in
       let profile = configuration.profile
       let historyWriter = historyRepositories.repository(for: profile.id)
@@ -225,12 +245,8 @@ public struct JollysMQTTAppDependencies: Sendable {
       return BrokerFeed(attempt: attempt)
     }
     return JollysMQTTAppDependencies(
-      profileRepository: LocalFirstProfileRepository(
-        local: LocalProfileRepository(
-          fileURL: root.appending(path: "profiles.json"),
-          installationID: installationID
-        )
-      ),
+      profileRepository: profileRepository,
+      profileSynchronizingRepository: profileRepository,
       credentialRepository: CredentialRepository.shared,
       workspaceRepository: LocalWorkspaceRepository(
         directoryURL: root.appending(
@@ -249,6 +265,7 @@ public struct JollysMQTTAppDependencies: Sendable {
   }()
 
   public let profileRepository: any ProfileRepositoryProtocol
+  public let profileSynchronizingRepository: (any ProfileSynchronizingRepositoryProtocol)?
   public let credentialRepository: any CredentialRepositoryProtocol
   public let workspaceRepository: any WorkspaceRepositoryProtocol
   public let workspaceReleaser: any WorkspaceLeaseReleasing
@@ -260,6 +277,8 @@ public struct JollysMQTTAppDependencies: Sendable {
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
+    profileSynchronizingRepository:
+      (any ProfileSynchronizingRepositoryProtocol)? = nil,
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     workspaceRepository: any WorkspaceRepositoryProtocol,
     workspaceReleaser: any WorkspaceLeaseReleasing = NoopWorkspaceLeaseReleaser(),
@@ -275,6 +294,10 @@ public struct JollysMQTTAppDependencies: Sendable {
       MemoryHistoryRetentionSettingsRepository()
   ) {
     self.profileRepository = profileRepository
+    self.profileSynchronizingRepository =
+      profileSynchronizingRepository
+      ?? (profileRepository
+        as? any ProfileSynchronizingRepositoryProtocol)
     self.credentialRepository = credentialRepository
     self.workspaceRepository = workspaceRepository
     self.workspaceReleaser = workspaceReleaser
@@ -319,6 +342,7 @@ public final class WorkspaceSceneStore {
   public let history: HistoryStore
   public let historyMaintenance: HistoryMaintenanceStore
   public let numericChartDashboard: NumericChartDashboardStore
+  public let profileSync: ProfileSyncControlStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -334,6 +358,10 @@ public final class WorkspaceSceneStore {
     let workspace = WorkspaceStore(
       id: id,
       repository: dependencies.workspaceRepository
+    )
+    self.profileSync = ProfileSyncControlStore(
+      repository:
+        dependencies.profileSynchronizingRepository
     )
     let feed = WorkspaceBrokerFeedLease(
       workspaceID: id,

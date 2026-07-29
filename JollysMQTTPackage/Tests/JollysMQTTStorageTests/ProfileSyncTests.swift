@@ -69,6 +69,34 @@ struct ProfileSyncTests {
     #expect(await repository.syncStatus() == .retryScheduled(failure))
   }
 
+  @Test("Recovery supersedes an older retry diagnostic")
+  func recoverySupersedesRetryStatus() async throws {
+    let retry = ProfileSyncFailure(
+      kind: .offline,
+      isRetryable: true
+    )
+    let sync = ScriptedProfileSync(
+      stageStatus: .retryScheduled(retry)
+    )
+    let repository = LocalFirstProfileRepository(
+      local: MemoryProfileRepository(),
+      sync: sync
+    )
+    try await repository.replaceAll([
+      rankedProfile(name: "Local")
+    ])
+    let recovery = ProfileSyncRecovery(
+      reason: .accountChanged
+    )
+
+    await sync.setStatus(.recoveryRequired(recovery))
+
+    #expect(
+      await repository.syncStatus()
+        == .recoveryRequired(recovery)
+    )
+  }
+
   @Test("Concurrent local writes commit and stage in call-intent order")
   func localWritesUseFIFO() async throws {
     let local = GatedProfileRepository(blockedWriteNumbers: [1])
@@ -396,6 +424,108 @@ struct ProfileSyncTests {
     _ = try await task.value
 
     #expect(await local.load() == [profile])
+  }
+
+  @Test("Account recovery re-stages durable local data only after user consent")
+  func accountRecoveryRestagesLocalAfterConsent() async throws {
+    let profile = rankedProfile(name: "Preserved local")
+    let recovery = ProfileSyncRecovery(
+      reason: .accountChanged
+    )
+    let local = MemoryProfileRepository(profiles: [profile])
+    let sync = ScriptedProfileSync(
+      stageStatus: .recoveryRequired(recovery)
+    )
+    let repository = LocalFirstProfileRepository(
+      local: local,
+      sync: sync
+    )
+
+    #expect(
+      await repository.syncStatus()
+        == .recoveryRequired(recovery)
+    )
+    #expect(await sync.stagedSnapshots().isEmpty)
+
+    let status = try await repository.resolveSyncRecovery(
+      .resumeCloudSyncUsingLocalProfiles
+    )
+
+    #expect(status == .available)
+    #expect(try await repository.load() == [profile])
+    #expect(await sync.stagedSnapshots().last?.profiles == [profile])
+  }
+
+  @Test("A stale workspace cannot reverse another workspace recovery choice")
+  func staleRecoveryChoiceIsIgnored() async throws {
+    let recovery = ProfileSyncRecovery(
+      reason: .accountChanged
+    )
+    let sync = ScriptedProfileSync(
+      stageStatus: .recoveryRequired(recovery)
+    )
+    let repository = LocalFirstProfileRepository(
+      local: MemoryProfileRepository(
+        profiles: [rankedProfile(name: "Local")]
+      ),
+      sync: sync
+    )
+
+    #expect(
+      try await repository.resolveSyncRecovery(
+        .resumeCloudSyncUsingLocalProfiles,
+        expectedRecovery: recovery
+      ) == .available
+    )
+    #expect(
+      try await repository.resolveSyncRecovery(
+        .keepLocalOnly,
+        expectedRecovery: recovery
+      ) == .available
+    )
+    #expect(
+      await sync.recoveryDecisions()
+        == [.resumeCloudSyncUsingLocalProfiles]
+    )
+  }
+
+  @Test("Concurrent workspaces cannot both apply opposing recovery choices")
+  func concurrentRecoveryChoicesAreSerialized() async throws {
+    let recovery = ProfileSyncRecovery(
+      reason: .accountChanged
+    )
+    let sync = SuspendedStatusProfileSync(recovery: recovery)
+    let repository = LocalFirstProfileRepository(
+      local: MemoryProfileRepository(
+        profiles: [rankedProfile(name: "Local")]
+      ),
+      sync: sync
+    )
+    await sync.suspendNextStatus()
+
+    let first = Task {
+      try await repository.resolveSyncRecovery(
+        .resumeCloudSyncUsingLocalProfiles,
+        expectedRecovery: recovery
+      )
+    }
+    await sync.waitUntilStatusIsSuspended()
+
+    let stale = Task {
+      try await repository.resolveSyncRecovery(
+        .keepLocalOnly,
+        expectedRecovery: recovery
+      )
+    }
+    await Task.yield()
+
+    await sync.resumeStatus()
+    #expect(try await first.value == .available)
+    #expect(try await stale.value == .available)
+    #expect(
+      await sync.recoveryDecisions()
+        == [.resumeCloudSyncUsingLocalProfiles]
+    )
   }
 
   @Test("A local edit racing a drained record exchange preserves both edits")
@@ -845,10 +975,107 @@ struct ProfileSyncStateStoreTests {
       #expect(await engine.cancelCount() == 1)
       #expect(await adapter.status() == .available)
     }
+
+    @Test("Adapter retains edits in memory until recovery consent")
+    func adapterSuppressesStagingUntilRecoveryConsent() async throws {
+      let engine = ScriptedProfileSyncEngine()
+      let adapter = CloudKitProfileSync(engine: engine)
+      let initial = ProfileSyncSnapshot(
+        generation: 1,
+        profiles: [rankedProfile(name: "Initial")]
+      )
+      _ = await adapter.stageLocalProfiles(initial)
+      let operation = Task {
+        try await adapter.synchronize()
+      }
+      await engine.waitForSynchronizeCount(1)
+      let recovery = ProfileSyncRecovery(
+        reason: .accountChanged
+      )
+      await engine.completeSynchronize(
+        1,
+        with: .failure(recovery)
+      )
+      await #expect(throws: recovery) {
+        try await operation.value
+      }
+
+      let edited = ProfileSyncSnapshot(
+        generation: 2,
+        profiles: [rankedProfile(name: "Edited locally")]
+      )
+      #expect(
+        await adapter.stageLocalProfiles(edited)
+          == .recoveryRequired(recovery)
+      )
+      #expect(await engine.stagedSnapshots() == [initial])
+
+      #expect(
+        await adapter.resolveRecovery(
+          .resumeCloudSyncUsingLocalProfiles,
+          localSnapshot: edited
+        ) == .available
+      )
+      #expect(await engine.stagedSnapshots() == [initial, edited])
+    }
+
+    @Test("Asynchronous engine recovery is visible without a manual sync")
+    func asynchronousRecoveryIsVisibleFromStatus() async {
+      let engine = ScriptedProfileSyncEngine()
+      let adapter = CloudKitProfileSync(engine: engine)
+      let recovery = ProfileSyncRecovery(
+        reason: .zoneDeleted
+      )
+
+      await engine.setPendingRecovery(recovery)
+
+      #expect(
+        await adapter.status() == .recoveryRequired(recovery)
+      )
+    }
   }
 
   @Suite("Encrypted CloudKit profile record codec")
   struct CloudKitProfileRecordCodecTests {
+    @Test("CloudKit account and zone reset events retain distinct recovery reasons")
+    func cloudKitResetReasonsRemainDistinct() {
+      let user = CKRecord.ID(recordName: "user")
+
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .signOut(previousUser: user)
+        ) == .signedOut
+      )
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .signIn(currentUser: user)
+        ) == .accountChanged
+      )
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .switchAccounts(
+            previousUser: user,
+            currentUser: user
+          )
+        ) == .accountChanged
+      )
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .deleted
+        ) == .zoneDeleted
+      )
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .purged
+        ) == .zonePurged
+      )
+      #expect(
+        CKSyncEngineProfileDelegate.recoveryReason(
+          for: .encryptedDataReset
+        ) == .encryptedDataReset
+      )
+    }
+
     @Test("Record name is exactly the profile UUID and round-trips")
     func exactUUIDRecordName() throws {
       let id = UUID(
@@ -1095,6 +1322,57 @@ struct ProfileSyncStateStoreTests {
       )
     }
 
+    @Test("Unresolved recovery clears transport state and suppresses staging")
+    func recoverySuppressesTransportState() async throws {
+      let profile = rankedProfile(name: "Local recovery")
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles",
+        recordType: "EncryptedBrokerProfile"
+      )
+      let delegate = CKSyncEngineProfileDelegate(
+        codec: codec,
+        stateStore: MemoryProfileSyncStateStore()
+      )
+      let initial = ProfileSyncSnapshot(
+        generation: 1,
+        profiles: [profile]
+      )
+      #expect(await delegate.stage(initial))
+      let fetched = try codec.encode(profile)
+      await delegate.acceptFetchedRecord(fetched)
+
+      let recovery = ProfileSyncRecovery(
+        reason: .encryptedDataReset
+      )
+      await delegate.beginRecovery(recovery)
+      let pending = ProfileSyncSnapshot(
+        generation: 2,
+        profiles: [profile]
+      )
+
+      #expect(await delegate.stage(pending) == false)
+      #expect(
+        await delegate.pendingRecovery() == recovery
+      )
+      await #expect(throws: recovery) {
+        try await delegate.takeFetchedExchangeBeforeSend()
+      }
+      #expect(
+        try await delegate.record(
+          for: fetched.recordID
+        ) == nil
+      )
+
+      await delegate.resumeAfterRecovery(using: pending)
+
+      #expect(await delegate.pendingRecovery() == nil)
+      #expect(
+        try await delegate.record(
+          for: fetched.recordID
+        ) != nil
+      )
+    }
+
     @Test("Every server-record conflict in one batch becomes a domain merge input")
     func multipleServerConflictsAreCollected() async throws {
       let first = rankedProfile(name: "First")
@@ -1213,6 +1491,7 @@ private actor ScriptedProfileSyncEngine: ProfileSyncEngine {
   private var activeSynchronizations = 0
   private var maximumActiveSynchronizations = 0
   private var recordedCancelCount = 0
+  private var recovery: ProfileSyncRecovery?
   private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
   private var completions:
     [Int:
@@ -1251,6 +1530,22 @@ private actor ScriptedProfileSyncEngine: ProfileSyncEngine {
       activeSynchronizations -= 1
       throw error
     }
+  }
+
+  func pendingRecovery() -> ProfileSyncRecovery? {
+    recovery
+  }
+
+  func setPendingRecovery(
+    _ recovery: ProfileSyncRecovery?
+  ) {
+    self.recovery = recovery
+  }
+
+  func resumeAfterRecovery(
+    using snapshot: ProfileSyncSnapshot
+  ) {
+    snapshots.append(snapshot)
   }
 
   func cancel() {
@@ -1535,10 +1830,82 @@ private enum ProfileSyncTestError: Error {
   case rejected
 }
 
+private actor SuspendedStatusProfileSync: ProfileSyncing {
+  private var currentStatus: ProfileSyncStatus
+  private var shouldSuspendStatus = false
+  private var statusIsSuspended = false
+  private var statusRelease: CheckedContinuation<Void, Never>?
+  private var statusWaiters: [CheckedContinuation<Void, Never>] = []
+  private var decisions: [ProfileSyncRecoveryDecision] = []
+
+  init(recovery: ProfileSyncRecovery) {
+    currentStatus = .recoveryRequired(recovery)
+  }
+
+  func suspendNextStatus() {
+    shouldSuspendStatus = true
+  }
+
+  func status() async -> ProfileSyncStatus {
+    if shouldSuspendStatus {
+      shouldSuspendStatus = false
+      statusIsSuspended = true
+      for waiter in statusWaiters {
+        waiter.resume()
+      }
+      statusWaiters.removeAll()
+      await withCheckedContinuation { continuation in
+        statusRelease = continuation
+      }
+      statusIsSuspended = false
+    }
+    return currentStatus
+  }
+
+  func stageLocalProfiles(
+    _ snapshot: ProfileSyncSnapshot
+  ) -> ProfileSyncStatus {
+    currentStatus
+  }
+
+  func synchronize() -> ProfileSyncExchange {
+    .noChanges
+  }
+
+  func resolveRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    localSnapshot: ProfileSyncSnapshot
+  ) -> ProfileSyncStatus {
+    decisions.append(decision)
+    currentStatus =
+      decision == .keepLocalOnly ? .localOnly : .available
+    return currentStatus
+  }
+
+  func cancel() {}
+
+  func waitUntilStatusIsSuspended() async {
+    guard !statusIsSuspended else { return }
+    await withCheckedContinuation { continuation in
+      statusWaiters.append(continuation)
+    }
+  }
+
+  func resumeStatus() {
+    statusRelease?.resume()
+    statusRelease = nil
+  }
+
+  func recoveryDecisions() -> [ProfileSyncRecoveryDecision] {
+    decisions
+  }
+}
+
 private actor ScriptedProfileSync: ProfileSyncing {
   private var snapshots: [ProfileSyncSnapshot] = []
   private var currentStatus: ProfileSyncStatus
   private var synchronizeCount = 0
+  private var resolvedRecoveryDecisions: [ProfileSyncRecoveryDecision] = []
   private var synchronizeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
   private var completions:
     [Int:
@@ -1579,6 +1946,21 @@ private actor ScriptedProfileSync: ProfileSyncing {
     return result
   }
 
+  func resolveRecovery(
+    _ decision: ProfileSyncRecoveryDecision,
+    localSnapshot: ProfileSyncSnapshot
+  ) -> ProfileSyncStatus {
+    resolvedRecoveryDecisions.append(decision)
+    switch decision {
+    case .keepLocalOnly:
+      currentStatus = .localOnly
+    case .resumeCloudSyncUsingLocalProfiles:
+      snapshots.append(localSnapshot)
+      currentStatus = .available
+    }
+    return currentStatus
+  }
+
   func cancel() {
     let pending = completions
     completions.removeAll()
@@ -1617,6 +1999,14 @@ private actor ScriptedProfileSync: ProfileSyncing {
 
   func latestStagedProfiles() -> [RankedBrokerProfile]? {
     snapshots.last?.profiles
+  }
+
+  func setStatus(_ status: ProfileSyncStatus) {
+    currentStatus = status
+  }
+
+  func recoveryDecisions() -> [ProfileSyncRecoveryDecision] {
+    resolvedRecoveryDecisions
   }
 
   private func resumeSynchronizeWaiters() {

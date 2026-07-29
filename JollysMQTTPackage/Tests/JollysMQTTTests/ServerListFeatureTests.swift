@@ -363,6 +363,78 @@ struct ServerListFeatureTests {
     #expect(await credentials.operations() == [.status(profile.id), .save(profile.id)])
   }
 
+  @Test("A remotely synced profile connects after one device-local credential entry")
+  @MainActor
+  func remotelySyncedProfileNeedsOneLocalCredential() async throws {
+    let remoteProfile = rankedProfile(
+      name: "Synced Broker",
+      rank: 1_024,
+      username: "operator"
+    )
+    let sync = OneShotRemoteProfileSync(
+      profiles: [remoteProfile]
+    )
+    let repository = LocalFirstProfileRepository(
+      local: MemoryProfileRepository(profiles: []),
+      sync: sync
+    )
+    #expect(
+      try await repository.synchronize() == .available
+    )
+    let credentials = ScriptedCredentialRepository(
+      statuses: [
+        .success(
+          CredentialStatus(
+            availability: .missing,
+            revision: 0
+          )
+        )
+      ],
+      saves: [
+        .success(
+          CredentialStatus(
+            availability: .available,
+            revision: 1
+          )
+        )
+      ]
+    )
+    let store = ServerListStore(
+      repository: repository,
+      credentialRepository: credentials
+    )
+
+    await store.send(.load)
+    #expect(store.state.profiles == [remoteProfile])
+
+    await store.send(.connect(remoteProfile.id))
+    #expect(
+      store.state.credentialPrompt?.profileID
+        == remoteProfile.id
+    )
+    #expect(store.state.connectReady == nil)
+
+    await store.send(
+      .submitCredential(randomTransientCredential())
+    )
+
+    #expect(
+      store.state.connectReady
+        == ConnectReadyState(
+          profile: remoteProfile.profile,
+          credentialRevision: 1,
+          requestID: 1
+        )
+    )
+    #expect(
+      await credentials.operations()
+        == [
+          .status(remoteProfile.id),
+          .save(remoteProfile.id),
+        ]
+    )
+  }
+
   @Test("Cancelling a prompt rejects a stale successful save without deleting the profile")
   @MainActor
   func promptCancellationRejectsStaleSave() async throws {
@@ -1022,6 +1094,35 @@ private actor MemoryProfileRepository: ProfileRepositoryProtocol {
     self.profiles = profiles
   }
   func persistedProfiles() -> [RankedBrokerProfile] { profiles }
+}
+
+private actor OneShotRemoteProfileSync: ProfileSyncing {
+  private let profiles: [RankedBrokerProfile]
+  private var didSynchronize = false
+
+  init(profiles: [RankedBrokerProfile]) {
+    self.profiles = profiles
+  }
+
+  func status() -> ProfileSyncStatus {
+    .available
+  }
+
+  func stageLocalProfiles(
+    _ snapshot: ProfileSyncSnapshot
+  ) -> ProfileSyncStatus {
+    .available
+  }
+
+  func synchronize() -> ProfileSyncExchange {
+    guard !didSynchronize else { return .noChanges }
+    didSynchronize = true
+    return ProfileSyncExchange(
+      remoteProfiles: profiles
+    )
+  }
+
+  func cancel() {}
 }
 
 private actor CountingProfileRepository: ProfileRepositoryProtocol {
