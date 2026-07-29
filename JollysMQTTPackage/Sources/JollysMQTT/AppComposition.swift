@@ -310,6 +310,25 @@ public final class WorkspaceSceneStore {
     }
   }
 
+  public var selectedTopicID: BrokerTopicID? {
+    get {
+      topics.state.rows.first(where: \.isSelected)?.id
+    }
+    set {
+      selectTopic(newValue)
+    }
+  }
+
+  public var topicSearchText: String {
+    get { topics.state.searchText }
+    set { setTopicSearchText(newValue) }
+  }
+
+  public var topicSortMode: BrokerTopicSortMode {
+    get { topics.state.sortMode }
+    set { setTopicSortMode(newValue) }
+  }
+
   public func run() async {
     guard !hasRun else { return }
     hasRun = true
@@ -339,6 +358,20 @@ public final class WorkspaceSceneStore {
       // Pruning old closed records must not block opening the current scene.
     }
     await workspace.load()
+    let expectedBrokerID: UUID?
+    switch workspace.state.record.route {
+    case .serverList:
+      expectedBrokerID = nil
+    case .connected(let profileID):
+      expectedBrokerID = profileID
+    }
+    topics.restorePresentation(
+      selectedTopic: workspace.state.record.selectedTopic,
+      expandedTopics: Set(workspace.state.record.expandedTopics),
+      searchText: workspace.state.record.topicSearchText,
+      sortMode: workspace.state.record.topicSortMode,
+      expectedBrokerID: expectedBrokerID
+    )
 
     let restoredSelection = workspace.state.record.selectedProfileID
     serverList.sendImmediately(.select(restoredSelection))
@@ -358,6 +391,13 @@ public final class WorkspaceSceneStore {
 
   public func connectCurrentWorkspace(_ ready: ConnectReadyState) async {
     workspace.sendImmediately(.connect(profileID: ready.profile.id))
+    topics.restorePresentation(
+      selectedTopic: workspace.state.record.selectedTopic,
+      expandedTopics: Set(workspace.state.record.expandedTopics),
+      searchText: workspace.state.record.topicSearchText,
+      sortMode: workspace.state.record.topicSortMode,
+      expectedBrokerID: ready.profile.id
+    )
     serverList.sendImmediately(.consumeConnectReady(requestID: ready.requestID))
     await connection.connect(
       BrokerFeedConfiguration(
@@ -371,14 +411,50 @@ public final class WorkspaceSceneStore {
     await connection.cancel()
     await feed.release()
     workspace.sendImmediately(.showServerList)
+    topics.restorePresentation(
+      selectedTopic: nil,
+      expandedTopics: [],
+      searchText: topics.state.searchText,
+      sortMode: topics.state.sortMode,
+      expectedBrokerID: nil
+    )
   }
 
   public func setSceneActive(_ isActive: Bool) async {
     await connection.setSceneActive(isActive)
   }
 
-  public func selectTopic(_ topic: String) {
-    workspace.sendImmediately(.selectTopic(topic))
+  public func selectTopic(_ id: BrokerTopicID?) {
+    guard
+      id == nil || topics.state.rows.contains(where: { $0.id == id })
+    else {
+      return
+    }
+    topics.send(.selectTopic(id))
+    workspace.sendImmediately(.selectTopic(id?.fullTopic))
+  }
+
+  public func toggleTopicExpansion(_ id: BrokerTopicID) {
+    topics.send(.toggleExpansion(id))
+    persistTopicOutlinePresentation()
+  }
+
+  public func setTopicSearchText(_ text: String) {
+    topics.send(.setSearchText(text))
+    persistTopicOutlinePresentation()
+  }
+
+  public func setTopicSortMode(_ mode: BrokerTopicSortMode) {
+    topics.send(.setSortMode(mode))
+    persistTopicOutlinePresentation()
+  }
+
+  public func freezeTopicView() {
+    topics.send(.freezeView)
+  }
+
+  public func jumpTopicViewToLive() {
+    topics.send(.jumpToLive)
   }
 
   public func waitUntilOwned() async {
@@ -406,12 +482,26 @@ public final class WorkspaceSceneStore {
       )
     )
   }
+
+  private func persistTopicOutlinePresentation() {
+    workspace.sendImmediately(
+      .setTopicOutlinePresentation(
+        expandedTopics: topics.state.expandedTopics,
+        searchText: topics.state.searchText,
+        sortMode: topics.state.sortMode
+      )
+    )
+  }
 }
 
 @MainActor
 @Observable
 public final class TopicOutlineStore {
-  public private(set) var snapshot = BrokerTopicTreeSnapshot.empty
+  public private(set) var state = TopicOutlineFeature.State()
+
+  public var snapshot: BrokerTopicTreeSnapshot {
+    state.snapshot
+  }
 
   private let feed: any BrokerFeedLeaseControlling
 
@@ -419,17 +509,44 @@ public final class TopicOutlineStore {
     self.feed = feed
   }
 
+  func restorePresentation(
+    selectedTopic: String?,
+    expandedTopics: Set<String>,
+    searchText: String,
+    sortMode: BrokerTopicSortMode,
+    expectedBrokerID: UUID? = nil
+  ) {
+    state = TopicOutlineFeature.State(
+      selectedTopic: selectedTopic,
+      expandedTopics: expandedTopics,
+      searchText: searchText,
+      sortMode: sortMode,
+      expectedBrokerID: expectedBrokerID
+    )
+  }
+
+  func send(_ intent: TopicOutlineFeature.Intent) {
+    TopicOutlineFeature.reduce(state: &state, intent: intent)
+  }
+
+  func receive(_ snapshot: BrokerTopicTreeSnapshot) {
+    guard
+      snapshot.revision == 0
+        || snapshot.revision >= state.snapshot.revision
+    else {
+      return
+    }
+    TopicOutlineFeature.reduce(
+      state: &state,
+      action: .snapshotReceived(snapshot)
+    )
+  }
+
   func observe() async {
     let snapshots = await feed.topicSnapshots()
     for await snapshot in snapshots {
       if Task.isCancelled { return }
-      guard
-        snapshot.revision == 0
-          || snapshot.revision >= self.snapshot.revision
-      else {
-        continue
-      }
-      self.snapshot = snapshot
+      receive(snapshot)
     }
   }
 }

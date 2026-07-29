@@ -108,14 +108,41 @@ public struct BrokerTopicLatestValue: Equatable, Sendable {
   }
 }
 
+public struct BrokerTopicPayloadSummary: Equatable, Sendable {
+  public enum Kind: Equatable, Sendable {
+    case scalar
+    case json
+  }
+
+  public let kind: Kind
+  public let display: String
+  public let foldedSearchText: String
+  public let isTruncated: Bool
+
+  fileprivate init(
+    kind: Kind,
+    display: String,
+    foldedSearchText: String,
+    isTruncated: Bool
+  ) {
+    self.kind = kind
+    self.display = display
+    self.foldedSearchText = foldedSearchText
+    self.isTruncated = isTruncated
+  }
+}
+
 private struct BrokerTopicSnapshotRecord: Sendable {
   let id: BrokerTopicID
   let level: String
   let fullTopic: String
+  let foldedFullTopicSearchText: String
   let latest: BrokerTopicLatestValue?
+  let payloadSummary: BrokerTopicPayloadSummary?
   let messageCount: UInt64
   let subtreeMessageCount: UInt64
   let subtreeValueTopicCount: Int
+  let subtreeLatestReceivedAtMicroseconds: Int64?
   let childIndices: [Int]
 }
 
@@ -134,10 +161,19 @@ public struct BrokerTopicNodeSnapshot: Equatable, Identifiable, Sendable {
   public var id: BrokerTopicID { record.id }
   public var level: String { record.level }
   public var fullTopic: String { record.fullTopic }
+  public var foldedFullTopicSearchText: String {
+    record.foldedFullTopicSearchText
+  }
   public var latest: BrokerTopicLatestValue? { record.latest }
+  public var payloadSummary: BrokerTopicPayloadSummary? {
+    record.payloadSummary
+  }
   public var messageCount: UInt64 { record.messageCount }
   public var subtreeMessageCount: UInt64 { record.subtreeMessageCount }
   public var subtreeValueTopicCount: Int { record.subtreeValueTopicCount }
+  public var subtreeLatestReceivedAtMicroseconds: Int64? {
+    record.subtreeLatestReceivedAtMicroseconds
+  }
   public var children: [BrokerTopicNodeSnapshot] {
     record.childIndices.map {
       BrokerTopicNodeSnapshot(storage: storage, index: $0)
@@ -167,11 +203,16 @@ public struct BrokerTopicNodeSnapshot: Equatable, Identifiable, Sendable {
       guard lhsRecord.id == rhsRecord.id,
         lhsRecord.level == rhsRecord.level,
         lhsRecord.fullTopic == rhsRecord.fullTopic,
+        lhsRecord.foldedFullTopicSearchText
+          == rhsRecord.foldedFullTopicSearchText,
         lhsRecord.latest == rhsRecord.latest,
+        lhsRecord.payloadSummary == rhsRecord.payloadSummary,
         lhsRecord.messageCount == rhsRecord.messageCount,
         lhsRecord.subtreeMessageCount == rhsRecord.subtreeMessageCount,
         lhsRecord.subtreeValueTopicCount
           == rhsRecord.subtreeValueTopicCount,
+        lhsRecord.subtreeLatestReceivedAtMicroseconds
+          == rhsRecord.subtreeLatestReceivedAtMicroseconds,
         lhsRecord.childIndices.count == rhsRecord.childIndices.count
       else {
         return false
@@ -227,18 +268,22 @@ public struct BrokerFeedIngestionPolicy: Equatable, Sendable {
   public let historyBatchSize: Int
   public let historyFlushIntervalSeconds: Double
   public let maximumSnapshotRate: Double
+  public let maximumPayloadSummaryCharacters: Int
 
   public init(
     historyBatchSize: Int = 128,
     historyFlushIntervalSeconds: Double = 0.25,
-    maximumSnapshotRate: Double = 10
+    maximumSnapshotRate: Double = 10,
+    maximumPayloadSummaryCharacters: Int = 256
   ) {
     precondition(historyBatchSize > 0)
     precondition(historyFlushIntervalSeconds >= 0)
     precondition(maximumSnapshotRate > 0)
+    precondition(maximumPayloadSummaryCharacters > 0)
     self.historyBatchSize = historyBatchSize
     self.historyFlushIntervalSeconds = historyFlushIntervalSeconds
     self.maximumSnapshotRate = maximumSnapshotRate
+    self.maximumPayloadSummaryCharacters = maximumPayloadSummaryCharacters
   }
 }
 
@@ -254,15 +299,26 @@ public actor BrokerFeedIngestion {
   private final class Node {
     let level: String
     let fullTopic: String
+    let foldedFullTopicSearchText: String
     var latest: BrokerTopicLatestValue?
+    var payloadSummary: BrokerTopicPayloadSummary?
     var messageCount: UInt64 = 0
     var subtreeMessageCount: UInt64 = 0
     var subtreeValueTopicCount: Int = 0
+    var subtreeLatestReceivedAtMicroseconds: Int64?
     var children: [String: Node] = [:]
 
     init(level: String, fullTopic: String) {
       self.level = level
       self.fullTopic = fullTopic
+      self.foldedFullTopicSearchText = fullTopic.folding(
+        options: [
+          .caseInsensitive,
+          .diacriticInsensitive,
+          .widthInsensitive,
+        ],
+        locale: Locale(identifier: "en_US_POSIX")
+      )
     }
   }
 
@@ -447,10 +503,15 @@ public actor BrokerFeedIngestion {
     guard let exact = path.last else { return }
     let becameValueTopic = exact.latest == nil
     exact.latest = BrokerTopicLatestValue(message)
+    exact.payloadSummary = makePayloadSummary(message.payload)
     exact.messageCount &+= 1
     totalMessageCount &+= 1
     for node in path {
       node.subtreeMessageCount &+= 1
+      node.subtreeLatestReceivedAtMicroseconds = max(
+        node.subtreeLatestReceivedAtMicroseconds ?? Int64.min,
+        message.receivedAtMicroseconds
+      )
       if becameValueTopic {
         node.subtreeValueTopicCount += 1
       }
@@ -467,6 +528,7 @@ public actor BrokerFeedIngestion {
       stack.append(contentsOf: node.children.values)
       node.children.removeAll(keepingCapacity: false)
       node.latest = nil
+      node.payloadSummary = nil
     }
   }
 
@@ -616,10 +678,15 @@ public actor BrokerFeedIngestion {
             ),
             level: frame.node.level,
             fullTopic: frame.node.fullTopic,
+            foldedFullTopicSearchText:
+              frame.node.foldedFullTopicSearchText,
             latest: frame.node.latest,
+            payloadSummary: frame.node.payloadSummary,
             messageCount: frame.node.messageCount,
             subtreeMessageCount: frame.node.subtreeMessageCount,
             subtreeValueTopicCount: frame.node.subtreeValueTopicCount,
+            subtreeLatestReceivedAtMicroseconds:
+              frame.node.subtreeLatestReceivedAtMicroseconds,
             childIndices: childIndices
           )
         )
@@ -653,5 +720,56 @@ public actor BrokerFeedIngestion {
       return lhs.level < rhs.level
     }
     return lhs.fullTopic < rhs.fullTopic
+  }
+
+  private func makePayloadSummary(
+    _ payload: Data
+  ) -> BrokerTopicPayloadSummary? {
+    let characterLimit = policy.maximumPayloadSummaryCharacters
+    let byteLimit =
+      characterLimit > (Int.max - 4) / 4
+      ? Int.max
+      : characterLimit * 4 + 4
+    let inspectedByteCount = min(payload.count, byteLimit)
+    let inspected = payload.prefix(inspectedByteCount)
+    var text: String?
+    var decodedByteCount = inspectedByteCount
+    if inspectedByteCount == payload.count {
+      text = String(data: inspected, encoding: .utf8)
+    } else {
+      for trailingByteCount in 0...min(3, inspectedByteCount) {
+        let candidateCount = inspectedByteCount - trailingByteCount
+        if let candidate = String(
+          data: inspected.prefix(candidateCount),
+          encoding: .utf8
+        ) {
+          text = candidate
+          decodedByteCount = candidateCount
+          break
+        }
+      }
+    }
+    guard let text else {
+      return nil
+    }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let kind: BrokerTopicPayloadSummary.Kind =
+      trimmed.first == "{" || trimmed.first == "[" ? .json : .scalar
+    let isTruncated =
+      trimmed.count > characterLimit || payload.count > decodedByteCount
+    let display = String(trimmed.prefix(characterLimit))
+    return BrokerTopicPayloadSummary(
+      kind: kind,
+      display: display,
+      foldedSearchText: display.folding(
+        options: [
+          .caseInsensitive,
+          .diacriticInsensitive,
+          .widthInsensitive,
+        ],
+        locale: Locale(identifier: "en_US_POSIX")
+      ),
+      isTruncated: isTruncated
+    )
   }
 }

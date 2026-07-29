@@ -112,15 +112,16 @@ private struct WorkspaceContentView: View {
     case .serverList:
       ServerListView(store: serverListStore, sceneStore: sceneStore)
     case .connected(let profileID):
-      ConnectedWorkspacePlaceholder(
+      ConnectedWorkspaceView(
         profileName: serverListStore.state.profiles.first {
           $0.id == profileID
         }?.profile.name,
         selectedTopic: selectedTopic,
         snapshot: sceneStore.connection.state.snapshot,
-        topicSnapshot: sceneStore.topics.snapshot,
+        topicState: sceneStore.topics.state,
         generationWarning:
           sceneStore.connection.state.generationWarning,
+        sceneStore: sceneStore,
         onRetry: {
           Task { await sceneStore.connection.retry() }
         },
@@ -135,58 +136,31 @@ private struct WorkspaceContentView: View {
         },
         onShowBrokers: {
           Task { await sceneStore.showServerList() }
-        },
-        onSelectTopic: { topic in
-          sceneStore.selectTopic(topic)
         }
       )
     }
   }
 }
 
-private struct ConnectedWorkspacePlaceholder: View {
+private struct ConnectedWorkspaceView: View {
   let profileName: String?
   let selectedTopic: String?
   let snapshot: BrokerFeedSnapshot
-  let topicSnapshot: BrokerTopicTreeSnapshot
+  let topicState: TopicOutlineFeature.State
   let generationWarning: BrokerFeedGenerationWarning?
+  @Bindable var sceneStore: WorkspaceSceneStore
   let onRetry: () -> Void
   let onCancel: () -> Void
   let onApplyLater: () -> Void
   let onReconnectAll: () -> Void
   let onShowBrokers: () -> Void
-  let onSelectTopic: (String) -> Void
 
   var body: some View {
     VStack(spacing: 20) {
-      ContentUnavailableView {
-        Label {
-          Text(
-            "Broker Workspace",
-            bundle: #bundle,
-            comment: "Title of the connected broker workspace."
-          )
-        } icon: {
-          Image(systemName: "network.badge.shield.half.filled")
-        }
-      } description: {
-        if let profileName {
-          Text(profileName)
-        } else {
-          Text(
-            "The saved broker profile is unavailable.",
-            bundle: #bundle,
-            comment: "Shown when a restored workspace refers to a missing profile."
-          )
-        }
-        if let selectedTopic {
-          Text(
-            "Selected topic: \(selectedTopic)",
-            bundle: #bundle,
-            comment: "Restored topic selection. The variable is an MQTT topic."
-          )
-        }
-      }
+      ConnectedWorkspaceHeader(
+        profileName: profileName,
+        selectedTopic: selectedTopic
+      )
       ConnectionStatusView(snapshot: snapshot)
       if let generationWarning {
         BrokerGenerationWarningView(
@@ -223,14 +197,11 @@ private struct ConnectedWorkspacePlaceholder: View {
           )
         }
       }
-      if topicSnapshot.roots.isEmpty == false {
-        TopicOutlineView(
-          snapshot: topicSnapshot,
-          selectedTopic: selectedTopic,
-          onSelectTopic: onSelectTopic
-        )
-      }
-      if topicSnapshot.historyIsHealthy == false {
+      TopicExplorerView(
+        state: topicState,
+        sceneStore: sceneStore
+      )
+      if topicState.snapshot.historyIsHealthy == false {
         Label {
           Text(
             "History is unavailable. Live topic values are still updating.",
@@ -247,61 +218,458 @@ private struct ConnectedWorkspacePlaceholder: View {
   }
 }
 
-private struct TopicOutlineView: View {
-  let snapshot: BrokerTopicTreeSnapshot
+private struct ConnectedWorkspaceHeader: View {
+  let profileName: String?
   let selectedTopic: String?
-  let onSelectTopic: (String) -> Void
 
   var body: some View {
-    List(snapshot.roots, children: \.outlineChildren) { node in
-      Button {
-        onSelectTopic(node.fullTopic)
-      } label: {
-        TopicOutlineRow(
-          node: node,
-          isSelected: node.fullTopic == selectedTopic
+    HStack(spacing: 12) {
+      Image(systemName: "network.badge.shield.half.filled")
+        .font(.title2)
+        .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 4) {
+        if let profileName {
+          Text(verbatim: profileName)
+            .font(.headline)
+        } else {
+          Text(
+            "Broker Unavailable",
+            bundle: #bundle,
+            comment: "Connected-workspace heading when its saved broker profile is unavailable."
+          )
+          .font(.headline)
+        }
+        if let selectedTopic {
+          Text(verbatim: selectedTopic)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
+      Spacer()
+    }
+  }
+}
+
+private struct TopicExplorerView: View {
+  let state: TopicOutlineFeature.State
+  @Bindable var sceneStore: WorkspaceSceneStore
+
+  var body: some View {
+    VStack(spacing: 8) {
+      TopicOutlineControls(
+        searchText: $sceneStore.topicSearchText,
+        sortMode: $sceneStore.topicSortMode,
+        isFrozen: state.isFrozen,
+        pendingChangeCount: state.pendingChangeCount,
+        pendingChangeCountIsCapped:
+          state.pendingChangeCountIsCapped,
+        onFreeze: sceneStore.freezeTopicView,
+        onJumpToLive: sceneStore.jumpTopicViewToLive
+      )
+      if state.rows.isEmpty {
+        TopicOutlineEmptyState(isSearching: !state.searchText.isEmpty)
+          .frame(maxHeight: .infinity)
+      } else {
+        List(selection: $sceneStore.selectedTopicID) {
+          ForEach(state.rows) { row in
+            TopicOutlineRow(
+              row: row,
+              onToggleExpansion: {
+                sceneStore.toggleTopicExpansion(row.id)
+              }
+            )
+            .tag(row.id)
+          }
+        }
+      }
+    }
+    .frame(minHeight: 320)
+  }
+}
+
+private struct TopicOutlineEmptyState: View {
+  let isSearching: Bool
+
+  var body: some View {
+    ContentUnavailableView {
+      Label {
+        if isSearching {
+          Text(
+            "No Matching Topics",
+            bundle: #bundle,
+            comment: "Empty topic explorer title when search has no matches."
+          )
+        } else {
+          Text(
+            "Waiting for Topics",
+            bundle: #bundle,
+            comment: "Empty topic explorer title before live messages arrive."
+          )
+        }
+      } icon: {
+        Image(systemName: "point.3.connected.trianglepath.dotted")
+      }
+    } description: {
+      if isSearching {
+        Text(
+          "Try a different topic path or current value.",
+          bundle: #bundle,
+          comment: "Description shown when no indexed topic or payload summary matches search."
+        )
+      } else {
+        Text(
+          "Live topics will appear here as messages arrive.",
+          bundle: #bundle,
+          comment: "Description shown before the broker has delivered any topics."
         )
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel(
-        Text(
-          "\(node.fullTopic), \(node.subtreeValueTopicCount) topics, \(node.subtreeMessageCount) messages",
-          bundle: #bundle,
-          comment: "Accessible live topic row with exact topic and subtree counters."
+    }
+  }
+}
+
+private struct TopicOutlineControls: View {
+  @Binding var searchText: String
+  @Binding var sortMode: BrokerTopicSortMode
+  let isFrozen: Bool
+  let pendingChangeCount: Int
+  let pendingChangeCountIsCapped: Bool
+  let onFreeze: () -> Void
+  let onJumpToLive: () -> Void
+
+  var body: some View {
+    ViewThatFits {
+      HStack(spacing: 8) {
+        TopicSearchField(searchText: $searchText)
+        TopicSortPicker(sortMode: $sortMode)
+        TopicFreezeButton(
+          isFrozen: isFrozen,
+          pendingChangeCount: pendingChangeCount,
+          pendingChangeCountIsCapped: pendingChangeCountIsCapped,
+          onFreeze: onFreeze,
+          onJumpToLive: onJumpToLive
         )
+      }
+      VStack(spacing: 8) {
+        TopicSearchField(searchText: $searchText)
+        HStack(spacing: 8) {
+          TopicSortPicker(sortMode: $sortMode)
+          TopicFreezeButton(
+            isFrozen: isFrozen,
+            pendingChangeCount: pendingChangeCount,
+            pendingChangeCountIsCapped: pendingChangeCountIsCapped,
+            onFreeze: onFreeze,
+            onJumpToLive: onJumpToLive
+          )
+        }
+      }
+    }
+  }
+}
+
+private struct TopicSearchField: View {
+  @Binding var searchText: String
+
+  var body: some View {
+    TextField(
+      text: $searchText,
+      prompt: Text(
+        "Topic path or current value",
+        bundle: #bundle,
+        comment: "Prompt for searching indexed live topics and current payload summaries."
+      )
+    ) {
+      Text(
+        "Search Topics",
+        bundle: #bundle,
+        comment: "Label for topic path and current-value search."
       )
     }
-    .frame(minHeight: 220)
+    .textFieldStyle(.roundedBorder)
+  }
+}
+
+private struct TopicSortPicker: View {
+  @Binding var sortMode: BrokerTopicSortMode
+
+  var body: some View {
+    Picker(
+      selection: $sortMode
+    ) {
+      ForEach(BrokerTopicSortMode.allCases, id: \.rawValue) { mode in
+        Text(mode.localizedTitle)
+          .tag(mode)
+      }
+    } label: {
+      Text(
+        "Sort Topics",
+        bundle: #bundle,
+        comment: "Label for choosing the topic outline sort order."
+      )
+    }
+    .pickerStyle(.menu)
+  }
+}
+
+private struct TopicFreezeButton: View {
+  let isFrozen: Bool
+  let pendingChangeCount: Int
+  let pendingChangeCountIsCapped: Bool
+  let onFreeze: () -> Void
+  let onJumpToLive: () -> Void
+
+  var body: some View {
+    if isFrozen {
+      Button(action: onJumpToLive) {
+        Label {
+          if pendingChangeCountIsCapped {
+            Text(
+              "Jump to Live (\(pendingChangeCount)+)",
+              bundle: #bundle,
+              comment:
+                "Resumes a frozen topic view. The variable is a capped pending-message count."
+            )
+          } else {
+            Text(
+              "Jump to Live (\(pendingChangeCount))",
+              bundle: #bundle,
+              comment: "Resumes a frozen topic view. The variable is the pending-message count."
+            )
+          }
+        } icon: {
+          Image(systemName: "forward.end.fill")
+        }
+      }
+      .buttonStyle(.borderedProminent)
+    } else {
+      Button(action: onFreeze) {
+        Label {
+          Text(
+            "Freeze View",
+            bundle: #bundle,
+            comment: "Pauses presentation updates while live topic ingestion continues."
+          )
+        } icon: {
+          Image(systemName: "pause.fill")
+        }
+      }
+    }
   }
 }
 
 private struct TopicOutlineRow: View {
-  let node: BrokerTopicNodeSnapshot
-  let isSelected: Bool
+  let row: TopicOutlineRowState
+  let onToggleExpansion: () -> Void
 
   var body: some View {
-    HStack {
-      Text(node.level.isEmpty ? "/" : node.level)
-        .fontWeight(isSelected ? .semibold : .regular)
+    HStack(spacing: 8) {
+      if row.allowsExpansionToggle {
+        Button(action: onToggleExpansion) {
+          Image(
+            systemName:
+              row.isExpanded ? "chevron.down" : "chevron.right"
+          )
+          .frame(width: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+          row.isExpanded
+            ? LocalizedStringResource(
+              "Collapse Topic",
+              bundle: #bundle,
+              comment: "Accessible action that collapses a topic branch."
+            )
+            : LocalizedStringResource(
+              "Expand Topic",
+              bundle: #bundle,
+              comment: "Accessible action that expands a topic branch."
+            )
+        )
+        .accessibilityHint(
+          Text(
+            "Changes visibility of descendants under \(row.fullTopic).",
+            bundle: #bundle,
+            comment:
+              "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
+          )
+        )
+      } else {
+        Color.clear.frame(width: 16)
+          .accessibilityHidden(true)
+      }
+      TopicOutlineRowContent(row: row)
+    }
+    .padding(.leading, CGFloat(min(row.depth, 12)) * 16)
+  }
+}
+
+private struct TopicOutlineRowContent: View {
+  let row: TopicOutlineRowState
+
+  var body: some View {
+    HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 4) {
+          if row.level.isEmpty {
+            Text(
+              "Empty level",
+              bundle: #bundle,
+              comment: "Topic segment label that distinguishes an exact empty MQTT path component."
+            )
+            .fontWeight(row.isSelected ? .semibold : .regular)
+          } else {
+            Text(verbatim: row.level)
+              .fontWeight(row.isSelected ? .semibold : .regular)
+          }
+          if row.hasValue {
+            TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
+          }
+          if row.retained {
+            Image(systemName: "pin.fill")
+              .foregroundStyle(.secondary)
+              .accessibilityLabel(
+                Text(
+                  "Retained delivery",
+                  bundle: #bundle,
+                  comment: "Indicates that the latest MQTT delivery carried the retained flag."
+                )
+              )
+          }
+          if let qos = row.qos {
+            Text(
+              "QoS \(qos.rawValue)",
+              bundle: #bundle,
+              comment: "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
+        }
+        if let summary = row.payloadSummary, !summary.display.isEmpty {
+          HStack(spacing: 4) {
+            Text(verbatim: "=")
+            Text(verbatim: summary.display)
+            if summary.isTruncated {
+              Text(verbatim: "…")
+            }
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        }
+      }
       Spacer()
-      if node.subtreeValueTopicCount > 0 {
+      if row.hasChildren {
         Text(
-          "\(node.subtreeValueTopicCount) topics, \(node.subtreeMessageCount) messages",
+          "\(row.descendantValueTopicCount) topics, \(row.descendantMessageCount) messages",
           bundle: #bundle,
-          comment: "Live topic subtree counters. The variables are topic and message counts."
+          comment:
+            "Topic branch descendant counters. The variables are descendant value-topic and message counts."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
       }
     }
+    .contentShape(.rect)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(Text(verbatim: row.fullTopic))
+    .accessibilityValue(accessibilityValue)
+    .accessibilityAddTraits(row.isSelected ? .isSelected : [])
+  }
+
+  private var accessibilityValue: Text {
+    if let qos = row.qos, let summary = row.payloadSummary {
+      if row.retained {
+        return Text(
+          "Retained delivery, QoS \(qos.rawValue), current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          bundle: #bundle,
+          comment:
+            "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count."
+        )
+      } else {
+        return Text(
+          "Latest delivery, QoS \(qos.rawValue), current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          bundle: #bundle,
+          comment:
+            "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count."
+        )
+      }
+    } else if let qos = row.qos {
+      if row.retained {
+        return Text(
+          "Retained delivery, QoS \(qos.rawValue), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          bundle: #bundle,
+          comment:
+            "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count."
+        )
+      } else {
+        return Text(
+          "Latest delivery, QoS \(qos.rawValue), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          bundle: #bundle,
+          comment:
+            "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count."
+        )
+      }
+    } else {
+      return Text(
+        "\(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+        bundle: #bundle,
+        comment:
+          "Accessible branch-only MQTT topic metadata. Variables are descendant value-topic and message counts."
+      )
+    }
   }
 }
 
-extension BrokerTopicNodeSnapshot {
-  fileprivate var outlineChildren: [BrokerTopicNodeSnapshot]? {
-    children.isEmpty ? nil : children
-  }
+private struct TopicActivityIndicator: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let latestOrdinal: UInt64?
 
+  var body: some View {
+    if reduceMotion {
+      Image(systemName: "circle.fill")
+        .font(.caption2)
+        .foregroundStyle(.green)
+        .accessibilityHidden(true)
+    } else {
+      Image(systemName: "circle.fill")
+        .font(.caption2)
+        .foregroundStyle(.green)
+        .symbolEffect(.pulse, value: latestOrdinal)
+        .accessibilityHidden(true)
+    }
+  }
+}
+
+extension BrokerTopicSortMode {
+  fileprivate var localizedTitle: LocalizedStringResource {
+    switch self {
+    case .name:
+      LocalizedStringResource(
+        "Name",
+        bundle: #bundle,
+        comment: "Sorts topic siblings alphabetically by segment name."
+      )
+    case .recentActivity:
+      LocalizedStringResource(
+        "Recent Activity",
+        bundle: #bundle,
+        comment: "Sorts topic siblings by latest subtree activity."
+      )
+    case .descendantMessages:
+      LocalizedStringResource(
+        "Most Messages",
+        bundle: #bundle,
+        comment: "Sorts topic siblings by descendant message count."
+      )
+    case .descendantTopics:
+      LocalizedStringResource(
+        "Most Topics",
+        bundle: #bundle,
+        comment: "Sorts topic siblings by descendant value-topic count."
+      )
+    }
+  }
 }
 
 private struct BrokerGenerationWarningView: View {

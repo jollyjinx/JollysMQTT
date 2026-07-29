@@ -12,8 +12,19 @@
         }
       }
     },
+    "%lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible branch-only MQTT topic metadata. Variables are descendant value-topic and message counts.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld descendant topics, %2$llu descendant messages"
+          }
+        }
+      }
+    },
     "%lld topics, %llu messages" : {
-      "comment" : "Live topic subtree counters. The variables are topic and message counts.",
+      "comment" : "Topic branch descendant counters. The variables are descendant value-topic and message counts.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -68,11 +79,17 @@
     "Broker Settings Changed" : {
       "comment" : "Title of the warning that a connected broker profile has newer settings."
     },
+    "Broker Unavailable" : {
+      "comment" : "Connected-workspace heading when its saved broker profile is unavailable."
+    },
     "Broker Workspace" : {
       "comment" : "Title of the connected broker workspace."
     },
     "Cancel" : {
       "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels broker password entry.\nCancels the current broker connection or retry."
+    },
+    "Changes visibility of descendants under %@." : {
+      "comment" : "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
     },
     "Choose whether to keep or delete the password stored on this device for “%@”." : {
       "comment" : "Deletion warning. The variable is the broker profile name."
@@ -82,6 +99,9 @@
     },
     "Client ID" : {
       "comment" : "Label for the MQTT client identifier policy."
+    },
+    "Collapse Topic" : {
+      "comment" : "Accessible action that collapses a topic branch."
     },
     "Connect" : {
       "comment" : "Primary action that connects to a selected broker."
@@ -125,6 +145,9 @@
     "Edit" : {
       "comment" : "Action that edits the selected broker profile.\nContext action that edits a broker profile."
     },
+    "Empty level" : {
+      "comment" : "Topic segment label that distinguishes an exact empty MQTT path component."
+    },
     "Enable at least one unique, valid subscription filter." : {
       "comment" : "Validation error for MQTT subscriptions."
     },
@@ -152,6 +175,9 @@
     "Enter a valid username." : {
       "comment" : "Validation error for an invalid MQTT username."
     },
+    "Expand Topic" : {
+      "comment" : "Accessible action that expands a topic branch."
+    },
     "Explicit" : {
       "comment" : "Client ID mode entered by the user."
     },
@@ -160,6 +186,9 @@
     },
     "Fix Before Saving" : {
       "comment" : "Header for broker profile validation errors."
+    },
+    "Freeze View" : {
+      "comment" : "Pauses presentation updates while live topic ingestion continues."
     },
     "History is unavailable. Live topic values are still updating." : {
       "comment" : "Warns that durable history failed while live MQTT ingestion continues."
@@ -176,8 +205,39 @@
     "JollysMQTT" : {
       "comment" : "Application title shown in navigation chrome."
     },
+    "Jump to Live (%lld)" : {
+      "comment" : "Resumes a frozen topic view. The variable is the pending-message count."
+    },
+    "Jump to Live (%lld+)" : {
+      "comment" : "Resumes a frozen topic view. The variable is a capped pending-message count."
+    },
     "Keepalive: %lld seconds" : {
       "comment" : "MQTT keepalive value. The variable is a number of seconds."
+    },
+    "Latest delivery, QoS %lld, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Latest delivery, QoS %1$lld, %2$lld descendant topics, %3$llu descendant messages"
+          }
+        }
+      }
+    },
+    "Latest delivery, QoS %lld, current value %@, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Latest delivery, QoS %1$lld, current value %2$@, %3$lld descendant topics, %4$llu descendant messages"
+          }
+        }
+      }
+    },
+    "Live topics will appear here as messages arrive." : {
+      "comment" : "Description shown before the broker has delivered any topics."
     },
     "Loading broker profiles" : {
       "comment" : "Accessibility label for profile loading progress."
@@ -188,8 +248,14 @@
     "Messages arrived faster than this device could process them." : {
       "comment" : "Explains a terminal local broker-feed overload."
     },
+    "Most Messages" : {
+      "comment" : "Sorts topic siblings by descendant message count."
+    },
+    "Most Topics" : {
+      "comment" : "Sorts topic siblings by descendant value-topic count."
+    },
     "Name" : {
-      "comment" : "Label for a broker profile display name."
+      "comment" : "Label for a broker profile display name.\nSorts topic siblings alphabetically by segment name."
     },
     "New Window" : {
       "comment" : "Command that opens a fresh broker-list workspace."
@@ -199,6 +265,9 @@
     },
     "No Brokers" : {
       "comment" : "Title of the initial empty broker-list screen."
+    },
+    "No Matching Topics" : {
+      "comment" : "Empty topic explorer title when search has no matches."
     },
     "OK" : {
       "comment" : "Dismisses a credential operation error.\nDismisses a workspace state error."
@@ -245,11 +314,17 @@
     "QoS" : {
       "comment" : "Label for MQTT requested quality of service."
     },
+    "QoS %lld" : {
+      "comment" : "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
+    },
     "Random per Connection" : {
       "comment" : "Client ID mode that creates an ID for every clean connection."
     },
     "Ready to connect to %@." : {
       "comment" : "Placeholder connected state. The variable is a broker profile name."
+    },
+    "Recent Activity" : {
+      "comment" : "Sorts topic siblings by latest subtree activity."
     },
     "Reconnect All Windows to Apply" : {
       "comment" : "Reconnects every workspace for a broker using the pending profile settings."
@@ -262,6 +337,31 @@
     },
     "Resolving broker" : {
       "comment" : "Broker connection phase shown before opening the transport."
+    },
+    "Retained delivery" : {
+      "comment" : "Indicates that the latest MQTT delivery carried the retained flag."
+    },
+    "Retained delivery, QoS %lld, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Retained delivery, QoS %1$lld, %2$lld descendant topics, %3$llu descendant messages"
+          }
+        }
+      }
+    },
+    "Retained delivery, QoS %lld, current value %@, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Retained delivery, QoS %1$lld, current value %2$@, %3$lld descendant topics, %4$llu descendant messages"
+          }
+        }
+      }
     },
     "Retry" : {
       "comment" : "Retries a broker connection after a failure or cancellation."
@@ -278,11 +378,17 @@
     "Saving profile changes…" : {
       "comment" : "Status shown while local profile changes are not yet durable."
     },
+    "Search Topics" : {
+      "comment" : "Label for topic path and current-value search."
+    },
     "Selected topic: %@" : {
       "comment" : "Restored topic selection. The variable is an MQTT topic."
     },
     "Show Brokers" : {
       "comment" : "Returns a connected workspace to the broker list."
+    },
+    "Sort Topics" : {
+      "comment" : "Label for choosing the topic outline sort order."
     },
     "Stable Generated" : {
       "comment" : "Client ID mode derived stably for the installation and profile."
@@ -353,11 +459,20 @@
     "Topic Filter" : {
       "comment" : "Label for an MQTT subscription topic filter."
     },
+    "Topic path or current value" : {
+      "comment" : "Prompt for searching indexed live topics and current payload summaries."
+    },
     "Transport" : {
       "comment" : "Label for the broker transport picker."
     },
+    "Try a different topic path or current value." : {
+      "comment" : "Description shown when no indexed topic or payload summary matches search."
+    },
     "Username" : {
       "comment" : "Label for the optional MQTT username."
+    },
+    "Waiting for Topics" : {
+      "comment" : "Empty topic explorer title before live messages arrive."
     },
     "Waiting to reconnect" : {
       "comment" : "Broker connection phase shown during automatic backoff."

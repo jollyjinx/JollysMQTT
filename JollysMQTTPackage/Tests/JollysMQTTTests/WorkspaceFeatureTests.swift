@@ -40,6 +40,13 @@ struct WorkspaceFeatureTests {
     await first.send(.selectProfile(profileID))
     await first.send(.connect(profileID: profileID))
     await first.send(.selectTopic("devices/pump/state"))
+    await first.send(
+      .setTopicOutlinePresentation(
+        expandedTopics: ["devices", "devices/pump"],
+        searchText: "state",
+        sortMode: .descendantMessages
+      )
+    )
 
     let relaunched = WorkspaceStore(id: id, repository: repository)
     await relaunched.load()
@@ -47,6 +54,102 @@ struct WorkspaceFeatureTests {
     #expect(relaunched.state.record.route == .connected(profileID: profileID))
     #expect(relaunched.state.record.selectedProfileID == profileID)
     #expect(relaunched.state.record.selectedTopic == "devices/pump/state")
+    #expect(
+      relaunched.state.record.expandedTopics
+        == ["devices", "devices/pump"]
+    )
+    #expect(relaunched.state.record.topicSearchText == "state")
+    #expect(
+      relaunched.state.record.topicSortMode == .descendantMessages
+    )
+  }
+
+  @Test("Freeze state is deliberately absent from durable workspace state")
+  func freezeIsEphemeral() throws {
+    let data = try JSONEncoder().encode(
+      WorkspaceRecord(
+        id: WorkspaceID(),
+        expandedTopics: ["root"],
+        topicSearchText: "value",
+        topicSortMode: .descendantTopics
+      )
+    )
+    let json = try #require(
+      JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+
+    #expect(json["isTopicViewFrozen"] == nil)
+    #expect(json["pendingChangeCount"] == nil)
+  }
+
+  @Test("Changing brokers clears broker-specific topic navigation")
+  func changingBrokerClearsTopicIdentity() {
+    let firstBroker = UUID()
+    let secondBroker = UUID()
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .connected(profileID: firstBroker),
+        selectedProfileID: firstBroker,
+        selectedTopic: "same/path",
+        expandedTopics: ["same", "same/path"],
+        topicSearchText: "same",
+        topicSortMode: .recentActivity
+      )
+    )
+
+    _ = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .connect(profileID: secondBroker)
+    )
+
+    #expect(state.record.selectedTopic == nil)
+    #expect(state.record.expandedTopics.isEmpty)
+    #expect(state.record.topicSearchText == "same")
+    #expect(state.record.topicSortMode == .recentActivity)
+  }
+
+  @Test("Scene topic intents persist navigation preferences but not Freeze")
+  @MainActor
+  func sceneTopicPresentationPersistence() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspaceRepository = LocalWorkspaceRepository(
+      directoryURL: directory.appending(
+        path: "workspaces",
+        directoryHint: .isDirectory
+      )
+    )
+    let dependencies = JollysMQTTAppDependencies(
+      profileRepository: LocalProfileRepository(
+        fileURL: directory.appending(path: "profiles.json")
+      ),
+      workspaceRepository: workspaceRepository
+    )
+    let id = WorkspaceID()
+    let scene = dependencies.makeSceneStore(id: id)
+    await scene.start()
+
+    scene.topics.restorePresentation(
+      selectedTopic: nil,
+      expandedTopics: ["root"],
+      searchText: "",
+      sortMode: .name
+    )
+    scene.setTopicSearchText("temperature")
+    scene.setTopicSortMode(.recentActivity)
+    scene.freezeTopicView()
+    await scene.workspace.flush()
+
+    let restored = dependencies.makeSceneStore(id: id)
+    await restored.start()
+
+    #expect(restored.topics.state.expandedTopics == ["root"])
+    #expect(restored.topics.state.searchText == "temperature")
+    #expect(restored.topics.state.sortMode == .recentActivity)
+    #expect(!restored.topics.state.isFrozen)
+    #expect(restored.topics.state.pendingChangeCount == 0)
   }
 
   @Test("Cancelling the structured owner closes and releases exactly once")

@@ -26,6 +26,11 @@ public enum WorkspaceFeature {
     case connect(profileID: UUID)
     case showServerList
     case selectTopic(String?)
+    case setTopicOutlinePresentation(
+      expandedTopics: Set<String>,
+      searchText: String,
+      sortMode: BrokerTopicSortMode
+    )
     case dismissPersistenceError
   }
 
@@ -50,6 +55,10 @@ public enum WorkspaceFeature {
       return .save(state.record)
 
     case .connect(let profileID):
+      if state.record.selectedProfileID != profileID {
+        state.record.selectedTopic = nil
+        state.record.expandedTopics = []
+      }
       state.record.route = .connected(profileID: profileID)
       state.record.selectedProfileID = profileID
       state.record.closedAt = nil
@@ -64,6 +73,24 @@ public enum WorkspaceFeature {
     case .selectTopic(let topic):
       guard state.record.selectedTopic != topic else { return nil }
       state.record.selectedTopic = topic
+      return .save(state.record)
+
+    case .setTopicOutlinePresentation(
+      let expandedTopics,
+      let searchText,
+      let sortMode
+    ):
+      let sortedTopics = expandedTopics.sorted()
+      guard
+        state.record.expandedTopics != sortedTopics
+          || state.record.topicSearchText != searchText
+          || state.record.topicSortMode != sortMode
+      else {
+        return nil
+      }
+      state.record.expandedTopics = sortedTopics
+      state.record.topicSearchText = searchText
+      state.record.topicSortMode = sortMode
       return .save(state.record)
 
     case .dismissPersistenceError:

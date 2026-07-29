@@ -11,6 +11,9 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
   public var route: WorkspaceRoute
   public var selectedProfileID: UUID?
   public var selectedTopic: String?
+  public var expandedTopics: [String]
+  public var topicSearchText: String
+  public var topicSortMode: BrokerTopicSortMode
   public var closedAt: Date?
 
   public init(
@@ -18,13 +21,65 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     route: WorkspaceRoute = .serverList,
     selectedProfileID: UUID? = nil,
     selectedTopic: String? = nil,
+    expandedTopics: [String] = [],
+    topicSearchText: String = "",
+    topicSortMode: BrokerTopicSortMode = .name,
     closedAt: Date? = nil
   ) {
     self.id = id
     self.route = route
     self.selectedProfileID = selectedProfileID
     self.selectedTopic = selectedTopic
+    self.expandedTopics = Array(Set(expandedTopics)).sorted()
+    self.topicSearchText = topicSearchText
+    self.topicSortMode = topicSortMode
     self.closedAt = closedAt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case route
+    case selectedProfileID
+    case selectedTopic
+    case expandedTopics
+    case topicSearchText
+    case topicSortMode
+    case closedAt
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(WorkspaceID.self, forKey: .id)
+    route =
+      try container.decodeIfPresent(WorkspaceRoute.self, forKey: .route)
+      ?? .serverList
+    selectedProfileID = try container.decodeIfPresent(
+      UUID.self,
+      forKey: .selectedProfileID
+    )
+    selectedTopic = try container.decodeIfPresent(
+      String.self,
+      forKey: .selectedTopic
+    )
+    expandedTopics = Array(
+      Set(
+        try container.decodeIfPresent(
+          [String].self,
+          forKey: .expandedTopics
+        ) ?? []
+      )
+    ).sorted()
+    topicSearchText =
+      try container.decodeIfPresent(
+        String.self,
+        forKey: .topicSearchText
+      ) ?? ""
+    topicSortMode =
+      try container.decodeIfPresent(
+        BrokerTopicSortMode.self,
+        forKey: .topicSortMode
+      ) ?? .name
+    closedAt = try container.decodeIfPresent(Date.self, forKey: .closedAt)
   }
 }
 

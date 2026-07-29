@@ -125,6 +125,105 @@ struct BrokerFeedIngestionTests {
     #expect(snapshot.unpersistedMessageCount == 0)
   }
 
+  @Test("Indexing derives capped searchable scalar and JSON summaries")
+  func cappedIndexedPayloadSummaries() async throws {
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: RecordingHistoryWriter(),
+      policy: .init(
+        historyBatchSize: 8,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10,
+        maximumPayloadSummaryCharacters: 12
+      )
+    )
+    let epoch = ConnectionEpochID()
+
+    await ingestion.ingest(
+      .fixture(
+        epoch: epoch,
+        ordinal: 1,
+        topic: "plain",
+        payload: Data("Café Temperature".utf8)
+      )
+    )
+    await ingestion.ingest(
+      .fixture(
+        epoch: epoch,
+        ordinal: 2,
+        topic: "json",
+        payload: Data(#"{"enabled":true,"value":42}"#.utf8)
+      )
+    )
+    await ingestion.ingest(
+      .fixture(
+        epoch: epoch,
+        ordinal: 3,
+        topic: "binary",
+        payload: Data([0xFF, 0xFE])
+      )
+    )
+    let snapshot = await ingestion.flush()
+
+    let plain = try #require(
+      snapshot.roots.first { $0.fullTopic == "plain" }
+    )
+    #expect(plain.payloadSummary?.kind == .scalar)
+    #expect(plain.payloadSummary?.display == "Café Tempera")
+    #expect(plain.payloadSummary?.isTruncated == true)
+    #expect(plain.payloadSummary?.foldedSearchText == "cafe tempera")
+
+    let json = try #require(
+      snapshot.roots.first { $0.fullTopic == "json" }
+    )
+    #expect(json.payloadSummary?.kind == .json)
+    #expect(json.payloadSummary?.display.count == 12)
+    #expect(json.payloadSummary?.isTruncated == true)
+
+    let binary = try #require(
+      snapshot.roots.first { $0.fullTopic == "binary" }
+    )
+    #expect(binary.payloadSummary == nil)
+  }
+
+  @Test("Summary extraction retains bounded output for a very large payload")
+  func veryLargePayloadSummaryIsBounded() async throws {
+    let summaryLimit = 32
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: RecordingHistoryWriter(),
+      policy: .init(
+        historyBatchSize: 8,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10,
+        maximumPayloadSummaryCharacters: summaryLimit
+      )
+    )
+    var payload = Data(#"{"status":"running","padding":""#.utf8)
+    payload.append(Data(repeating: Character("x").asciiValue!, count: 8_000_000))
+    payload.append(Data(#""}"#.utf8))
+
+    await ingestion.ingest(
+      .fixture(
+        epoch: ConnectionEpochID(),
+        ordinal: 1,
+        topic: "large",
+        payload: payload
+      )
+    )
+    let snapshot = await ingestion.flush()
+    let node = try #require(snapshot.roots.first)
+
+    #expect(node.payloadSummary?.kind == .json)
+    #expect(node.payloadSummary?.display.count == summaryLimit)
+    #expect(
+      node.payloadSummary?.foldedSearchText.count == summaryLimit
+    )
+    #expect(node.payloadSummary?.isTruncated == true)
+  }
+
   @Test("A message burst emits one revision and slow consumers retain only newest")
   func coalescedNewestWinsSnapshots() async throws {
     let sleeper = IngestionManualSleeper()

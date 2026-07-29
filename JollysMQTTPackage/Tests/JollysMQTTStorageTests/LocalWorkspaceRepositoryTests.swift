@@ -28,7 +28,10 @@ struct LocalWorkspaceRepositoryTests {
       id: id,
       route: .connected(profileID: profileID),
       selectedProfileID: profileID,
-      selectedTopic: "factory/line/status"
+      selectedTopic: "factory/line/status",
+      expandedTopics: ["factory", "factory/line"],
+      topicSearchText: "status",
+      topicSortMode: .recentActivity
     )
     let repository = LocalWorkspaceRepository(directoryURL: fixture.directory)
 
@@ -41,6 +44,32 @@ struct LocalWorkspaceRepositoryTests {
     #expect(json["version"] as? Int == 1)
     let relaunched = LocalWorkspaceRepository(directoryURL: fixture.directory)
     #expect(try await relaunched.load(id: id) == expected)
+  }
+
+  @Test("Version-one workspaces without outline fields receive safe defaults")
+  func legacyWorkspaceDefaultsOutlinePresentation() async throws {
+    let fixture = try WorkspaceFixture()
+    defer { fixture.remove() }
+    let id = WorkspaceID()
+    let data = Data(
+      """
+      {
+        "version": 1,
+        "record": {
+          "id": {"rawValue": "\(id.rawValue.uuidString)"},
+          "route": {"serverList": {}}
+        }
+      }
+      """.utf8
+    )
+    try data.write(to: fixture.fileURL(for: id), options: [.atomic])
+    let repository = LocalWorkspaceRepository(directoryURL: fixture.directory)
+
+    let record = try await repository.load(id: id)
+
+    #expect(record.expandedTopics.isEmpty)
+    #expect(record.topicSearchText.isEmpty)
+    #expect(record.topicSortMode == .name)
   }
 
   @Test("An undecodable current workspace recovers to the server list")

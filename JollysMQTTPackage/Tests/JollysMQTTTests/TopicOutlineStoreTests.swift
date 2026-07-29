@@ -1,3 +1,4 @@
+import Foundation
 import JollysMQTTCore
 import Testing
 
@@ -26,6 +27,75 @@ struct TopicOutlineStoreTests {
     observation.cancel()
     await feed.finish()
     await observation.value
+  }
+
+  @Test("Resetting for another broker rejects a queued prior snapshot")
+  func brokerResetRejectsQueuedSnapshot() async {
+    let firstBrokerID = UUID()
+    let secondBrokerID = UUID()
+    let firstSnapshot = await makeSnapshot(
+      brokerID: firstBrokerID,
+      topic: "private/first"
+    )
+    let secondSnapshot = await makeSnapshot(
+      brokerID: secondBrokerID,
+      topic: "public/second"
+    )
+    let store = TopicOutlineStore(feed: TopicSnapshotFeed())
+    store.restorePresentation(
+      selectedTopic: "private/first",
+      expandedTopics: ["private"],
+      searchText: "",
+      sortMode: .name,
+      expectedBrokerID: firstBrokerID
+    )
+    store.receive(firstSnapshot)
+    #expect(!store.state.rows.isEmpty)
+
+    store.restorePresentation(
+      selectedTopic: nil,
+      expandedTopics: [],
+      searchText: "",
+      sortMode: .name,
+      expectedBrokerID: secondBrokerID
+    )
+    store.receive(.empty)
+    store.receive(firstSnapshot)
+
+    #expect(store.state.expectedBrokerID == secondBrokerID)
+    #expect(store.snapshot == .empty)
+    #expect(store.state.rows.isEmpty)
+    #expect(store.state.selectedTopic == nil)
+
+    store.receive(secondSnapshot)
+
+    #expect(store.snapshot == secondSnapshot)
+    #expect(store.state.rows.map(\.fullTopic) == ["public"])
+    #expect(store.state.selectedTopic == nil)
+  }
+
+  private func makeSnapshot(
+    brokerID: UUID,
+    topic: String
+  ) async -> BrokerTopicTreeSnapshot {
+    let ingestion = BrokerFeedIngestion(
+      brokerID: brokerID,
+      historySourceID: "source",
+      historyWriter: DisabledBrokerHistoryWriter()
+    )
+    await ingestion.ingest(
+      BrokerInboundMessage(
+        connectionEpoch: ConnectionEpochID(),
+        ordinal: 1,
+        topic: topic,
+        payload: Data("value".utf8),
+        qos: .atMostOnce,
+        retained: false,
+        duplicate: false,
+        receivedAtMicroseconds: 1
+      )
+    )
+    return await ingestion.flush()
   }
 }
 
