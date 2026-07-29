@@ -5,7 +5,8 @@ import SwiftUI
 struct NumericChartPinControls: View {
   let inspection: PayloadInspection
   let selectedJSONPointer: PayloadJSONPointer?
-  let pinnedSeries: NumericChartSeries?
+  let pinnedSeries: [NumericChartSeries]
+  let isAtCapacity: Bool
   let onPin: (NumericChartSeries) -> Void
 
   var body: some View {
@@ -16,10 +17,12 @@ struct NumericChartPinControls: View {
     VStack(alignment: .leading, spacing: 6) {
       switch availability {
       case .available(let series):
-        let isPinned = NumericChartPinStateEvaluator.isPinned(
-          candidate: series,
-          pinnedSeries: pinnedSeries
-        )
+        let isPinned = pinnedSeries.contains {
+          NumericChartPinStateEvaluator.isPinned(
+            candidate: series,
+            pinnedSeries: $0
+          )
+        }
         Button {
           onPin(series)
         } label: {
@@ -27,9 +30,9 @@ struct NumericChartPinControls: View {
             Text(
               isPinned
                 ? LocalizedStringResource(
-                  "Pinned to Chart",
+                  "Pin Another Chart",
                   bundle: #bundle,
-                  comment: "Indicates the selected value is the active chart."
+                  comment: "Pins another card for a series already on the dashboard."
                 )
                 : LocalizedStringResource(
                   "Pin to Chart",
@@ -42,7 +45,16 @@ struct NumericChartPinControls: View {
           }
         }
         .buttonStyle(.bordered)
-        .disabled(isPinned)
+        .disabled(isAtCapacity)
+        if isAtCapacity {
+          Text(
+            "The dashboard has reached its bounded card limit.",
+            bundle: #bundle,
+            comment: "Explains why another numeric chart card cannot be pinned."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
         if series.conversion.kind == .booleanAsZeroOrOne {
           Text(
             "Boolean values are charted as 0 for false and 1 for true.",
@@ -103,23 +115,223 @@ extension NumericChartPinUnavailableReason {
   }
 }
 
-struct NumericChartPane: View {
-  @Bindable var store: NumericChartStore
+enum NumericChartDashboardLayout: Equatable {
+  case wide
+  case compact
+}
+
+struct NumericChartDashboardView: View {
+  @Bindable var dashboard: NumericChartDashboardStore
+  let layout: NumericChartDashboardLayout
+  @State private var availableWidth: CGFloat = 1_024
+
+  var body: some View {
+    Group {
+      if dashboard.state.cards.isEmpty {
+        ContentUnavailableView {
+          Label {
+            Text(
+              "No Pinned Charts",
+              bundle: #bundle,
+              comment: "Empty numeric chart dashboard title."
+            )
+          } icon: {
+            Image(systemName: "chart.xyaxis.line")
+          }
+        } description: {
+          Text(
+            "Select a numeric or Boolean payload value in Details, then pin it.",
+            bundle: #bundle,
+            comment: "Explains how to add cards to the chart dashboard."
+          )
+        }
+      } else {
+        switch layout {
+        case .wide:
+          NumericChartWideGrid(
+            dashboard: dashboard,
+            availableWidth: availableWidth
+          )
+        case .compact:
+          LazyVStack(spacing: 12) {
+            ForEach(dashboard.state.cards) { card in
+              NumericChartCard(
+                card: card,
+                dashboard: dashboard
+              )
+            }
+          }
+        }
+      }
+    }
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.width
+    } action: {
+      availableWidth = max(1, $0)
+    }
+    .accessibilityElement(children: .contain)
+  }
+}
+
+private struct NumericChartWideGrid: View {
+  @Bindable var dashboard: NumericChartDashboardStore
+  let availableWidth: CGFloat
+
+  var body: some View {
+    let grid = NumericChartDashboardGridLayout(
+      cards: dashboard.state.cards,
+      availableWidth: availableWidth
+    )
+    Grid(
+      alignment: .topLeading,
+      horizontalSpacing: 12,
+      verticalSpacing: 12
+    ) {
+      ForEach(grid.rows) { row in
+        GridRow(alignment: .top) {
+          ForEach(row.placements) { placement in
+            NumericChartCard(
+              card: placement.card,
+              dashboard: dashboard
+            )
+            .gridCellColumns(placement.columnSpan)
+          }
+          if row.unusedColumnCount > 0 {
+            Color.clear
+              .frame(minHeight: 1)
+              .gridCellColumns(row.unusedColumnCount)
+              .accessibilityHidden(true)
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+struct NumericChartDashboardGridLayout: Equatable {
+  struct Placement: Equatable, Identifiable {
+    let card: NumericChartCardConfiguration
+    let columnSpan: Int
+
+    var id: NumericChartCardID { card.id }
+  }
+
+  struct Row: Equatable, Identifiable {
+    let placements: [Placement]
+    let columnCount: Int
+
+    var id: [NumericChartCardID] {
+      placements.map(\.id)
+    }
+
+    var unusedColumnCount: Int {
+      columnCount - placements.reduce(0) { $0 + $1.columnSpan }
+    }
+  }
+
+  let columnCount: Int
+  let rows: [Row]
+
+  init(
+    cards: [NumericChartCardConfiguration],
+    availableWidth: CGFloat
+  ) {
+    if availableWidth >= 1_080 {
+      columnCount = 3
+    } else if availableWidth >= 700 {
+      columnCount = 2
+    } else {
+      columnCount = 1
+    }
+
+    var completedRows: [Row] = []
+    var placements: [Placement] = []
+    var usedColumns = 0
+    for card in cards {
+      let span = Self.columnSpan(
+        for: card.gridSpan,
+        columnCount: columnCount
+      )
+      if usedColumns + span > columnCount {
+        completedRows.append(
+          Row(placements: placements, columnCount: columnCount)
+        )
+        placements = []
+        usedColumns = 0
+      }
+      placements.append(Placement(card: card, columnSpan: span))
+      usedColumns += span
+      if usedColumns == columnCount {
+        completedRows.append(
+          Row(placements: placements, columnCount: columnCount)
+        )
+        placements = []
+        usedColumns = 0
+      }
+    }
+    if !placements.isEmpty {
+      completedRows.append(
+        Row(placements: placements, columnCount: columnCount)
+      )
+    }
+    rows = completedRows
+  }
+
+  private static func columnSpan(
+    for span: NumericChartGridSpan,
+    columnCount: Int
+  ) -> Int {
+    switch span {
+    case .automatic, .third:
+      1
+    case .half:
+      max(1, (columnCount + 1) / 2)
+    case .full:
+      columnCount
+    }
+  }
+}
+
+private struct NumericChartCard: View {
+  let card: NumericChartCardConfiguration
+  @Bindable var dashboard: NumericChartDashboardStore
+  @State private var settingsAreExpanded = false
 
   var body: some View {
     GroupBox {
-      if let configuration = store.state.configuration {
+      if let store = dashboard.cardStore(for: card.id),
+        let configuration = store.state.configuration
+      {
         VStack(alignment: .leading, spacing: 12) {
           NumericChartHeader(
+            card: card,
             configuration: configuration,
+            dashboard: dashboard,
             store: store
           )
-          NumericChartSettings(
-            configuration: configuration,
-            samples: store.state.samples,
+          DisclosureGroup(
+            isExpanded: $settingsAreExpanded
+          ) {
+            NumericChartSettings(
+              card: card,
+              configuration: configuration,
+              samples: store.state.samples,
+              dashboard: dashboard,
+              store: store
+            )
+            .padding(.top, 8)
+          } label: {
+            Text(
+              "Settings",
+              bundle: #bundle,
+              comment: "Expands settings for one numeric chart card."
+            )
+          }
+          NumericChartContent(
+            card: card,
             store: store
           )
-          NumericChartContent(store: store)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -127,49 +339,78 @@ struct NumericChartPane: View {
       Text(
         "Pinned Numeric Chart",
         bundle: #bundle,
-        comment: "Heading for the single pinned numeric MQTT chart."
+        comment: "Heading for one pinned numeric MQTT chart card."
       )
     }
+    .accessibilityElement(children: .contain)
   }
 }
 
 private struct NumericChartHeader: View {
+  let card: NumericChartCardConfiguration
   let configuration: NumericChartConfiguration
+  @Bindable var dashboard: NumericChartDashboardStore
   @Bindable var store: NumericChartStore
 
   var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(verbatim: configuration.series.id.topic)
-          .font(.headline)
-          .textSelection(.enabled)
-        if let pointer = configuration.series.id.jsonPointer {
-          Text(verbatim: pointer.rawValue)
-            .font(.caption.monospaced())
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-        } else {
-          Text(
-            "Payload value",
-            bundle: #bundle,
-            comment: "Describes a chart sourced from the root payload scalar."
-          )
-          .font(.caption)
+    VStack(alignment: .leading, spacing: 8) {
+      Text(verbatim: configuration.series.id.topic)
+        .font(.headline)
+        .textSelection(.enabled)
+      if let pointer = configuration.series.id.jsonPointer {
+        Text(verbatim: pointer.rawValue)
+          .font(.caption.monospaced())
           .foregroundStyle(.secondary)
-        }
+          .textSelection(.enabled)
+      } else {
+        Text(
+          "Payload value",
+          bundle: #bundle,
+          comment: "Describes a chart sourced from the root payload scalar."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
-      Spacer()
-      Button(role: .destructive) {
-        store.send(.remove)
-      } label: {
-        Label {
-          Text(
-            "Remove Chart",
-            bundle: #bundle,
-            comment: "Removes the single pinned numeric chart."
-          )
-        } icon: {
-          Image(systemName: "xmark")
+      HStack(spacing: 12) {
+        Button {
+          store.send(.setPaused(!configuration.isPaused))
+        } label: {
+          Label {
+            Text(
+              configuration.isPaused
+                ? LocalizedStringResource(
+                  "Resume",
+                  bundle: #bundle,
+                  comment: "Resumes one numeric chart card."
+                )
+                : LocalizedStringResource(
+                  "Pause",
+                  bundle: #bundle,
+                  comment: "Pauses one numeric chart card."
+                )
+            )
+          } icon: {
+            Image(
+              systemName:
+                configuration.isPaused
+                ? "play.fill"
+                : "pause.fill"
+            )
+          }
+        }
+        Spacer()
+        Button(role: .destructive) {
+          dashboard.send(.remove(card.id))
+        } label: {
+          Label {
+            Text(
+              "Remove Chart",
+              bundle: #bundle,
+              comment: "Removes one pinned numeric chart card."
+            )
+          } icon: {
+            Image(systemName: "xmark")
+          }
         }
       }
     }
@@ -177,8 +418,10 @@ private struct NumericChartHeader: View {
 }
 
 private struct NumericChartSettings: View {
+  let card: NumericChartCardConfiguration
   let configuration: NumericChartConfiguration
   let samples: [NumericChartSample]
+  @Bindable var dashboard: NumericChartDashboardStore
   @Bindable var store: NumericChartStore
 
   var body: some View {
@@ -194,18 +437,6 @@ private struct NumericChartSettings: View {
 
   @ViewBuilder
   private var controls: some View {
-    Toggle(
-      isOn: Binding(
-        get: { configuration.isPaused },
-        set: { store.send(.setPaused($0)) }
-      )
-    ) {
-      Text(
-        "Pause",
-        bundle: #bundle,
-        comment: "Stops appending live points to the numeric chart."
-      )
-    }
     Toggle(
       isOn: Binding(
         get: { configuration.autoScroll },
@@ -241,6 +472,233 @@ private struct NumericChartSettings: View {
       samples: samples,
       store: store
     )
+    Picker(
+      selection: Binding(
+        get: { card.presentationStyle },
+        set: {
+          dashboard.send(.setPresentationStyle(card.id, $0))
+        }
+      )
+    ) {
+      ForEach(NumericChartPresentationStyle.allCases, id: \.self) {
+        Text($0.localizedName)
+          .tag($0)
+      }
+    } label: {
+      Text(
+        "Style",
+        bundle: #bundle,
+        comment: "Label for a numeric chart card presentation style."
+      )
+    }
+    Picker(
+      selection: Binding(
+        get: { card.color },
+        set: { dashboard.send(.setColor(card.id, $0)) }
+      )
+    ) {
+      ForEach(NumericChartColor.allCases, id: \.self) {
+        Text($0.localizedName)
+          .tag($0)
+      }
+    } label: {
+      Text(
+        "Color",
+        bundle: #bundle,
+        comment: "Label for a numeric chart card color."
+      )
+    }
+    Picker(
+      selection: Binding(
+        get: { card.gridSpan },
+        set: { dashboard.send(.setGridSpan(card.id, $0)) }
+      )
+    ) {
+      ForEach(NumericChartGridSpan.allCases, id: \.self) {
+        Text($0.localizedName)
+          .tag($0)
+      }
+    } label: {
+      Text(
+        "Card Size",
+        bundle: #bundle,
+        comment: "Label for a numeric chart card adaptive grid span."
+      )
+    }
+    Button {
+      store.send(.clearDisplayedSamples)
+    } label: {
+      Label {
+        Text(
+          "Clear Displayed Samples",
+          bundle: #bundle,
+          comment: "Clears only samples displayed by one numeric chart card."
+        )
+      } icon: {
+        Image(systemName: "eraser")
+      }
+    }
+    .disabled(samples.isEmpty)
+    Button {
+      dashboard.send(.move(card.id, .earlier))
+    } label: {
+      Label {
+        Text(
+          "Move Earlier",
+          bundle: #bundle,
+          comment: "Moves one chart card earlier in dashboard order."
+        )
+      } icon: {
+        Image(systemName: "arrow.up")
+      }
+    }
+    .disabled(dashboard.state.cards.first?.id == card.id)
+    Button {
+      dashboard.send(.move(card.id, .later))
+    } label: {
+      Label {
+        Text(
+          "Move Later",
+          bundle: #bundle,
+          comment: "Moves one chart card later in dashboard order."
+        )
+      } icon: {
+        Image(systemName: "arrow.down")
+      }
+    }
+    .disabled(dashboard.state.cards.last?.id == card.id)
+  }
+}
+
+extension NumericChartPresentationStyle {
+  fileprivate var localizedName: LocalizedStringResource {
+    switch self {
+    case .line:
+      LocalizedStringResource(
+        "Line",
+        bundle: #bundle,
+        comment: "Numeric chart line presentation style."
+      )
+    case .points:
+      LocalizedStringResource(
+        "Points",
+        bundle: #bundle,
+        comment: "Numeric chart point presentation style."
+      )
+    case .step:
+      LocalizedStringResource(
+        "Step",
+        bundle: #bundle,
+        comment: "Numeric chart step-line presentation style."
+      )
+    }
+  }
+}
+
+extension NumericChartColor {
+  fileprivate var localizedName: LocalizedStringResource {
+    switch self {
+    case .system:
+      LocalizedStringResource(
+        "System",
+        bundle: #bundle,
+        comment: "System-default numeric chart color."
+      )
+    case .blue:
+      LocalizedStringResource(
+        "Blue",
+        bundle: #bundle,
+        comment: "Blue numeric chart card color."
+      )
+    case .green:
+      LocalizedStringResource(
+        "Green",
+        bundle: #bundle,
+        comment: "Green numeric chart card color."
+      )
+    case .orange:
+      LocalizedStringResource(
+        "Orange",
+        bundle: #bundle,
+        comment: "Orange numeric chart card color."
+      )
+    case .red:
+      LocalizedStringResource(
+        "Red",
+        bundle: #bundle,
+        comment: "Red numeric chart card color."
+      )
+    case .purple:
+      LocalizedStringResource(
+        "Purple",
+        bundle: #bundle,
+        comment: "Purple numeric chart card color."
+      )
+    case .pink:
+      LocalizedStringResource(
+        "Pink",
+        bundle: #bundle,
+        comment: "Pink numeric chart card color."
+      )
+    case .teal:
+      LocalizedStringResource(
+        "Teal",
+        bundle: #bundle,
+        comment: "Teal numeric chart card color."
+      )
+    }
+  }
+
+  fileprivate var swiftUIColor: Color {
+    switch self {
+    case .system:
+      .accentColor
+    case .blue:
+      .blue
+    case .green:
+      .green
+    case .orange:
+      .orange
+    case .red:
+      .red
+    case .purple:
+      .purple
+    case .pink:
+      .pink
+    case .teal:
+      .teal
+    }
+  }
+}
+
+extension NumericChartGridSpan {
+  fileprivate var localizedName: LocalizedStringResource {
+    switch self {
+    case .automatic:
+      LocalizedStringResource(
+        "Automatic",
+        bundle: #bundle,
+        comment: "Automatic numeric chart card size."
+      )
+    case .full:
+      LocalizedStringResource(
+        "Full Width",
+        bundle: #bundle,
+        comment: "Full-width numeric chart card size."
+      )
+    case .half:
+      LocalizedStringResource(
+        "Half Width",
+        bundle: #bundle,
+        comment: "Half-width numeric chart card size."
+      )
+    case .third:
+      LocalizedStringResource(
+        "Third Width",
+        bundle: #bundle,
+        comment: "Third-width numeric chart card size."
+      )
+    }
   }
 }
 
@@ -412,6 +870,7 @@ private struct NumericChartYAxisControls: View {
 }
 
 private struct NumericChartContent: View {
+  let card: NumericChartCardConfiguration
   @Bindable var store: NumericChartStore
 
   var body: some View {
@@ -475,13 +934,15 @@ private struct NumericChartContent: View {
           )
         }
       } else {
-        NumericLineChart(
+        NumericChartPlot(
           samples: store.state.displaySamples,
           timeDomain: store.state.visibleTimeRangeMicroseconds,
           yDomain: NumericChartDomain.domain(
             configuration: store.state.configuration,
             samples: store.state.displaySamples
-          )
+          ),
+          presentationStyle: card.presentationStyle,
+          color: card.color
         )
         .frame(minHeight: 180)
         .onGeometryChange(for: CGFloat.self) {
@@ -494,10 +955,12 @@ private struct NumericChartContent: View {
   }
 }
 
-private struct NumericLineChart: View {
+private struct NumericChartPlot: View {
   let samples: [NumericChartSample]
   let timeDomain: ClosedRange<Int64>?
   let yDomain: ClosedRange<Double>
+  let presentationStyle: NumericChartPresentationStyle
+  let color: NumericChartColor
 
   var body: some View {
     let timeLabel = String(
@@ -511,27 +974,28 @@ private struct NumericLineChart: View {
       comment: "Charts axis label for numeric MQTT sample values."
     )
     Chart(samples) { sample in
-      LineMark(
-        x: .value(
-          timeLabel,
-          Date(
-            timeIntervalSince1970:
-              Double(sample.receivedAtMicroseconds) / 1_000_000
-          )
-        ),
-        y: .value(valueLabel, sample.value)
-      )
-      PointMark(
-        x: .value(
-          timeLabel,
-          Date(
-            timeIntervalSince1970:
-              Double(sample.receivedAtMicroseconds) / 1_000_000
-          )
-        ),
-        y: .value(valueLabel, sample.value)
-      )
-      .symbolSize(12)
+      switch presentationStyle {
+      case .line:
+        LineMark(
+          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+          y: .value(valueLabel, sample.value)
+        )
+        .foregroundStyle(color.swiftUIColor)
+      case .points:
+        PointMark(
+          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+          y: .value(valueLabel, sample.value)
+        )
+        .foregroundStyle(color.swiftUIColor)
+        .symbolSize(24)
+      case .step:
+        LineMark(
+          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+          y: .value(valueLabel, sample.value)
+        )
+        .foregroundStyle(color.swiftUIColor)
+        .interpolationMethod(.stepEnd)
+      }
     }
     .chartXScale(domain: dateDomain)
     .chartYScale(domain: yDomain)

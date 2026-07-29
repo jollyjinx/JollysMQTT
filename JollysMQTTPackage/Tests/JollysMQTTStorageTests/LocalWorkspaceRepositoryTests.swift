@@ -88,6 +88,95 @@ struct LocalWorkspaceRepositoryTests {
     #expect(try await repository.load(id: id) == expected)
   }
 
+  @Test("A ticket-18 numericChart record migrates to one deterministically identified card")
+  func legacyNumericChartMigratesToDashboard() async throws {
+    let fixture = try WorkspaceFixture()
+    defer { fixture.remove() }
+    let id = WorkspaceID()
+    let brokerID = UUID()
+    let chart = NumericChartConfiguration(
+      series: NumericChartSeries(
+        id: NumericChartSeriesID(
+          brokerID: brokerID,
+          topic: "factory/legacy"
+        ),
+        conversion: NumericChartValueConversion(kind: .number)
+      )
+    )
+    let chartObject = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(chart)
+    )
+    let legacyDocument: [String: Any] = [
+      "version": 1,
+      "record": [
+        "id": ["rawValue": id.rawValue.uuidString],
+        "route": ["serverList": [:]],
+        "numericChart": chartObject,
+      ],
+    ]
+    try JSONSerialization.data(withJSONObject: legacyDocument)
+      .write(to: fixture.fileURL(for: id), options: [.atomic])
+    let repository = LocalWorkspaceRepository(
+      directoryURL: fixture.directory
+    )
+
+    let first = try await repository.load(id: id)
+    let second = try await repository.load(id: id)
+
+    #expect(first.numericChartDashboard.cards.count == 1)
+    #expect(first.numericChartDashboard.cards.first?.chart == chart)
+    #expect(
+      first.numericChartDashboard.cards.first?.id
+        == NumericChartCardID(rawValue: id.rawValue)
+    )
+    #expect(first.numericChartDashboard == second.numericChartDashboard)
+  }
+
+  @Test("A multi-card dashboard round-trips distinct duplicate-series cards in order")
+  func dashboardRoundTripPreservesCards() async throws {
+    let fixture = try WorkspaceFixture()
+    defer { fixture.remove() }
+    let id = WorkspaceID()
+    let brokerID = UUID()
+    let series = NumericChartSeries(
+      id: NumericChartSeriesID(
+        brokerID: brokerID,
+        topic: "factory/value"
+      ),
+      conversion: NumericChartValueConversion(kind: .number)
+    )
+    let cards = [
+      NumericChartCardConfiguration(
+        id: NumericChartCardID(rawValue: UUID()),
+        chart: NumericChartConfiguration(series: series),
+        presentationStyle: .points,
+        color: .teal,
+        gridSpan: .third
+      ),
+      NumericChartCardConfiguration(
+        id: NumericChartCardID(rawValue: UUID()),
+        chart: NumericChartConfiguration(series: series, isPaused: true),
+        presentationStyle: .step,
+        color: .orange,
+        gridSpan: .full
+      ),
+    ]
+    let expected = WorkspaceRecord(
+      id: id,
+      numericChartDashboard:
+        NumericChartDashboardConfiguration(cards: cards)
+    )
+    let repository = LocalWorkspaceRepository(
+      directoryURL: fixture.directory
+    )
+
+    try await repository.save(expected)
+    let restored = try await repository.load(id: id)
+
+    #expect(restored == expected)
+    #expect(restored.numericChartDashboard.cards.map(\.id) == cards.map(\.id))
+  }
+
   @Test("Version-one workspaces without outline fields receive safe defaults")
   func legacyWorkspaceDefaultsOutlinePresentation() async throws {
     let fixture = try WorkspaceFixture()

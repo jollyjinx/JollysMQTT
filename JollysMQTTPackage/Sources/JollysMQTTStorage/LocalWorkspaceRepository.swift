@@ -14,7 +14,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
   public var expandedTopics: [String]
   public var topicSearchText: String
   public var topicSortMode: BrokerTopicSortMode
-  public var numericChart: NumericChartConfiguration?
+  public var numericChartDashboard: NumericChartDashboardConfiguration
   public var closedAt: Date?
 
   public init(
@@ -26,6 +26,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     topicSearchText: String = "",
     topicSortMode: BrokerTopicSortMode = .name,
     numericChart: NumericChartConfiguration? = nil,
+    numericChartDashboard: NumericChartDashboardConfiguration? = nil,
     closedAt: Date? = nil
   ) {
     self.id = id
@@ -35,8 +36,23 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     self.expandedTopics = Array(Set(expandedTopics)).sorted()
     self.topicSearchText = topicSearchText
     self.topicSortMode = topicSortMode
-    self.numericChart = numericChart
+    self.numericChartDashboard =
+      numericChartDashboard
+      ?? Self.legacyDashboard(
+        workspaceID: id,
+        chart: numericChart
+      )
     self.closedAt = closedAt
+  }
+
+  public var numericChart: NumericChartConfiguration? {
+    get { numericChartDashboard.cards.first?.chart }
+    set {
+      numericChartDashboard = Self.legacyDashboard(
+        workspaceID: id,
+        chart: newValue
+      )
+    }
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -48,6 +64,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     case topicSearchText
     case topicSortMode
     case numericChart
+    case numericChartDashboard
     case closedAt
   }
 
@@ -83,11 +100,56 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
         BrokerTopicSortMode.self,
         forKey: .topicSortMode
       ) ?? .name
-    numericChart = try container.decodeIfPresent(
-      NumericChartConfiguration.self,
-      forKey: .numericChart
-    )
+    if let dashboard = try container.decodeIfPresent(
+      NumericChartDashboardConfiguration.self,
+      forKey: .numericChartDashboard
+    ) {
+      numericChartDashboard = dashboard
+    } else {
+      numericChartDashboard = Self.legacyDashboard(
+        workspaceID: id,
+        chart: try container.decodeIfPresent(
+          NumericChartConfiguration.self,
+          forKey: .numericChart
+        )
+      )
+    }
     closedAt = try container.decodeIfPresent(Date.self, forKey: .closedAt)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(route, forKey: .route)
+    try container.encodeIfPresent(
+      selectedProfileID,
+      forKey: .selectedProfileID
+    )
+    try container.encodeIfPresent(selectedTopic, forKey: .selectedTopic)
+    try container.encode(expandedTopics, forKey: .expandedTopics)
+    try container.encode(topicSearchText, forKey: .topicSearchText)
+    try container.encode(topicSortMode, forKey: .topicSortMode)
+    try container.encode(
+      numericChartDashboard,
+      forKey: .numericChartDashboard
+    )
+    try container.encodeIfPresent(closedAt, forKey: .closedAt)
+  }
+
+  private static func legacyDashboard(
+    workspaceID: WorkspaceID,
+    chart: NumericChartConfiguration?
+  ) -> NumericChartDashboardConfiguration {
+    NumericChartDashboardConfiguration(
+      cards: chart.map {
+        [
+          NumericChartCardConfiguration(
+            id: NumericChartCardID(rawValue: workspaceID.rawValue),
+            chart: $0
+          )
+        ]
+      } ?? []
+    )
   }
 }
 

@@ -1066,6 +1066,127 @@ struct NumericChartFeatureTests {
     }
   }
 
+  @Test(
+    "A persisted clear boundary rejects cleared durable and live samples while accepting newer clock-regressed arrivals"
+  )
+  func clearMarkerUsesDurableArrivalBoundary() async throws {
+    let brokerID = UUID()
+    let epoch = ConnectionEpochID()
+    let repository = NumericChartHistoryRepository(
+      results: [
+        "source-a": .init(
+          messages: [
+            storedMessage(
+              source: "source-a",
+              epoch: epoch,
+              ordinal: 1,
+              timestamp: 100,
+              value: 1
+            ),
+            storedMessage(
+              source: "source-a",
+              epoch: epoch,
+              ordinal: 2,
+              timestamp: 200,
+              value: 2
+            ),
+          ],
+          payloadByteCount: 2
+        ),
+        "source-b": .init(
+          messages: [
+            storedMessage(
+              source: "source-b",
+              epoch: epoch,
+              ordinal: 1,
+              timestamp: 100,
+              value: 1
+            ),
+            storedMessage(
+              source: "source-b",
+              epoch: epoch,
+              ordinal: 3,
+              timestamp: 50,
+              value: 3
+            ),
+            storedMessage(
+              source: "source-b",
+              epoch: epoch,
+              ordinal: 4,
+              timestamp: 25,
+              value: 4
+            ),
+          ],
+          payloadByteCount: 3
+        ),
+      ]
+    )
+    let store = NumericChartStore(
+      repositories: .init { _ in repository }
+    )
+    store.restore(configuration(brokerID: brokerID))
+    store.updateSnapshot(
+      await topicSnapshot(
+        brokerID: brokerID,
+        historySourceID: "source-a",
+        epoch: epoch,
+        ordinal: 3,
+        timestamp: 50,
+        value: 3
+      ),
+      expectedBrokerID: brokerID
+    )
+    await waitUntil {
+      store.state.samples.map(\.id.ordinal) == [1, 2, 3]
+    }
+
+    store.send(.clearDisplayedSamples)
+
+    let cleared = try #require(store.state.configuration)
+    #expect(store.state.samples.isEmpty)
+    #expect(cleared.sampleClearMarker?.throughDurableOrder == 2)
+    #expect(
+      cleared.sampleClearMarker?.sampleIDs.map(\.ordinal) == [1, 2, 3]
+    )
+
+    store.updateSnapshot(
+      await topicSnapshot(
+        brokerID: brokerID,
+        historySourceID: "source-a",
+        epoch: epoch,
+        ordinal: 4,
+        timestamp: 25,
+        value: 4
+      ),
+      expectedBrokerID: brokerID
+    )
+    await waitUntil {
+      store.state.samples.map(\.id.ordinal) == [4]
+    }
+
+    let restored = NumericChartStore(
+      repositories: .init { _ in repository }
+    )
+    restored.restore(cleared)
+    restored.updateSnapshot(
+      await topicSnapshot(
+        brokerID: brokerID,
+        historySourceID: "source-b",
+        epoch: epoch,
+        ordinal: 4,
+        timestamp: 25,
+        value: 4
+      ),
+      expectedBrokerID: brokerID
+    )
+    await waitUntil {
+      restored.state.loadStatus == .loaded
+    }
+
+    #expect(restored.state.samples.map(\.id.ordinal) == [4])
+    #expect(restored.state.samples.map(\.receivedAtMicroseconds) == [25])
+  }
+
   private func configuration(
     brokerID: UUID
   ) -> NumericChartConfiguration {

@@ -247,7 +247,7 @@ private struct SelectedPayloadWorkspace: View {
   var body: some View {
     let layout = SelectedPayloadWorkspaceLayout(
       hasPinnedChart:
-        sceneStore.numericChart.state.configuration != nil
+        !sceneStore.numericChartDashboard.state.cards.isEmpty
     )
     ViewThatFits(in: .horizontal) {
       VStack(spacing: 16) {
@@ -262,7 +262,7 @@ private struct SelectedPayloadWorkspace: View {
             store: inspectorStore,
             historyStore: historyStore,
             historyMaintenanceStore: sceneStore.historyMaintenance,
-            numericChartStore: sceneStore.numericChart,
+            numericChartDashboard: sceneStore.numericChartDashboard,
             onPinNumericChart: sceneStore.pinNumericChart,
             layout: .wide
           )
@@ -272,8 +272,14 @@ private struct SelectedPayloadWorkspace: View {
             .frame(minWidth: 320)
         }
         if layout.showsWideChart {
-          NumericChartPane(store: sceneStore.numericChart)
-            .frame(minHeight: 260)
+          ScrollView {
+            NumericChartDashboardView(
+              dashboard: sceneStore.numericChartDashboard,
+              layout: .wide
+            )
+            .padding(1)
+          }
+          .frame(minHeight: 260, idealHeight: 420, maxHeight: 560)
         }
       }
       PayloadCompactWorkspace(
@@ -370,31 +376,17 @@ private struct PayloadCompactWorkspace: View {
           store: inspectorStore,
           historyStore: historyStore,
           historyMaintenanceStore: sceneStore.historyMaintenance,
-          numericChartStore: sceneStore.numericChart,
+          numericChartDashboard: sceneStore.numericChartDashboard,
           onPinNumericChart: sceneStore.pinNumericChart,
           layout: .compact
         )
       case .chart:
-        if sceneStore.numericChart.state.configuration != nil {
-          NumericChartPane(store: sceneStore.numericChart)
-        } else {
-          ContentUnavailableView {
-            Label {
-              Text(
-                "No Pinned Chart",
-                bundle: #bundle,
-                comment: "Empty compact-chart destination title."
-              )
-            } icon: {
-              Image(systemName: "chart.xyaxis.line")
-            }
-          } description: {
-            Text(
-              "Select a numeric or Boolean payload value in Details, then pin it.",
-              bundle: #bundle,
-              comment: "Explains how to create the one numeric chart."
-            )
-          }
+        ScrollView {
+          NumericChartDashboardView(
+            dashboard: sceneStore.numericChartDashboard,
+            layout: .compact
+          )
+          .padding(1)
         }
       case .publish:
         PublishComposerView(store: publishStore)
@@ -683,7 +675,7 @@ private struct PayloadInspectorPane: View {
   @Bindable var store: PayloadInspectorStore
   @Bindable var historyStore: HistoryStore
   @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
-  @Bindable var numericChartStore: NumericChartStore
+  @Bindable var numericChartDashboard: NumericChartDashboardStore
   let onPinNumericChart: (NumericChartSeries) -> Void
   let layout: PayloadInspectorLayout
 
@@ -698,7 +690,10 @@ private struct PayloadInspectorPane: View {
               inspection: inspection,
               selectedJSONPointer: store.state.selectedJSONPointer,
               pinnedSeries:
-                numericChartStore.state.configuration?.series,
+                numericChartDashboard.state.cards.map(\.chart.series),
+              isAtCapacity:
+                numericChartDashboard.state.cards.count
+                >= numericChartDashboard.maximumCardCount,
               onPin: onPinNumericChart
             )
             PayloadPresentationView(

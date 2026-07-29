@@ -165,6 +165,84 @@ struct WorkspaceFeatureTests {
     #expect(serverList.record.numericChart == chart)
   }
 
+  @Test("Connected restoration preserves matching card order and sanitizes every foreign card")
+  func loadingSanitizesAllDashboardCards() {
+    let connectedBroker = UUID()
+    let foreignBroker = UUID()
+    let first = numericChartCard(
+      brokerID: connectedBroker,
+      topic: "first"
+    )
+    let foreign = numericChartCard(
+      brokerID: foreignBroker,
+      topic: "foreign"
+    )
+    let second = numericChartCard(
+      brokerID: connectedBroker,
+      topic: "second"
+    )
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(id: WorkspaceID())
+    )
+
+    WorkspaceFeature.reduce(
+      state: &state,
+      action: .loaded(
+        .success(
+          WorkspaceRecord(
+            id: state.record.id,
+            route: .connected(profileID: connectedBroker),
+            selectedProfileID: connectedBroker,
+            numericChartDashboard: .init(
+              cards: [first, foreign, second]
+            )
+          )
+        )
+      )
+    )
+
+    #expect(
+      state.record.numericChartDashboard.cards.map(\.id)
+        == [first.id, second.id]
+    )
+
+    _ = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .connect(profileID: foreignBroker)
+    )
+    #expect(state.record.numericChartDashboard.cards.isEmpty)
+  }
+
+  @Test("A dashboard update is rejected unless every card belongs to the connected broker")
+  func dashboardSettingRequiresOneConnectedBroker() {
+    let connectedBroker = UUID()
+    let matching = numericChartCard(
+      brokerID: connectedBroker,
+      topic: "matching"
+    )
+    let foreign = numericChartCard(
+      brokerID: UUID(),
+      topic: "foreign"
+    )
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(
+        id: WorkspaceID(),
+        route: .connected(profileID: connectedBroker),
+        selectedProfileID: connectedBroker
+      )
+    )
+
+    #expect(
+      WorkspaceFeature.reduce(
+        state: &state,
+        intent: .setNumericChartDashboard(
+          .init(cards: [matching, foreign])
+        )
+      ) == nil
+    )
+    #expect(state.record.numericChartDashboard.cards.isEmpty)
+  }
+
   @Test("The wide layout keeps topic, payload, publish, and chart in one candidate")
   func wideChartCoexistsWithTopicExplorer() {
     let layout = SelectedPayloadWorkspaceLayout(hasPinnedChart: true)
@@ -191,7 +269,7 @@ struct WorkspaceFeatureTests {
 
     scene.pinNumericChart(chart.series)
 
-    #expect(scene.numericChart.state.configuration == nil)
+    #expect(scene.numericChartDashboard.state.cards.isEmpty)
     #expect(scene.workspace.state.record.numericChart == nil)
   }
 
@@ -232,7 +310,13 @@ struct WorkspaceFeatureTests {
     ).makeSceneStore(id: workspaceID)
 
     await scene.start()
-    #expect(scene.numericChart.state.configuration == chart)
+    let cardID = try #require(
+      scene.numericChartDashboard.state.cards.first?.id
+    )
+    let chartStore = try #require(
+      scene.numericChartDashboard.cardStore(for: cardID)
+    )
+    #expect(chartStore.state.configuration == chart)
 
     scene.topics.receive(
       await workspaceTopicSnapshot(
@@ -241,16 +325,16 @@ struct WorkspaceFeatureTests {
       )
     )
     for _ in 0..<1_000 {
-      if scene.numericChart.state.samples.map(\.id.ordinal) == [1] {
+      if chartStore.state.samples.map(\.id.ordinal) == [1] {
         break
       }
       await Task.yield()
     }
 
-    #expect(scene.numericChart.state.historySourceID == "current-source")
-    #expect(scene.numericChart.state.samples.map(\.value) == [42])
+    #expect(chartStore.state.historySourceID == "current-source")
+    #expect(chartStore.state.samples.map(\.value) == [42])
 
-    scene.numericChart.send(.setPaused(true))
+    chartStore.send(.setPaused(true))
     await scene.workspace.flush()
     let persisted = try await workspaceRepository.load(id: workspaceID)
     #expect(persisted.numericChart?.isPaused == true)
@@ -687,6 +771,23 @@ private func numericChartConfiguration(
         topic: "factory/temperature"
       ),
       conversion: NumericChartValueConversion(kind: .number)
+    )
+  )
+}
+
+private func numericChartCard(
+  brokerID: UUID,
+  topic: String
+) -> NumericChartCardConfiguration {
+  NumericChartCardConfiguration(
+    chart: NumericChartConfiguration(
+      series: NumericChartSeries(
+        id: NumericChartSeriesID(
+          brokerID: brokerID,
+          topic: topic
+        ),
+        conversion: NumericChartValueConversion(kind: .number)
+      )
     )
   )
 }

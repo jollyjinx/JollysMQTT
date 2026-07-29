@@ -1,6 +1,84 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Automatic" : {
+      "comment" : "Automatic numeric chart card size."
+    },
+    "Blue" : {
+      "comment" : "Blue numeric chart card color."
+    },
+    "Card Size" : {
+      "comment" : "Label for a numeric chart card adaptive grid span."
+    },
+    "Clear Displayed Samples" : {
+      "comment" : "Clears only samples displayed by one numeric chart card."
+    },
+    "Color" : {
+      "comment" : "Label for a numeric chart card color."
+    },
+    "Full Width" : {
+      "comment" : "Full-width numeric chart card size."
+    },
+    "Green" : {
+      "comment" : "Green numeric chart card color."
+    },
+    "Half Width" : {
+      "comment" : "Half-width numeric chart card size."
+    },
+    "Line" : {
+      "comment" : "Numeric chart line presentation style."
+    },
+    "Move Earlier" : {
+      "comment" : "Moves one chart card earlier in dashboard order."
+    },
+    "Move Later" : {
+      "comment" : "Moves one chart card later in dashboard order."
+    },
+    "No Pinned Charts" : {
+      "comment" : "Empty numeric chart dashboard title."
+    },
+    "Orange" : {
+      "comment" : "Orange numeric chart card color."
+    },
+    "Pin Another Chart" : {
+      "comment" : "Pins another card for a series already on the dashboard."
+    },
+    "Pink" : {
+      "comment" : "Pink numeric chart card color."
+    },
+    "Points" : {
+      "comment" : "Numeric chart point presentation style."
+    },
+    "Purple" : {
+      "comment" : "Purple numeric chart card color."
+    },
+    "Red" : {
+      "comment" : "Red numeric chart card color."
+    },
+    "Resume" : {
+      "comment" : "Resumes one numeric chart card."
+    },
+    "Settings" : {
+      "comment" : "Expands settings for one numeric chart card."
+    },
+    "Step" : {
+      "comment" : "Numeric chart step-line presentation style."
+    },
+    "Style" : {
+      "comment" : "Label for a numeric chart card presentation style."
+    },
+    "System" : {
+      "comment" : "System-default numeric chart color."
+    },
+    "Teal" : {
+      "comment" : "Teal numeric chart card color."
+    },
+    "The dashboard has reached its bounded card limit." : {
+      "comment" : "Explains why another numeric chart card cannot be pinned."
+    },
+    "Third Width" : {
+      "comment" : "Third-width numeric chart card size."
+    },
     "%@ line %lld: %@" : {
       "comment" : "Accessible summary for one text payload difference.",
       "localizations" : {
@@ -751,7 +829,7 @@
       "comment" : "Explains that secret material is outside the profile editor model."
     },
     "Pause" : {
-      "comment" : "Stops appending live points to the numeric chart."
+      "comment" : "Pauses one numeric chart card."
     },
     "Payload" : {
       "comment" : "Accessible label for the MQTT publish payload editor."

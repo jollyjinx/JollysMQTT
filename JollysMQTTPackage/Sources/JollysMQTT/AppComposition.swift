@@ -315,7 +315,7 @@ public final class WorkspaceSceneStore {
   public let retainedDeletion: RetainedDeletionStore
   public let history: HistoryStore
   public let historyMaintenance: HistoryMaintenanceStore
-  public let numericChart: NumericChartStore
+  public let numericChartDashboard: NumericChartDashboardStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -350,10 +350,10 @@ public final class WorkspaceSceneStore {
       repositories: dependencies.historyRepositoryProvider
     )
     self.history = history
-    let numericChart = NumericChartStore(
+    let numericChartDashboard = NumericChartDashboardStore(
       repositories: dependencies.historyRepositoryProvider
     )
-    self.numericChart = numericChart
+    self.numericChartDashboard = numericChartDashboard
     let historyMaintenance = HistoryMaintenanceStore(
       maintenance: dependencies.historyMaintenanceProvider,
       settings: dependencies.historyRetentionSettings
@@ -447,14 +447,15 @@ public final class WorkspaceSceneStore {
       )
     }
     self.topics.onNumericChartSnapshotChange = {
-      [weak numericChart] snapshot, expectedBrokerID in
-      numericChart?.updateSnapshot(
+      [weak numericChartDashboard] snapshot, expectedBrokerID in
+      numericChartDashboard?.updateSnapshot(
         snapshot,
         expectedBrokerID: expectedBrokerID
       )
     }
-    numericChart.onConfigurationChange = { [weak workspace] configuration in
-      workspace?.sendImmediately(.setNumericChart(configuration))
+    numericChartDashboard.onConfigurationChange = {
+      [weak workspace] configuration in
+      workspace?.sendImmediately(.setNumericChartDashboard(configuration))
     }
   }
 
@@ -463,7 +464,9 @@ public final class WorkspaceSceneStore {
     set {
       workspace.selectedProfileID = newValue
       serverList.sendImmediately(.select(newValue))
-      numericChart.restore(workspace.state.record.numericChart)
+      numericChartDashboard.restore(
+        workspace.state.record.numericChartDashboard
+      )
       if case .serverList = workspace.state.record.route {
         updateHistoryMaintenanceBrokerContext(newValue)
       }
@@ -518,7 +521,9 @@ public final class WorkspaceSceneStore {
       // Pruning old closed records must not block opening the current scene.
     }
     await workspace.load()
-    numericChart.restore(workspace.state.record.numericChart)
+    numericChartDashboard.restore(
+      workspace.state.record.numericChartDashboard
+    )
     let expectedBrokerID: UUID?
     switch workspace.state.record.route {
     case .serverList:
@@ -553,7 +558,9 @@ public final class WorkspaceSceneStore {
 
   public func connectCurrentWorkspace(_ ready: ConnectReadyState) async {
     workspace.sendImmediately(.connect(profileID: ready.profile.id))
-    numericChart.restore(workspace.state.record.numericChart)
+    numericChartDashboard.restore(
+      workspace.state.record.numericChartDashboard
+    )
     topics.restorePresentation(
       selectedTopic: workspace.state.record.selectedTopic,
       expandedTopics: Set(workspace.state.record.expandedTopics),
@@ -590,7 +597,7 @@ public final class WorkspaceSceneStore {
     else {
       return
     }
-    numericChart.pin(series)
+    _ = numericChartDashboard.pin(series)
   }
 
   public func setSceneActive(_ isActive: Bool) async {
@@ -663,7 +670,9 @@ public final class WorkspaceSceneStore {
     guard outcome.profile == .removed else { return }
     let selection = serverList.state.selectedProfileID
     selectedProfileID = selection
-    numericChart.restore(workspace.state.record.numericChart)
+    numericChartDashboard.restore(
+      workspace.state.record.numericChartDashboard
+    )
     updateHistoryMaintenanceBrokerContext(selection)
   }
 

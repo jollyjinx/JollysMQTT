@@ -106,6 +106,7 @@ public enum NumericChartFeature {
     public fileprivate(set) var displaySamples: [NumericChartSample] = []
     public fileprivate(set) var historySourceID: String?
     public fileprivate(set) var loadStatus: NumericChartLoadStatus = .idle
+    public fileprivate(set) var historyMessageCountExamined = 0
 
     fileprivate var expectedBrokerID: UUID?
     fileprivate var latestSnapshotRevision: UInt64 = 0
@@ -142,8 +143,83 @@ public enum NumericChartFeature {
     case setYAxis(NumericChartYAxis)
     case setMultiplier(Double)
     case setPixelWidth(Double)
+    case clearDisplayedSamples
     case retry
     case remove
+  }
+}
+
+public actor NumericChartHistoryLoadLimiter {
+  private struct Waiter {
+    let id: UUID
+    let continuation: CheckedContinuation<Void, any Error>
+  }
+
+  private let maximumConcurrentLoads: Int
+  private var activeLoadCount = 0
+  private var waiters: [Waiter] = []
+
+  public init(maximumConcurrentLoads: Int) {
+    precondition(maximumConcurrentLoads >= 1)
+    self.maximumConcurrentLoads = maximumConcurrentLoads
+  }
+
+  public func perform<Value: Sendable>(
+    _ operation: @Sendable () async throws -> Value
+  ) async throws -> Value {
+    try await acquire()
+    do {
+      let result = try await operation()
+      release()
+      return result
+    } catch {
+      release()
+      throw error
+    }
+  }
+
+  private func acquire() async throws {
+    try Task.checkCancellation()
+    if activeLoadCount < maximumConcurrentLoads {
+      activeLoadCount += 1
+      return
+    }
+
+    let waiterID = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        waiters.append(
+          Waiter(id: waiterID, continuation: continuation)
+        )
+      }
+    } onCancel: {
+      Task {
+        await self.cancel(waiterID)
+      }
+    }
+    do {
+      try Task.checkCancellation()
+    } catch {
+      release()
+      throw error
+    }
+  }
+
+  private func cancel(_ id: UUID) {
+    guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+      return
+    }
+    let waiter = waiters.remove(at: index)
+    waiter.continuation.resume(throwing: CancellationError())
+  }
+
+  private func release() {
+    while !waiters.isEmpty {
+      let waiter = waiters.removeFirst()
+      waiter.continuation.resume()
+      return
+    }
+    activeLoadCount -= 1
   }
 }
 
@@ -157,6 +233,7 @@ public final class NumericChartStore {
   private let repositories: BrokerHistoryRepositoryProvider
   private let policy: NumericChartPolicy
   private let extractor: NumericChartValueExtractor
+  private let loadLimiter: NumericChartHistoryLoadLimiter?
   private var loadTask: Task<Void, Never>?
   private var liveExtractionTask: Task<Void, Never>?
   private var generation: UInt64 = 0
@@ -165,11 +242,13 @@ public final class NumericChartStore {
 
   public init(
     repositories: BrokerHistoryRepositoryProvider = .empty,
-    policy: NumericChartPolicy = .default
+    policy: NumericChartPolicy = .default,
+    loadLimiter: NumericChartHistoryLoadLimiter? = nil
   ) {
     self.repositories = repositories
     self.policy = policy
     self.extractor = NumericChartValueExtractor(policy: policy)
+    self.loadLimiter = loadLimiter
     self.state = .init()
   }
 
@@ -280,7 +359,8 @@ public final class NumericChartStore {
         isPaused: configuration.isPaused,
         autoScroll: configuration.autoScroll,
         visibleRange: configuration.visibleRange,
-        yAxis: configuration.yAxis
+        yAxis: configuration.yAxis,
+        sampleClearMarker: configuration.sampleClearMarker
       )
       restore(configuration)
       onConfigurationChange?(configuration)
@@ -288,6 +368,23 @@ public final class NumericChartStore {
     case .setPixelWidth(let width):
       state.pixelWidth = width.isFinite ? max(0, width) : 0
       refreshDisplaySamples()
+
+    case .clearDisplayedSamples:
+      guard var configuration = state.configuration,
+        let historySourceID = state.historySourceID,
+        !state.samples.isEmpty
+      else {
+        return
+      }
+      configuration.sampleClearMarker = NumericChartSampleClearMarker(
+        historySourceID: historySourceID,
+        throughDurableOrder: state.samples.compactMap(\.durableOrder).max(),
+        sampleIDs: state.samples.map(\.id)
+      )
+      state.configuration = configuration
+      state.samples = []
+      state.displaySamples = []
+      onConfigurationChange?(configuration)
 
     case .retry:
       guard state.configuration != nil,
@@ -329,6 +426,7 @@ public final class NumericChartStore {
       state.displaySamples = []
       state.historySourceID = historySourceID
       state.loadStatus = .idle
+      state.historyMessageCountExamined = 0
       state.latestSnapshotRevision = 0
       state.pendingLiveMessage = nil
     }
@@ -355,6 +453,7 @@ public final class NumericChartStore {
     state.displaySamples = []
     state.historySourceID = nil
     state.loadStatus = .idle
+    state.historyMessageCountExamined = 0
     state.expectedBrokerID = nil
     state.latestSnapshotRevision = 0
     state.pendingLiveMessage = nil
@@ -388,21 +487,40 @@ public final class NumericChartStore {
     let repository = repositories.repository(for: series.id.brokerID)
     let extractor = extractor
     let policy = policy
+    let loadLimiter = loadLimiter
     state.samples = []
     state.displaySamples = []
     state.loadStatus = .loading
+    state.historyMessageCountExamined = 0
 
     loadTask = Task { [weak self] in
       do {
-        let result = try await repository.numericChartHistory(request)
-        try Task.checkCancellation()
-        let samples = await Self.samples(
-          from: result,
-          request: request,
-          series: series,
-          extractor: extractor,
-          policy: policy
-        )
+        let batch: HistorySampleBatch
+        if let loadLimiter {
+          batch = try await loadLimiter.perform {
+            let result = try await repository.numericChartHistory(request)
+            try Task.checkCancellation()
+            return await Self.samples(
+              from: result,
+              request: request,
+              series: series,
+              clearMarker: configuration.sampleClearMarker,
+              extractor: extractor,
+              policy: policy
+            )
+          }
+        } else {
+          let result = try await repository.numericChartHistory(request)
+          try Task.checkCancellation()
+          batch = await Self.samples(
+            from: result,
+            request: request,
+            series: series,
+            clearMarker: configuration.sampleClearMarker,
+            extractor: extractor,
+            policy: policy
+          )
+        }
         try Task.checkCancellation()
         guard let self,
           generation == requestGeneration,
@@ -411,7 +529,8 @@ public final class NumericChartStore {
         else {
           return
         }
-        state.samples = samples
+        state.samples = batch.samples
+        state.historyMessageCountExamined = batch.examinedMessageCount
         state.loadStatus = .loaded
         refreshDisplaySamples()
         appendPendingLiveIfPossible()
@@ -426,28 +545,44 @@ public final class NumericChartStore {
           return
         }
         state.loadStatus = .failed
+        state.historyMessageCountExamined = 0
         state.samples = []
         state.displaySamples = []
       }
     }
   }
 
+  private struct HistorySampleBatch: Sendable {
+    let samples: [NumericChartSample]
+    let examinedMessageCount: Int
+  }
+
   private nonisolated static func samples(
     from result: NumericChartHistoryResult,
     request: NumericChartHistoryRequest,
     series: NumericChartSeries,
+    clearMarker: NumericChartSampleClearMarker?,
     extractor: NumericChartValueExtractor,
     policy: NumericChartPolicy
-  ) async -> [NumericChartSample] {
+  ) async -> HistorySampleBatch {
     var payloadByteCount = 0
     var samples: [NumericChartSample] = []
     samples.reserveCapacity(
       min(result.messages.count, policy.maximumRawSampleCount)
     )
     var seen: Set<NumericChartSampleID> = []
+    var examinedMessageCount = 0
 
-    for message in result.messages {
-      if Task.isCancelled { return [] }
+    for message in result.messages.suffix(
+      request.maximumMessageCount
+    ) {
+      if Task.isCancelled {
+        return HistorySampleBatch(
+          samples: [],
+          examinedMessageCount: examinedMessageCount
+        )
+      }
+      examinedMessageCount += 1
       guard message.historySourceID == request.historySourceID,
         message.topic == series.id.topic,
         message.direction == .received,
@@ -466,7 +601,13 @@ public final class NumericChartStore {
         ordinal: connectionOrdinal,
         direction: message.direction
       )
-      guard seen.insert(id).inserted,
+      guard
+        !isCleared(
+          id: id,
+          durableOrder: message.durableOrder,
+          marker: clearMarker
+        ),
+        seen.insert(id).inserted,
         let value = await extractor.value(
           in: message.payload,
           for: series
@@ -478,11 +619,15 @@ public final class NumericChartStore {
         NumericChartSample(
           id: id,
           receivedAtMicroseconds: message.receivedAtMicroseconds,
-          value: value
+          value: value,
+          durableOrder: message.durableOrder
         )
       )
     }
-    return Array(samples.suffix(policy.maximumRawSampleCount))
+    return HistorySampleBatch(
+      samples: Array(samples.suffix(policy.maximumRawSampleCount)),
+      examinedMessageCount: examinedMessageCount
+    )
   }
 
   private func appendPendingLiveIfPossible() {
@@ -529,7 +674,14 @@ public final class NumericChartStore {
         receivedAtMicroseconds: message.receivedAtMicroseconds,
         value: value
       )
-      guard !state.samples.contains(where: { $0.id == sample.id }) else {
+      guard
+        !Self.isCleared(
+          id: sample.id,
+          durableOrder: nil,
+          marker: state.configuration?.sampleClearMarker
+        ),
+        !state.samples.contains(where: { $0.id == sample.id })
+      else {
         return
       }
       state.samples = Array(
@@ -537,6 +689,23 @@ public final class NumericChartStore {
       )
       refreshDisplaySamples()
     }
+  }
+
+  private nonisolated static func isCleared(
+    id: NumericChartSampleID,
+    durableOrder: Int64?,
+    marker: NumericChartSampleClearMarker?
+  ) -> Bool {
+    guard let marker else { return false }
+    if marker.sampleIDs.contains(id) {
+      return true
+    }
+    guard let durableOrder,
+      let throughDurableOrder = marker.throughDurableOrder
+    else {
+      return false
+    }
+    return durableOrder <= throughDurableOrder
   }
 
   private func refreshDisplaySamples() {

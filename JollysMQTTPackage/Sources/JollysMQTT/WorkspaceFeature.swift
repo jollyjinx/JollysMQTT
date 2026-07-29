@@ -32,6 +32,7 @@ public enum WorkspaceFeature {
       sortMode: BrokerTopicSortMode
     )
     case setNumericChart(NumericChartConfiguration?)
+    case setNumericChartDashboard(NumericChartDashboardConfiguration)
     case dismissPersistenceError
   }
 
@@ -53,9 +54,10 @@ public enum WorkspaceFeature {
     case .selectProfile(let id):
       guard state.record.selectedProfileID != id else { return nil }
       state.record.selectedProfileID = id
-      if state.record.numericChart?.series.id.brokerID != id {
-        state.record.numericChart = nil
-      }
+      state.record.numericChartDashboard = sanitizedDashboard(
+        state.record.numericChartDashboard,
+        brokerID: id
+      )
       return .save(state.record)
 
     case .connect(let profileID):
@@ -63,9 +65,10 @@ public enum WorkspaceFeature {
         state.record.selectedTopic = nil
         state.record.expandedTopics = []
       }
-      if state.record.numericChart?.series.id.brokerID != profileID {
-        state.record.numericChart = nil
-      }
+      state.record.numericChartDashboard = sanitizedDashboard(
+        state.record.numericChartDashboard,
+        brokerID: profileID
+      )
       state.record.route = .connected(profileID: profileID)
       state.record.selectedProfileID = profileID
       state.record.closedAt = nil
@@ -101,16 +104,38 @@ public enum WorkspaceFeature {
       return .save(state.record)
 
     case .setNumericChart(let configuration):
-      let configuration = configuration?.normalizingAutoScroll()
-      if let configuration {
-        guard case .connected(let profileID) = state.record.route,
-          configuration.series.id.brokerID == profileID
-        else {
-          return nil
-        }
+      let dashboard = NumericChartDashboardConfiguration(
+        cards: configuration.map {
+          [
+            NumericChartCardConfiguration(
+              id: NumericChartCardID(rawValue: state.record.id.rawValue),
+              chart: $0.normalizingAutoScroll()
+            )
+          ]
+        } ?? []
+      )
+      return reduce(
+        state: &state,
+        intent: .setNumericChartDashboard(dashboard)
+      )
+
+    case .setNumericChartDashboard(let dashboard):
+      guard case .connected(let profileID) = state.record.route else {
+        return nil
       }
-      guard state.record.numericChart != configuration else { return nil }
-      state.record.numericChart = configuration
+      let normalized = dashboard.normalized(
+        maximumCardCount:
+          NumericChartDashboardPolicy.default.maximumCardCount
+      )
+      guard normalized.cards.count == dashboard.cards.count,
+        normalized.cards.allSatisfy({
+          $0.chart.series.id.brokerID == profileID
+        }),
+        state.record.numericChartDashboard != normalized
+      else {
+        return nil
+      }
+      state.record.numericChartDashboard = normalized
       return .save(state.record)
 
     case .dismissPersistenceError:
@@ -123,12 +148,18 @@ public enum WorkspaceFeature {
     switch action {
     case .loaded(.success(var record)):
       record.closedAt = nil
-      record.numericChart =
-        record.numericChart?.normalizingAutoScroll()
-      if case .connected(let profileID) = record.route,
-        record.numericChart?.series.id.brokerID != profileID
-      {
-        record.numericChart = nil
+      record.numericChartDashboard = NumericChartDashboardConfiguration(
+        cards: record.numericChartDashboard.cards.map {
+          var card = $0
+          card.chart = card.chart.normalizingAutoScroll()
+          return card
+        }
+      )
+      if case .connected(let profileID) = record.route {
+        record.numericChartDashboard = sanitizedDashboard(
+          record.numericChartDashboard,
+          brokerID: profileID
+        )
       }
       state.record = record
       state.isLoaded = true
@@ -141,6 +172,18 @@ public enum WorkspaceFeature {
     case .persisted(.failure):
       state.persistenceError = true
     }
+  }
+
+  private static func sanitizedDashboard(
+    _ dashboard: NumericChartDashboardConfiguration,
+    brokerID: UUID?
+  ) -> NumericChartDashboardConfiguration {
+    guard let brokerID else { return .init() }
+    return dashboard.normalized(
+      maximumCardCount:
+        NumericChartDashboardPolicy.default.maximumCardCount,
+      brokerID: brokerID
+    )
   }
 }
 

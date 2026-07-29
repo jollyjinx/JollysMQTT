@@ -38,6 +38,16 @@ public struct NumericChartPolicy: Equatable, Sendable {
     maximumDisplaySampleCount: 1_024
   )
 
+  public static let dashboardCard = NumericChartPolicy(
+    uncheckedMaximumHistoryMessageCount: 512,
+    maximumPayloadBytesPerSample: 65_536,
+    maximumPayloadBytesPerLoad: 1_024 * 1_024,
+    maximumJSONDepth: 32,
+    maximumJSONNodeCount: 512,
+    maximumRawSampleCount: 512,
+    maximumDisplaySampleCount: 512
+  )
+
   public let maximumHistoryMessageCount: Int
   public let maximumPayloadBytesPerSample: Int
   public let maximumPayloadBytesPerLoad: Int
@@ -475,13 +485,15 @@ public struct NumericChartConfiguration:
   public var autoScroll: Bool
   public var visibleRange: NumericChartVisibleRange
   public var yAxis: NumericChartYAxis
+  public var sampleClearMarker: NumericChartSampleClearMarker?
 
   public init(
     series: NumericChartSeries,
     isPaused: Bool = false,
     autoScroll: Bool = true,
     visibleRange: NumericChartVisibleRange = .default,
-    yAxis: NumericChartYAxis = .automatic
+    yAxis: NumericChartYAxis = .automatic,
+    sampleClearMarker: NumericChartSampleClearMarker? = nil
   ) {
     self.series = series
     self.isPaused = isPaused
@@ -489,6 +501,7 @@ public struct NumericChartConfiguration:
       autoScroll || visibleRange.endingAtMicroseconds == nil
     self.visibleRange = visibleRange
     self.yAxis = yAxis
+    self.sampleClearMarker = sampleClearMarker
   }
 
   public func normalizingAutoScroll() -> Self {
@@ -502,7 +515,8 @@ public struct NumericChartConfiguration:
       isPaused: isPaused,
       autoScroll: true,
       visibleRange: visibleRange,
-      yAxis: yAxis
+      yAxis: yAxis,
+      sampleClearMarker: sampleClearMarker
     )
   }
 
@@ -512,6 +526,7 @@ public struct NumericChartConfiguration:
     case autoScroll
     case visibleRange
     case yAxis
+    case sampleClearMarker
   }
 
   public init(from decoder: any Decoder) throws {
@@ -524,7 +539,11 @@ public struct NumericChartConfiguration:
         NumericChartVisibleRange.self,
         forKey: .visibleRange
       ),
-      yAxis: try values.decode(NumericChartYAxis.self, forKey: .yAxis)
+      yAxis: try values.decode(NumericChartYAxis.self, forKey: .yAxis),
+      sampleClearMarker: try values.decodeIfPresent(
+        NumericChartSampleClearMarker.self,
+        forKey: .sampleClearMarker
+      )
     )
   }
 }
@@ -558,16 +577,264 @@ public struct NumericChartSample:
   public let id: NumericChartSampleID
   public let receivedAtMicroseconds: Int64
   public let value: Double
+  public let durableOrder: Int64?
 
   public init(
     id: NumericChartSampleID,
     receivedAtMicroseconds: Int64,
-    value: Double
+    value: Double,
+    durableOrder: Int64? = nil
   ) {
     precondition(value.isFinite)
     self.id = id
     self.receivedAtMicroseconds = receivedAtMicroseconds
     self.value = value
+    self.durableOrder = durableOrder
+  }
+}
+
+public struct NumericChartSampleClearMarker:
+  Codable,
+  Equatable,
+  Sendable
+{
+  public let historySourceID: String
+  public let throughDurableOrder: Int64?
+  public let sampleIDs: [NumericChartSampleID]
+
+  public init(
+    historySourceID: String,
+    throughDurableOrder: Int64?,
+    sampleIDs: [NumericChartSampleID]
+  ) {
+    precondition(!historySourceID.isEmpty)
+    precondition(throughDurableOrder.map { $0 > 0 } ?? true)
+    precondition(sampleIDs.count <= NumericChartPolicy.maximumRawSampleCountBounds.upperBound)
+    self.historySourceID = historySourceID
+    self.throughDurableOrder = throughDurableOrder
+    var seen: Set<NumericChartSampleID> = []
+    self.sampleIDs = sampleIDs.filter { seen.insert($0).inserted }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case historySourceID
+    case throughDurableOrder
+    case sampleIDs
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    let historySourceID = try values.decode(
+      String.self,
+      forKey: .historySourceID
+    )
+    guard !historySourceID.isEmpty else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .historySourceID,
+        in: values,
+        debugDescription: "A chart clear marker needs a history source."
+      )
+    }
+    let throughDurableOrder = try values.decodeIfPresent(
+      Int64.self,
+      forKey: .throughDurableOrder
+    )
+    guard throughDurableOrder.map({ $0 > 0 }) ?? true else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .throughDurableOrder,
+        in: values,
+        debugDescription: "A durable clear boundary must be positive."
+      )
+    }
+    let sampleIDs = try values.decode(
+      [NumericChartSampleID].self,
+      forKey: .sampleIDs
+    )
+    guard
+      sampleIDs.count
+        <= NumericChartPolicy.maximumRawSampleCountBounds.upperBound
+    else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .sampleIDs,
+        in: values,
+        debugDescription: "A chart clear marker contains too many sample IDs."
+      )
+    }
+    self.init(
+      historySourceID: historySourceID,
+      throughDurableOrder: throughDurableOrder,
+      sampleIDs: sampleIDs
+    )
+  }
+}
+
+public struct NumericChartCardID:
+  Codable,
+  Equatable,
+  Hashable,
+  Identifiable,
+  Sendable
+{
+  public let rawValue: UUID
+
+  public init(rawValue: UUID = UUID()) {
+    self.rawValue = rawValue
+  }
+
+  public var id: UUID { rawValue }
+}
+
+public enum NumericChartPresentationStyle:
+  String,
+  CaseIterable,
+  Codable,
+  Equatable,
+  Sendable
+{
+  case line
+  case points
+  case step
+}
+
+public enum NumericChartColor:
+  String,
+  CaseIterable,
+  Codable,
+  Equatable,
+  Sendable
+{
+  case system
+  case blue
+  case green
+  case orange
+  case red
+  case purple
+  case pink
+  case teal
+}
+
+public enum NumericChartGridSpan:
+  String,
+  CaseIterable,
+  Codable,
+  Equatable,
+  Sendable
+{
+  case automatic
+  case full
+  case half
+  case third
+}
+
+public struct NumericChartCardConfiguration:
+  Codable,
+  Equatable,
+  Identifiable,
+  Sendable
+{
+  public let id: NumericChartCardID
+  public var chart: NumericChartConfiguration
+  public var presentationStyle: NumericChartPresentationStyle
+  public var color: NumericChartColor
+  public var gridSpan: NumericChartGridSpan
+
+  public init(
+    id: NumericChartCardID = NumericChartCardID(),
+    chart: NumericChartConfiguration,
+    presentationStyle: NumericChartPresentationStyle = .line,
+    color: NumericChartColor = .system,
+    gridSpan: NumericChartGridSpan = .automatic
+  ) {
+    self.id = id
+    self.chart = chart
+    self.presentationStyle = presentationStyle
+    self.color = color
+    self.gridSpan = gridSpan
+  }
+}
+
+public struct NumericChartDashboardConfiguration:
+  Codable,
+  Equatable,
+  Sendable
+{
+  public var cards: [NumericChartCardConfiguration]
+
+  public init(cards: [NumericChartCardConfiguration] = []) {
+    var seen: Set<NumericChartCardID> = []
+    self.cards = cards.filter { seen.insert($0.id).inserted }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case cards
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    let cardsContainer = try values.nestedUnkeyedContainer(
+      forKey: .cards
+    )
+    guard (cardsContainer.count ?? 0) <= 24 else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .cards,
+        in: values,
+        debugDescription: "A persisted chart dashboard contains too many cards."
+      )
+    }
+    self.init(
+      cards: try values.decode(
+        [NumericChartCardConfiguration].self,
+        forKey: .cards
+      )
+    )
+  }
+
+  public func normalized(
+    maximumCardCount: Int,
+    brokerID: UUID? = nil
+  ) -> Self {
+    precondition(maximumCardCount >= 1)
+    return Self(
+      cards: cards.lazy.filter { card in
+        brokerID == nil || brokerID == card.chart.series.id.brokerID
+      }.prefix(maximumCardCount).map { $0 }
+    )
+  }
+}
+
+public struct NumericChartDashboardPolicy: Equatable, Sendable {
+  public static let `default` = NumericChartDashboardPolicy(
+    maximumCardCount: 12,
+    maximumConcurrentHistoryLoads: 3,
+    cardPolicy: .dashboardCard
+  )
+
+  public let maximumCardCount: Int
+  public let maximumConcurrentHistoryLoads: Int
+  public let cardPolicy: NumericChartPolicy
+
+  public init(
+    maximumCardCount: Int,
+    maximumConcurrentHistoryLoads: Int,
+    cardPolicy: NumericChartPolicy
+  ) {
+    precondition((1...24).contains(maximumCardCount))
+    precondition((1...maximumCardCount).contains(maximumConcurrentHistoryLoads))
+    self.maximumCardCount = maximumCardCount
+    self.maximumConcurrentHistoryLoads = maximumConcurrentHistoryLoads
+    self.cardPolicy = cardPolicy
+  }
+
+  public var maximumAggregateHistoryPayloadBytes: Int {
+    maximumCardCount * cardPolicy.maximumPayloadBytesPerLoad
+  }
+
+  public var maximumAggregateRawSampleCount: Int {
+    maximumCardCount * cardPolicy.maximumRawSampleCount
+  }
+
+  public var maximumAggregateDisplaySampleCount: Int {
+    maximumCardCount * cardPolicy.maximumDisplaySampleCount
   }
 }
 
