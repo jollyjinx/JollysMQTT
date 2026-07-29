@@ -64,8 +64,51 @@ public struct BrokerHistoryMessage: Equatable, Sendable {
   }
 }
 
+public enum BrokerHistoryCoverageGapReason:
+  String,
+  Codable,
+  Equatable,
+  Sendable
+{
+  case storageFailure
+  case localOverload
+}
+
+public struct BrokerHistoryCoverageGap: Equatable, Sendable {
+  public let historySourceID: String
+  public let connectionEpoch: ConnectionEpochID?
+  public let startedAtMicroseconds: Int64
+  public let endedAtMicroseconds: Int64?
+  public let minimumMissingMessageCount: Int
+  public let reason: BrokerHistoryCoverageGapReason
+  public let isOpenEnded: Bool
+
+  public init(
+    historySourceID: String,
+    connectionEpoch: ConnectionEpochID?,
+    startedAtMicroseconds: Int64,
+    endedAtMicroseconds: Int64?,
+    minimumMissingMessageCount: Int,
+    reason: BrokerHistoryCoverageGapReason,
+    isOpenEnded: Bool
+  ) {
+    precondition(minimumMissingMessageCount > 0)
+    precondition(
+      endedAtMicroseconds.map { $0 >= startedAtMicroseconds } ?? true
+    )
+    self.historySourceID = historySourceID
+    self.connectionEpoch = connectionEpoch
+    self.startedAtMicroseconds = startedAtMicroseconds
+    self.endedAtMicroseconds = endedAtMicroseconds
+    self.minimumMissingMessageCount = minimumMissingMessageCount
+    self.reason = reason
+    self.isOpenEnded = isOpenEnded
+  }
+}
+
 public protocol BrokerHistoryWriting: Sendable {
   func append(_ messages: [BrokerHistoryMessage]) async throws
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws
   func shutdown() async throws
 }
 
@@ -73,6 +116,7 @@ public actor DisabledBrokerHistoryWriter: BrokerHistoryWriting {
   public init() {}
 
   public func append(_ messages: [BrokerHistoryMessage]) {}
+  public func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) {}
   public func shutdown() {}
 }
 
@@ -143,6 +187,7 @@ private struct BrokerTopicSnapshotRecord: Sendable {
   let subtreeMessageCount: UInt64
   let subtreeValueTopicCount: Int
   let subtreeLatestReceivedAtMicroseconds: Int64?
+  let isStale: Bool
   let childIndices: [Int]
 }
 
@@ -174,6 +219,7 @@ public struct BrokerTopicNodeSnapshot: Equatable, Identifiable, Sendable {
   public var subtreeLatestReceivedAtMicroseconds: Int64? {
     record.subtreeLatestReceivedAtMicroseconds
   }
+  public var isStale: Bool { record.isStale }
   public var children: [BrokerTopicNodeSnapshot] {
     record.childIndices.map {
       BrokerTopicNodeSnapshot(storage: storage, index: $0)
@@ -213,6 +259,7 @@ public struct BrokerTopicNodeSnapshot: Equatable, Identifiable, Sendable {
           == rhsRecord.subtreeValueTopicCount,
         lhsRecord.subtreeLatestReceivedAtMicroseconds
           == rhsRecord.subtreeLatestReceivedAtMicroseconds,
+        lhsRecord.isStale == rhsRecord.isStale,
         lhsRecord.childIndices.count == rhsRecord.childIndices.count
       else {
         return false
@@ -237,6 +284,12 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
   public let valueTopicCount: Int
   public let historyIsHealthy: Bool
   public let unpersistedMessageCount: Int
+  public let connectionEpoch: ConnectionEpochID?
+  public let activeHistoryGap: BrokerHistoryCoverageGap?
+
+  public var historyDiagnostic: BrokerFeedDiagnostic? {
+    historyIsHealthy ? nil : .storageFailure
+  }
 
   public init(
     revision: UInt64,
@@ -244,7 +297,9 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     totalMessageCount: UInt64,
     valueTopicCount: Int,
     historyIsHealthy: Bool,
-    unpersistedMessageCount: Int
+    unpersistedMessageCount: Int,
+    connectionEpoch: ConnectionEpochID? = nil,
+    activeHistoryGap: BrokerHistoryCoverageGap? = nil
   ) {
     self.revision = revision
     self.roots = roots
@@ -252,6 +307,8 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     self.valueTopicCount = valueTopicCount
     self.historyIsHealthy = historyIsHealthy
     self.unpersistedMessageCount = unpersistedMessageCount
+    self.connectionEpoch = connectionEpoch
+    self.activeHistoryGap = activeHistoryGap
   }
 
   public static let empty = BrokerTopicTreeSnapshot(
@@ -260,7 +317,9 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     totalMessageCount: 0,
     valueTopicCount: 0,
     historyIsHealthy: true,
-    unpersistedMessageCount: 0
+    unpersistedMessageCount: 0,
+    connectionEpoch: nil,
+    activeHistoryGap: nil
   )
 }
 
@@ -338,8 +397,15 @@ public actor BrokerFeedIngestion {
   private var revision: UInt64 = 0
   private var totalMessageCount: UInt64 = 0
   private var valueTopicCount = 0
+  private var connectionEpoch: ConnectionEpochID?
   private var historyIsHealthy = true
   private var unpersistedMessageCount = 0
+  // At most one conservative interval per reason. Repeated failures of the
+  // same kind merge, so retries remain bounded without conflating storage
+  // failure with transport overload.
+  private var pendingHistoryGaps: [BrokerHistoryCoverageGap] = []
+  private var isRecoveringHistory = false
+  private var historyRecoveryWaiters: [CheckedContinuation<Void, Never>] = []
   private var isFlushingHistory = false
   private var isShutdownRequested = false
   private var isShutdownComplete = false
@@ -368,9 +434,20 @@ public actor BrokerFeedIngestion {
     stream
   }
 
+  public func beginConnectionEpoch(_ epoch: ConnectionEpochID) {
+    guard connectionEpoch != epoch else { return }
+    connectionEpoch = epoch
+    schedulePresentation()
+  }
+
   public func ingest(_ message: BrokerInboundMessage) async {
     guard !isShutdownRequested else { return }
+    if connectionEpoch == nil {
+      connectionEpoch = message.connectionEpoch
+    }
     insert(message)
+    schedulePresentation()
+    await waitForHistoryRecoveryIfNeeded()
     if historyIsHealthy {
       pendingHistory.append(
         BrokerHistoryMessage(
@@ -383,7 +460,7 @@ public actor BrokerFeedIngestion {
         )
       )
     } else {
-      unpersistedMessageCount += 1
+      addMissingHistoryMessage(message)
     }
     schedulePresentation()
     if !historyIsHealthy {
@@ -439,6 +516,90 @@ public actor BrokerFeedIngestion {
     shutdownWaiters.removeAll()
     for waiter in waiters {
       waiter.resume()
+    }
+  }
+
+  @discardableResult
+  public func retryHistoryPersistence(
+    recoveredAtMicroseconds: Int64
+  ) async -> Bool {
+    await acquireHistoryFlush()
+    defer { releaseHistoryFlush() }
+    guard !historyIsHealthy, !isRecoveringHistory,
+      !isShutdownRequested, !pendingHistoryGaps.isEmpty, let historyWriter
+    else {
+      return historyIsHealthy
+    }
+    isRecoveringHistory = true
+    var succeeded = true
+    while let activeHistoryGap = pendingHistoryGaps.first {
+      let closedGap = BrokerHistoryCoverageGap(
+        historySourceID: activeHistoryGap.historySourceID,
+        connectionEpoch: activeHistoryGap.connectionEpoch,
+        startedAtMicroseconds: activeHistoryGap.startedAtMicroseconds,
+        endedAtMicroseconds:
+          activeHistoryGap.isOpenEnded
+          ? nil
+          : max(
+            recoveredAtMicroseconds,
+            activeHistoryGap.startedAtMicroseconds
+          ),
+        minimumMissingMessageCount:
+          activeHistoryGap.minimumMissingMessageCount,
+        reason: activeHistoryGap.reason,
+        isOpenEnded: activeHistoryGap.isOpenEnded
+      )
+      do {
+        try await historyWriter.recordCoverageGap(closedGap)
+        pendingHistoryGaps.removeFirst()
+      } catch {
+        succeeded = false
+        break
+      }
+    }
+    historyIsHealthy = pendingHistoryGaps.isEmpty
+    isRecoveringHistory = false
+    let waiters = historyRecoveryWaiters
+    historyRecoveryWaiters.removeAll()
+    for waiter in waiters {
+      waiter.resume()
+    }
+    schedulePresentation()
+    return succeeded
+  }
+
+  @discardableResult
+  public func recordLocalOverloadCoverageGap(
+    connectionEpoch: ConnectionEpochID,
+    detectedAtMicroseconds: Int64,
+    minimumMissingMessageCount: Int
+  ) async -> Bool {
+    await acquireHistoryFlush()
+    defer { releaseHistoryFlush() }
+    guard !isShutdownRequested, minimumMissingMessageCount > 0,
+      let historyWriter
+    else {
+      return minimumMissingMessageCount == 0
+    }
+    let gap = BrokerHistoryCoverageGap(
+      historySourceID: historySourceID,
+      connectionEpoch: connectionEpoch,
+      startedAtMicroseconds: detectedAtMicroseconds,
+      endedAtMicroseconds: nil,
+      minimumMissingMessageCount: minimumMissingMessageCount,
+      reason: .localOverload,
+      isOpenEnded: true
+    )
+    unpersistedMessageCount += minimumMissingMessageCount
+    do {
+      try await historyWriter.recordCoverageGap(gap)
+      schedulePresentation()
+      return true
+    } catch {
+      historyIsHealthy = false
+      mergePendingHistoryGap(gap)
+      schedulePresentation()
+      return false
     }
   }
 
@@ -611,6 +772,20 @@ public actor BrokerFeedIngestion {
       } catch {
         historyIsHealthy = false
         unpersistedMessageCount += batch.count + pendingHistory.count
+        if let first = batch.first ?? pendingHistory.first {
+          mergePendingHistoryGap(
+            BrokerHistoryCoverageGap(
+              historySourceID: historySourceID,
+              connectionEpoch: first.connectionEpoch,
+              startedAtMicroseconds: first.receivedAtMicroseconds,
+              endedAtMicroseconds: nil,
+              minimumMissingMessageCount:
+                batch.count + pendingHistory.count,
+              reason: .storageFailure,
+              isOpenEnded: false
+            )
+          )
+        }
         pendingHistory.removeAll(keepingCapacity: false)
       }
       forceNextBatch = force
@@ -640,13 +815,16 @@ public actor BrokerFeedIngestion {
       valueTopicCount: valueTopicCount,
       historyIsHealthy: historyIsHealthy,
       unpersistedMessageCount:
-        unpersistedMessageCount + pendingHistory.count
+        unpersistedMessageCount + pendingHistory.count,
+      connectionEpoch: connectionEpoch,
+      activeHistoryGap: primaryPendingHistoryGap
     )
     continuation.yield(snapshot)
     return snapshot
   }
 
   private func makeSnapshots(from roots: [Node]) -> [BrokerTopicNodeSnapshot] {
+    let snapshotEpoch = connectionEpoch
     var stack: [(node: Node, childrenVisited: Bool)] = []
     stack.reserveCapacity(roots.count)
     for root in roots.reversed() {
@@ -670,6 +848,13 @@ public actor BrokerFeedIngestion {
           childIndices.append(childIndex)
         }
         let recordIndex = records.count
+        let isStale: Bool
+        if let snapshotEpoch, let latest = frame.node.latest {
+          isStale =
+            latest.connectionEpoch != snapshotEpoch
+        } else {
+          isStale = false
+        }
         records.append(
           BrokerTopicSnapshotRecord(
             id: BrokerTopicID(
@@ -687,6 +872,7 @@ public actor BrokerFeedIngestion {
             subtreeValueTopicCount: frame.node.subtreeValueTopicCount,
             subtreeLatestReceivedAtMicroseconds:
               frame.node.subtreeLatestReceivedAtMicroseconds,
+            isStale: isStale,
             childIndices: childIndices
           )
         )
@@ -710,6 +896,71 @@ public actor BrokerFeedIngestion {
       }
       return BrokerTopicNodeSnapshot(storage: storage, index: index)
     }
+  }
+
+  private func waitForHistoryRecoveryIfNeeded() async {
+    guard isRecoveringHistory else { return }
+    await withCheckedContinuation { continuation in
+      historyRecoveryWaiters.append(continuation)
+    }
+  }
+
+  private func addMissingHistoryMessage(
+    _ message: BrokerInboundMessage
+  ) {
+    unpersistedMessageCount += 1
+    mergePendingHistoryGap(
+      BrokerHistoryCoverageGap(
+        historySourceID: historySourceID,
+        connectionEpoch: message.connectionEpoch,
+        startedAtMicroseconds: message.receivedAtMicroseconds,
+        endedAtMicroseconds: nil,
+        minimumMissingMessageCount: 1,
+        reason: .storageFailure,
+        isOpenEnded: false
+      )
+    )
+  }
+
+  private var primaryPendingHistoryGap: BrokerHistoryCoverageGap? {
+    pendingHistoryGaps.first { $0.reason == .storageFailure }
+      ?? pendingHistoryGaps.first
+  }
+
+  private func mergePendingHistoryGap(
+    _ newGap: BrokerHistoryCoverageGap
+  ) {
+    guard
+      let index = pendingHistoryGaps.firstIndex(where: {
+        $0.reason == newGap.reason
+      })
+    else {
+      pendingHistoryGaps.append(newGap)
+      return
+    }
+    let existing = pendingHistoryGaps[index]
+    pendingHistoryGaps[index] = BrokerHistoryCoverageGap(
+      historySourceID: existing.historySourceID,
+      connectionEpoch:
+        existing.connectionEpoch == newGap.connectionEpoch
+        ? existing.connectionEpoch : nil,
+      startedAtMicroseconds: min(
+        existing.startedAtMicroseconds,
+        newGap.startedAtMicroseconds
+      ),
+      endedAtMicroseconds: nil,
+      minimumMissingMessageCount: saturatingAdd(
+        existing.minimumMissingMessageCount,
+        newGap.minimumMissingMessageCount
+      ),
+      reason: existing.reason,
+      isOpenEnded: existing.isOpenEnded || newGap.isOpenEnded
+    )
+  }
+
+  private func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
+    let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+    return overflow ? Int.max : sum
   }
 
   private nonisolated static func nodeOrder(

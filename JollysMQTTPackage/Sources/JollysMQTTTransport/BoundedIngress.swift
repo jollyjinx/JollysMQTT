@@ -28,13 +28,16 @@ public struct MQTTIngressCoverageGap: Equatable, Sendable {
     /// Always true for overload: mqtt-nio or the broker may have held more
     /// publications when the connection closed than JollysMQTT could count.
     public let isOpenEnded: Bool
+    public let detectedAtMicroseconds: Int64?
 
     public init(
         minimumMissingMessageCount: Int,
-        isOpenEnded: Bool
+        isOpenEnded: Bool,
+        detectedAtMicroseconds: Int64? = nil
     ) {
         self.minimumMissingMessageCount = minimumMissingMessageCount
         self.isOpenEnded = isOpenEnded
+        self.detectedAtMicroseconds = detectedAtMicroseconds
     }
 }
 
@@ -287,6 +290,7 @@ private final class MQTTIngressBuffer: Sendable {
         var highWaterMark = 0
         var drainExpired = false
         var overloadTerminationInstant: ContinuousClock.Instant?
+        var overloadDetectedAtMicroseconds: Int64?
 
         init(capacity: Int) {
             storage = Array(repeating: nil, count: capacity)
@@ -339,6 +343,9 @@ private final class MQTTIngressBuffer: Sendable {
                 - state.discardedMessageCount
             guard outstanding < policy.capacity else {
                 state.phase = .localOverload(clock.now)
+                state.overloadDetectedAtMicroseconds = Int64(
+                    Date().timeIntervalSince1970 * 1_000_000
+                )
                 state.rejectedMessageCount = 1
                 return false
             }
@@ -446,7 +453,9 @@ private final class MQTTIngressBuffer: Sendable {
                     minimumMissingMessageCount:
                         state.rejectedMessageCount
                         + state.discardedMessageCount,
-                    isOpenEnded: true
+                    isOpenEnded: true,
+                    detectedAtMicroseconds:
+                        state.overloadDetectedAtMicroseconds
                 )
                 let terminationInstant =
                     state.overloadTerminationInstant ?? clock.now

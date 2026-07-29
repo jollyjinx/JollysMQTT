@@ -13,6 +13,7 @@ public struct TopicOutlineRowState: Equatable, Identifiable, Sendable {
   public let allowsExpansionToggle: Bool
   public let isSelected: Bool
   public let hasValue: Bool
+  public let isStale: Bool
   public let retained: Bool
   public let qos: MQTTQualityOfService?
   public let latestOrdinal: UInt64?
@@ -185,8 +186,9 @@ public enum TopicOutlineFeature {
       var included: Set<BrokerTopicID> = []
       for indexed in allNodes
       where indexed.node.foldedFullTopicSearchText.contains(query)
-        || indexed.node.payloadSummary?.foldedSearchText.contains(query)
-          == true
+        || (!indexed.node.isStale
+          && indexed.node.payloadSummary?.foldedSearchText.contains(query)
+            == true)
       {
         var next: BrokerTopicID? = indexed.node.id
         while let current = next, included.insert(current).inserted {
@@ -233,14 +235,16 @@ public enum TopicOutlineFeature {
             hasVisibleChildren && !isExpansionForced,
           isSelected: node.fullTopic == state.selectedTopic,
           hasValue: node.latest != nil,
-          retained: node.latest?.retained == true,
-          qos: node.latest?.qos,
-          latestOrdinal: node.latest?.ordinal,
+          isStale: node.isStale,
+          retained:
+            !node.isStale && node.latest?.retained == true,
+          qos: node.isStale ? nil : node.latest?.qos,
+          latestOrdinal: node.isStale ? nil : node.latest?.ordinal,
           descendantValueTopicCount:
             node.subtreeValueTopicCount - ownValueCount,
           descendantMessageCount:
             node.subtreeMessageCount - ownMessageCount,
-          payloadSummary: node.payloadSummary
+          payloadSummary: node.isStale ? nil : node.payloadSummary
         )
       )
       guard isExpanded else { continue }

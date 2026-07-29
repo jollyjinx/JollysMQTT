@@ -190,8 +190,8 @@
     "Freeze View" : {
       "comment" : "Pauses presentation updates while live topic ingestion continues."
     },
-    "History is unavailable. Live topic values are still updating." : {
-      "comment" : "Warns that durable history failed while live MQTT ingestion continues."
+    "History is degraded. Live topics are still updating, but %lld messages are not covered by durable history." : {
+      "comment" : "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
     },
     "Home Broker" : {
       "comment" : "Example placeholder for a broker display name."
@@ -366,6 +366,9 @@
     "Retry" : {
       "comment" : "Retries a broker connection after a failure or cancellation."
     },
+    "Retry History" : {
+      "comment" : "Attempts to resume durable MQTT history persistence."
+    },
     "Save" : {
       "comment" : "Action that validates and saves a broker profile."
     },
@@ -392,6 +395,20 @@
     },
     "Stable Generated" : {
       "comment" : "Client ID mode derived stably for the installation and profile."
+    },
+    "Stale" : {
+      "comment" : "Marks a cached MQTT topic that has not been observed in the current connection."
+    },
+    "Stale cached topic, not observed in the current connection, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible stale MQTT topic metadata. Variables are descendant value-topic and message counts.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Stale cached topic, not observed in the current connection, %1$lld descendant topics, %2$llu descendant messages"
+          }
+        }
+      }
     },
     "Subscribing" : {
       "comment" : "Broker connection phase shown while MQTT subscriptions start."

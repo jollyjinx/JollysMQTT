@@ -202,16 +202,32 @@ private struct ConnectedWorkspaceView: View {
         sceneStore: sceneStore
       )
       if topicState.snapshot.historyIsHealthy == false {
-        Label {
-          Text(
-            "History is unavailable. Live topic values are still updating.",
-            bundle: #bundle,
-            comment: "Warns that durable history failed while live MQTT ingestion continues."
-          )
-        } icon: {
-          Image(systemName: "externaldrive.badge.exclamationmark")
+        VStack(spacing: 8) {
+          Label {
+            Text(
+              "History is degraded. Live topics are still updating, but \(topicState.snapshot.unpersistedMessageCount) messages are not covered by durable history.",
+              bundle: #bundle,
+              comment:
+                "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
+            )
+          } icon: {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+          }
+          Button {
+            Task {
+              await sceneStore.retryHistoryPersistence()
+            }
+          } label: {
+            Text(
+              "Retry History",
+              bundle: #bundle,
+              comment: "Attempts to resume durable MQTT history persistence."
+            )
+          }
+          .buttonStyle(.borderedProminent)
         }
         .foregroundStyle(.secondary)
+        .accessibilityElement(children: .contain)
       }
     }
     .padding(20)
@@ -521,8 +537,22 @@ private struct TopicOutlineRowContent: View {
             Text(verbatim: row.level)
               .fontWeight(row.isSelected ? .semibold : .regular)
           }
-          if row.hasValue {
+          if row.hasValue && !row.isStale {
             TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
+          }
+          if row.isStale {
+            Label {
+              Text(
+                "Stale",
+                bundle: #bundle,
+                comment:
+                  "Marks a cached MQTT topic that has not been observed in the current connection."
+              )
+            } icon: {
+              Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
           }
           if row.retained {
             Image(systemName: "pin.fill")
@@ -578,7 +608,14 @@ private struct TopicOutlineRowContent: View {
   }
 
   private var accessibilityValue: Text {
-    if let qos = row.qos, let summary = row.payloadSummary {
+    if row.isStale {
+      return Text(
+        "Stale cached topic, not observed in the current connection, \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+        bundle: #bundle,
+        comment:
+          "Accessible stale MQTT topic metadata. Variables are descendant value-topic and message counts."
+      )
+    } else if let qos = row.qos, let summary = row.payloadSummary {
       if row.retained {
         return Text(
           "Retained delivery, QoS \(qos.rawValue), current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",

@@ -18,6 +18,11 @@ enum BrokerFeedPublishEnqueueResult: Equatable, Sendable {
   case closed
 }
 
+private struct BrokerFeedLocalOverload: Error, Sendable {
+  let connectionEpoch: ConnectionEpochID
+  let gap: MQTTIngressCoverageGap
+}
+
 actor BrokerFeedPublishCommandQueue {
   private let stream: AsyncStream<BrokerFeedPublishCommand>
   private let continuation: AsyncStream<BrokerFeedPublishCommand>.Continuation
@@ -140,6 +145,14 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     activeConnection?.close()
   }
 
+  func retryHistoryPersistence() async -> Bool {
+    await ingestion?.retryHistoryPersistence(
+      recoveredAtMicroseconds: Int64(
+        Date().timeIntervalSince1970 * 1_000_000
+      )
+    ) ?? false
+  }
+
   func shutdownOwnedWork() async {
     guard !ownedWorkIsShutdown else { return }
     ownedWorkIsShutdown = true
@@ -210,6 +223,18 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
       }
     } catch is CancellationError {
       throw CancellationError()
+    } catch let overload as BrokerFeedLocalOverload {
+      _ = await ingestion?.recordLocalOverloadCoverageGap(
+        connectionEpoch: overload.connectionEpoch,
+        detectedAtMicroseconds:
+          overload.gap.detectedAtMicroseconds
+          ?? Int64(
+            Date().timeIntervalSince1970 * 1_000_000
+          ),
+        minimumMissingMessageCount:
+          overload.gap.minimumMissingMessageCount
+      )
+      throw BrokerFeedFailure.localOverload
     } catch let failure as BrokerFeedFailure {
       throw failure
     } catch let failure as MQTTTransportFailure {
@@ -224,6 +249,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     filters: [MQTTSubscriptionFilter],
     events: BrokerFeedAttemptEvents
   ) async throws {
+    await ingestion?.beginConnectionEpoch(connection.connectionEpoch)
     await events.subscribing()
     let commandStream = await publishCommands.commands()
 
@@ -252,6 +278,12 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
           }
         )
         if report.termination == .localOverload {
+          if let gap = report.coverageGap {
+            throw BrokerFeedLocalOverload(
+              connectionEpoch: connection.connectionEpoch,
+              gap: gap
+            )
+          }
           throw BrokerFeedFailure.localOverload
         }
         throw BrokerFeedFailure.transportUnavailable

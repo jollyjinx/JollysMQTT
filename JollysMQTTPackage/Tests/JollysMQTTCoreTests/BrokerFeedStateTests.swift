@@ -4,6 +4,52 @@ import Testing
 
 @Suite("Broker feed state")
 struct BrokerFeedStateTests {
+  @Test(
+    "Failures retain redacted structured diagnostic categories",
+    arguments: [
+      DiagnosticExpectation(
+        failure: .dnsResolutionFailed,
+        category: .dns
+      ),
+      DiagnosticExpectation(
+        failure: .transportUnavailable,
+        category: .tcp
+      ),
+      DiagnosticExpectation(
+        failure: .trustRejected,
+        category: .tls
+      ),
+      DiagnosticExpectation(
+        failure: .authenticationRejected,
+        category: .connack
+      ),
+      DiagnosticExpectation(
+        failure: .subscriptionRejected,
+        category: .suback
+      ),
+      DiagnosticExpectation(
+        failure: .localOverload,
+        category: .localOverload
+      ),
+    ]
+  )
+  func structuredRedactedDiagnostics(
+    expectation: DiagnosticExpectation
+  ) {
+    let diagnostic = expectation.failure.diagnostic
+    #expect(diagnostic.category == expectation.category)
+    #expect(!diagnostic.description.contains("broker.example"))
+    #expect(!diagnostic.description.contains("username"))
+    #expect(!diagnostic.description.contains("topic"))
+    #expect(!diagnostic.description.contains("payload"))
+    #expect(
+      BrokerFeedDiagnostic.storageFailure.category == .storage
+    )
+    #expect(
+      BrokerFeedDiagnostic.cancellation.category == .cancellation
+    )
+  }
+
   @Test("Transient DNS failures may retry automatically")
   func transientDNSFailureRetries() {
     #expect(BrokerFeedFailure.dnsResolutionFailed.allowsAutomaticRetry)
@@ -76,10 +122,15 @@ struct BrokerFeedStateTests {
       action: .snapshotReceived(snapshot)
     )
     let retryEffect = ConnectionFeature.reduce(state: &state, intent: .retry)
+    let historyRetryEffect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .retryHistoryPersistence
+    )
     let cancelEffect = ConnectionFeature.reduce(state: &state, intent: .cancel)
 
     #expect(state.snapshot == snapshot)
     #expect(retryEffect == .retry)
+    #expect(historyRetryEffect == .retryHistoryPersistence)
     #expect(cancelEffect == .cancel)
   }
 
@@ -143,6 +194,31 @@ struct BrokerFeedStateTests {
 
     #expect(await feed.snapshot() == .idle)
     #expect(await attempt.closeCount() >= 1)
+  }
+
+  @Test("Cancellation retains a structured diagnostic during teardown")
+  func cancellationDiagnostic() async throws {
+    let attempt = HoldingSuccessfulAttempt()
+    let feed = BrokerFeed(attempt: attempt)
+    var snapshots = await feed.snapshots().makeAsyncIterator()
+    await feed.connect(
+      .init(profile: .feedTestProfile(), credentialRevision: 0)
+    )
+    await attempt.waitUntilConnected()
+
+    var connected: BrokerFeedSnapshot?
+    while let snapshot = await snapshots.next() {
+      if snapshot.phase == .connected {
+        connected = snapshot
+        break
+      }
+    }
+    _ = try #require(connected)
+    let release = Task { await feed.release() }
+    let disconnecting = try #require(await snapshots.next())
+    #expect(disconnecting.phase == .disconnecting)
+    #expect(disconnecting.diagnostic == .cancellation)
+    await release.value
   }
 
   @Test("A successful attempt emits the complete lifecycle sequence")
@@ -243,6 +319,33 @@ struct BrokerFeedStateTests {
 
     #expect(await feed.snapshot().phase == .subscribing)
     #expect(await attempt.attemptCount() == 2)
+    await feed.release()
+  }
+
+  @Test("Local overload never reconnects until the user explicitly retries")
+  func localOverloadRequiresExplicitRetry() async {
+    let attempt = ScriptedAttempt(
+      outcomes: [
+        .failure(.localOverload),
+        .holdAtSubscribing,
+      ]
+    )
+    let feed = BrokerFeed(attempt: attempt)
+    await feed.connect(
+      .init(profile: .feedTestProfile(), credentialRevision: 0)
+    )
+    await attempt.waitUntilOutcomeReturned(1)
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(await feed.snapshot().phase == .overloaded)
+    #expect(await feed.snapshot().retry == nil)
+    #expect(await attempt.attemptCount() == 1)
+
+    await feed.retry()
+    await attempt.waitForAttemptCount(2)
+    await attempt.waitUntilSubscribing()
+    #expect(await feed.snapshot().phase == .subscribing)
     await feed.release()
   }
 
@@ -619,6 +722,18 @@ struct PermanentFailureExpectation:
 
   var testDescription: String {
     "\(failure) → \(phase)"
+  }
+}
+
+struct DiagnosticExpectation:
+  Sendable,
+  CustomTestStringConvertible
+{
+  let failure: BrokerFeedFailure
+  let category: BrokerFeedDiagnosticCategory
+
+  var testDescription: String {
+    "\(failure) → \(category)"
   }
 }
 

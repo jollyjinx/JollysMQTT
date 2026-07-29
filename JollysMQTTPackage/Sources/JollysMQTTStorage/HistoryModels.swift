@@ -1,4 +1,5 @@
 import Foundation
+import JollysMQTTCore
 
 public struct HistoryMessageInput: Sendable, Equatable {
   public let historySourceID: String
@@ -33,6 +34,49 @@ public struct StoredHistoryMessage: Sendable, Equatable {
   public let topic: String
   public let receivedAtMicroseconds: Int64
   public let payload: Data
+}
+
+public struct HistoryCoverageGapInput: Sendable, Equatable {
+  public let historySourceID: String
+  public let connectionEpoch: UUID?
+  public let startedAtMicroseconds: Int64
+  public let endedAtMicroseconds: Int64?
+  public let minimumMissingMessageCount: Int
+  public let reason: BrokerHistoryCoverageGapReason
+  public let isOpenEnded: Bool
+
+  public init(
+    historySourceID: String,
+    connectionEpoch: UUID?,
+    startedAtMicroseconds: Int64,
+    endedAtMicroseconds: Int64?,
+    minimumMissingMessageCount: Int,
+    reason: BrokerHistoryCoverageGapReason,
+    isOpenEnded: Bool
+  ) {
+    self.historySourceID = historySourceID
+    self.connectionEpoch = connectionEpoch
+    self.startedAtMicroseconds = startedAtMicroseconds
+    self.endedAtMicroseconds = endedAtMicroseconds
+    self.minimumMissingMessageCount = minimumMissingMessageCount
+    self.reason = reason
+    self.isOpenEnded = isOpenEnded
+  }
+}
+
+public struct StoredHistoryCoverageGap: Sendable, Equatable {
+  public let durableOrder: Int64
+  public let historySourceID: String
+  public let connectionEpoch: UUID?
+  public let startedAtMicroseconds: Int64
+  public let endedAtMicroseconds: Int64?
+  public let minimumMissingMessageCount: Int
+  public let reason: BrokerHistoryCoverageGapReason
+  public let isOpenEnded: Bool
+}
+
+public struct HistoryCoverageGapAppendResult: Sendable, Equatable {
+  public let durableOrder: Int64
 }
 
 public struct HistoryAppendResult: Sendable, Equatable {
@@ -154,6 +198,7 @@ public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvert
     vacuumPageLimit: Int
   )
   case invalidMessage(index: Int, reason: InvalidHistoryMessageReason)
+  case invalidCoverageGap
   case sqlite(code: Int32, operation: String, message: String)
 
   public var description: String {
@@ -172,6 +217,8 @@ public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvert
       "History size retention values are invalid: maximumBytes=\(maximumBytes), batchLimit=\(batchLimit), vacuumPageLimit=\(vacuumPageLimit)."
     case .invalidMessage(let index, let reason):
       "History message at index \(index) is invalid: \(reason)."
+    case .invalidCoverageGap:
+      "The history coverage gap is invalid."
     case .sqlite(let code, let operation, let message):
       "SQLite \(operation) failed with code \(code): \(message)"
     }

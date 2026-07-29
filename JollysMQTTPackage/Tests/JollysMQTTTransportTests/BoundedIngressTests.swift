@@ -49,9 +49,12 @@ struct BoundedIngressTests {
             report.coverageGap
                 == MQTTIngressCoverageGap(
                     minimumMissingMessageCount: 1,
-                    isOpenEnded: true
+                    isOpenEnded: true,
+                    detectedAtMicroseconds:
+                        report.coverageGap?.detectedAtMicroseconds
                 )
         )
+        #expect(report.coverageGap?.detectedAtMicroseconds != nil)
         #expect(report.allowsAutomaticReconnect == false)
     }
 
@@ -93,9 +96,12 @@ struct BoundedIngressTests {
             report.coverageGap
                 == MQTTIngressCoverageGap(
                     minimumMissingMessageCount: 3,
-                    isOpenEnded: true
+                    isOpenEnded: true,
+                    detectedAtMicroseconds:
+                        report.coverageGap?.detectedAtMicroseconds
                 )
         )
+        #expect(report.coverageGap?.detectedAtMicroseconds != nil)
     }
 }
 

@@ -380,6 +380,60 @@ struct BrokerFeedIngestionTests {
     #expect(stillLive.unpersistedMessageCount == 3)
   }
 
+  @Test("Every new connection epoch makes previously known topics stale")
+  func reconnectMarksKnownTopicsStaleUntilObservedAgain() async throws {
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: RecordingHistoryWriter(),
+      policy: .init(
+        historyBatchSize: 8,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+    let firstEpoch = ConnectionEpochID()
+    let secondEpoch = ConnectionEpochID()
+
+    await ingestion.beginConnectionEpoch(firstEpoch)
+    await ingestion.ingest(
+      .fixture(epoch: firstEpoch, ordinal: 1, topic: "live")
+    )
+    await ingestion.ingest(
+      .fixture(epoch: firstEpoch, ordinal: 2, topic: "stale")
+    )
+    await ingestion.ingest(
+      .fixture(epoch: firstEpoch, ordinal: 3, topic: "parent")
+    )
+    _ = await ingestion.flush()
+
+    await ingestion.beginConnectionEpoch(secondEpoch)
+    let allStale = await ingestion.flush()
+    #expect(allStale.connectionEpoch == secondEpoch)
+    #expect(allStale.roots.allSatisfy { $0.isStale })
+
+    await ingestion.ingest(
+      .fixture(epoch: secondEpoch, ordinal: 1, topic: "live")
+    )
+    await ingestion.ingest(
+      .fixture(epoch: secondEpoch, ordinal: 2, topic: "parent/child")
+    )
+    let partiallyFresh = await ingestion.flush()
+    let live = try #require(
+      partiallyFresh.roots.first { $0.fullTopic == "live" }
+    )
+    let stale = try #require(
+      partiallyFresh.roots.first { $0.fullTopic == "stale" }
+    )
+    #expect(live.isStale == false)
+    #expect(stale.isStale)
+    let parent = try #require(
+      partiallyFresh.roots.first { $0.fullTopic == "parent" }
+    )
+    #expect(parent.isStale)
+    #expect(parent.children.first?.isStale == false)
+  }
+
   @Test("A slow writer backpressures ingestion at one pending batch")
   func historyHandoffIsBounded() async {
     let writer = SlowFirstHistoryWriter()
@@ -424,6 +478,283 @@ struct BrokerFeedIngestionTests {
     await followingMessages.value
     let snapshot = await ingestion.flush()
     #expect(snapshot.totalMessageCount == 100)
+  }
+
+  @Test("History recovery durably closes the exact coverage gap before resuming")
+  func historyRecoveryRecordsCoverageGap() async throws {
+    let writer = RecoveringHistoryWriter()
+    let epoch = ConnectionEpochID()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 2,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 1, topic: "a", receivedAt: 10)
+    )
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 2, topic: "b", receivedAt: 20)
+    )
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 3, topic: "c", receivedAt: 30)
+    )
+    let degraded = await ingestion.flush()
+    let openGap = try #require(degraded.activeHistoryGap)
+    #expect(degraded.historyDiagnostic == .storageFailure)
+    #expect(openGap.startedAtMicroseconds == 10)
+    #expect(openGap.endedAtMicroseconds == nil)
+    #expect(openGap.minimumMissingMessageCount == 3)
+    #expect(openGap.reason == .storageFailure)
+
+    #expect(
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 40
+      )
+    )
+    let recorded = try #require(await writer.coverageGaps.first)
+    #expect(recorded.startedAtMicroseconds == 10)
+    #expect(recorded.endedAtMicroseconds == 40)
+    #expect(recorded.minimumMissingMessageCount == 3)
+    #expect(recorded.connectionEpoch == epoch)
+
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 4, topic: "d", receivedAt: 50)
+    )
+    let recovered = await ingestion.flush()
+    #expect(recovered.historyIsHealthy)
+    #expect(recovered.activeHistoryGap == nil)
+    #expect(recovered.historyDiagnostic == nil)
+    #expect(recovered.unpersistedMessageCount == 3)
+    #expect(await writer.appendedOrdinals == [4])
+  }
+
+  @Test("Failed gap recording leaves history degraded and append stays stopped")
+  func failedHistoryRecoveryDoesNotResumePersistence() async {
+    let writer = RecoveringHistoryWriter(gapRecordingFails: true)
+    let epoch = ConnectionEpochID()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 1,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 1, topic: "a", receivedAt: 10)
+    )
+
+    #expect(
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 20
+      ) == false
+    )
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 2, topic: "b", receivedAt: 30)
+    )
+    let snapshot = await ingestion.flush()
+
+    #expect(snapshot.historyIsHealthy == false)
+    #expect(snapshot.activeHistoryGap?.endedAtMicroseconds == nil)
+    #expect(snapshot.activeHistoryGap?.minimumMissingMessageCount == 2)
+    #expect(snapshot.unpersistedMessageCount == 2)
+    #expect(await writer.appendedOrdinals.isEmpty)
+  }
+
+  @Test("Concurrent ingest waits for durable gap recovery before appending")
+  func recoveryIsAtomicAgainstActorReentrancy() async {
+    let writer = RecoveringHistoryWriter(gateGapRecording: true)
+    let epoch = ConnectionEpochID()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 1,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 1, topic: "a", receivedAt: 10)
+    )
+    let recovery = Task {
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 20
+      )
+    }
+    await writer.waitUntilGapRecordingStarts()
+
+    let concurrentIngest = Task {
+      await ingestion.ingest(
+        .fixture(epoch: epoch, ordinal: 2, topic: "b", receivedAt: 30)
+      )
+    }
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(await writer.appendedOrdinals.isEmpty)
+
+    await writer.finishGapRecording()
+    #expect(await recovery.value)
+    await concurrentIngest.value
+    _ = await ingestion.flush()
+    #expect(await writer.appendedOrdinals == [2])
+  }
+
+  @Test("Local overload records the measured conservative open-ended gap")
+  func localOverloadCoverageGapIsDurable() async throws {
+    let writer = RecordingHistoryWriter()
+    let epoch = ConnectionEpochID()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer
+    )
+
+    #expect(
+      await ingestion.recordLocalOverloadCoverageGap(
+        connectionEpoch: epoch,
+        detectedAtMicroseconds: 100,
+        minimumMissingMessageCount: 7
+      )
+    )
+
+    let gap = try #require(await writer.coverageGaps.first)
+    #expect(gap.historySourceID == "source")
+    #expect(gap.connectionEpoch == epoch)
+    #expect(gap.startedAtMicroseconds == 100)
+    #expect(gap.endedAtMicroseconds == nil)
+    #expect(gap.minimumMissingMessageCount == 7)
+    #expect(gap.reason == .localOverload)
+    #expect(gap.isOpenEnded)
+    #expect(await ingestion.flush().unpersistedMessageCount == 7)
+  }
+
+  @Test("Failed overload recording preserves an existing storage gap")
+  func overloadFailurePreservesStorageCoverageUntilAtomicRecovery() async throws {
+    let writer = MultipleGapRecoveryWriter()
+    let epoch = ConnectionEpochID()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 1,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+
+    await ingestion.ingest(
+      .fixture(epoch: epoch, ordinal: 1, topic: "stored", receivedAt: 10)
+    )
+    #expect(
+      await ingestion.recordLocalOverloadCoverageGap(
+        connectionEpoch: epoch,
+        detectedAtMicroseconds: 20,
+        minimumMissingMessageCount: 3
+      ) == false
+    )
+    let degraded = await ingestion.flush()
+    #expect(degraded.historyIsHealthy == false)
+    #expect(degraded.activeHistoryGap?.reason == .storageFailure)
+    #expect(degraded.activeHistoryGap?.startedAtMicroseconds == 10)
+    #expect(degraded.activeHistoryGap?.minimumMissingMessageCount == 1)
+    #expect(degraded.unpersistedMessageCount == 4)
+
+    let recovery = Task {
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 30
+      )
+    }
+    await writer.waitUntilOverloadRecoveryStarts()
+    let storageGap = try #require(await writer.coverageGaps.first)
+    #expect(storageGap.reason == .storageFailure)
+    #expect(storageGap.startedAtMicroseconds == 10)
+    #expect(storageGap.endedAtMicroseconds == 30)
+    #expect(storageGap.minimumMissingMessageCount == 1)
+
+    let concurrentIngest = Task {
+      await ingestion.ingest(
+        .fixture(epoch: epoch, ordinal: 2, topic: "live", receivedAt: 40)
+      )
+    }
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(await writer.appendedOrdinals.isEmpty)
+
+    await writer.finishOverloadRecovery()
+    #expect(await recovery.value)
+    await concurrentIngest.value
+    let recovered = await ingestion.flush()
+
+    let gaps = await writer.coverageGaps
+    #expect(gaps.count == 2)
+    let overloadGap = try #require(
+      gaps.first { $0.reason == .localOverload }
+    )
+    #expect(overloadGap.startedAtMicroseconds == 20)
+    #expect(overloadGap.endedAtMicroseconds == nil)
+    #expect(overloadGap.minimumMissingMessageCount == 3)
+    #expect(overloadGap.isOpenEnded)
+    #expect(gaps.map(\.minimumMissingMessageCount).reduce(0, +) == 4)
+    #expect(await writer.appendedOrdinals == [2])
+    #expect(recovered.historyIsHealthy)
+    #expect(recovered.activeHistoryGap == nil)
+    #expect(recovered.unpersistedMessageCount == 4)
+  }
+
+  @Test("Repeated failed gaps merge by reason into bounded coverage")
+  func repeatedOverloadGapsMergeWithoutDoubleCounting() async throws {
+    let writer = FailingThenRecordingGapWriter(failureCount: 2)
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer
+    )
+
+    #expect(
+      await ingestion.recordLocalOverloadCoverageGap(
+        connectionEpoch: ConnectionEpochID(),
+        detectedAtMicroseconds: 100,
+        minimumMissingMessageCount: 2
+      ) == false
+    )
+    #expect(
+      await ingestion.recordLocalOverloadCoverageGap(
+        connectionEpoch: ConnectionEpochID(),
+        detectedAtMicroseconds: 200,
+        minimumMissingMessageCount: 3
+      ) == false
+    )
+    let degraded = await ingestion.flush()
+    let merged = try #require(degraded.activeHistoryGap)
+    #expect(merged.reason == .localOverload)
+    #expect(merged.connectionEpoch == nil)
+    #expect(merged.startedAtMicroseconds == 100)
+    #expect(merged.minimumMissingMessageCount == 5)
+    #expect(degraded.unpersistedMessageCount == 5)
+
+    #expect(
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 300
+      )
+    )
+    let recorded = await writer.coverageGaps
+    #expect(recorded.count == 1)
+    #expect(recorded.first?.minimumMissingMessageCount == 5)
+    #expect(recorded.first?.startedAtMicroseconds == 100)
+    #expect(recorded.first?.connectionEpoch == nil)
   }
 
   @Test("Overlapping timer, force flushes, and shutdown serialize every history operation")
@@ -481,9 +812,16 @@ struct BrokerFeedIngestionTests {
 
 private actor RecordingHistoryWriter: BrokerHistoryWriting {
   private(set) var ordinals: [[UInt64]] = []
+  private(set) var coverageGaps: [BrokerHistoryCoverageGap] = []
 
   func append(_ messages: [BrokerHistoryMessage]) async throws {
     ordinals.append(messages.map(\.ordinal))
+  }
+
+  func recordCoverageGap(
+    _ gap: BrokerHistoryCoverageGap
+  ) async throws {
+    coverageGaps.append(gap)
   }
 
   func shutdown() async throws {}
@@ -505,6 +843,7 @@ private actor LifetimeHistoryWriter: BrokerHistoryWriting {
   }
 
   func append(_ messages: [BrokerHistoryMessage]) async throws {}
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws {}
 
   func shutdown() async throws {
     await recorder.recordShutdown()
@@ -516,6 +855,159 @@ private struct FailingHistoryError: Error {}
 private actor FailingHistoryWriter: BrokerHistoryWriting {
   func append(_ messages: [BrokerHistoryMessage]) async throws {
     throw FailingHistoryError()
+  }
+
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws {
+    throw FailingHistoryError()
+  }
+
+  func shutdown() async throws {}
+}
+
+private actor RecoveringHistoryWriter: BrokerHistoryWriting {
+  private let gapRecordingFails: Bool
+  private let gateGapRecording: Bool
+  private var appendFails = true
+  private var gapRecordingStarted = false
+  private var gapRecordingCanFinish = false
+  private var gapStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var gapFinishWaiters: [CheckedContinuation<Void, Never>] = []
+  private(set) var coverageGaps: [BrokerHistoryCoverageGap] = []
+  private(set) var appendedOrdinals: [UInt64] = []
+
+  init(
+    gapRecordingFails: Bool = false,
+    gateGapRecording: Bool = false
+  ) {
+    self.gapRecordingFails = gapRecordingFails
+    self.gateGapRecording = gateGapRecording
+  }
+
+  func append(_ messages: [BrokerHistoryMessage]) async throws {
+    if appendFails {
+      appendFails = false
+      throw FailingHistoryError()
+    }
+    appendedOrdinals.append(contentsOf: messages.map(\.ordinal))
+  }
+
+  func recordCoverageGap(
+    _ gap: BrokerHistoryCoverageGap
+  ) async throws {
+    gapRecordingStarted = true
+    let startWaiters = gapStartWaiters
+    gapStartWaiters.removeAll()
+    for waiter in startWaiters {
+      waiter.resume()
+    }
+    if gateGapRecording, !gapRecordingCanFinish {
+      await withCheckedContinuation { continuation in
+        gapFinishWaiters.append(continuation)
+      }
+    }
+    if gapRecordingFails {
+      throw FailingHistoryError()
+    }
+    coverageGaps.append(gap)
+  }
+
+  func shutdown() async throws {}
+
+  func waitUntilGapRecordingStarts() async {
+    guard !gapRecordingStarted else { return }
+    await withCheckedContinuation { continuation in
+      gapStartWaiters.append(continuation)
+    }
+  }
+
+  func finishGapRecording() {
+    gapRecordingCanFinish = true
+    let waiters = gapFinishWaiters
+    gapFinishWaiters.removeAll()
+    for waiter in waiters {
+      waiter.resume()
+    }
+  }
+}
+
+private actor MultipleGapRecoveryWriter: BrokerHistoryWriting {
+  private var appendFails = true
+  private var coverageAttemptCount = 0
+  private var overloadRecoveryStarted = false
+  private var overloadRecoveryCanFinish = false
+  private var overloadStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var overloadFinishWaiters: [CheckedContinuation<Void, Never>] = []
+  private(set) var coverageGaps: [BrokerHistoryCoverageGap] = []
+  private(set) var appendedOrdinals: [UInt64] = []
+
+  func append(_ messages: [BrokerHistoryMessage]) async throws {
+    if appendFails {
+      appendFails = false
+      throw FailingHistoryError()
+    }
+    appendedOrdinals.append(contentsOf: messages.map(\.ordinal))
+  }
+
+  func recordCoverageGap(
+    _ gap: BrokerHistoryCoverageGap
+  ) async throws {
+    coverageAttemptCount += 1
+    if coverageAttemptCount == 1 {
+      throw FailingHistoryError()
+    }
+    if gap.reason == .localOverload {
+      overloadRecoveryStarted = true
+      let waiters = overloadStartWaiters
+      overloadStartWaiters.removeAll()
+      for waiter in waiters {
+        waiter.resume()
+      }
+      if !overloadRecoveryCanFinish {
+        await withCheckedContinuation { continuation in
+          overloadFinishWaiters.append(continuation)
+        }
+      }
+    }
+    coverageGaps.append(gap)
+  }
+
+  func shutdown() async throws {}
+
+  func waitUntilOverloadRecoveryStarts() async {
+    guard !overloadRecoveryStarted else { return }
+    await withCheckedContinuation { continuation in
+      overloadStartWaiters.append(continuation)
+    }
+  }
+
+  func finishOverloadRecovery() {
+    overloadRecoveryCanFinish = true
+    let waiters = overloadFinishWaiters
+    overloadFinishWaiters.removeAll()
+    for waiter in waiters {
+      waiter.resume()
+    }
+  }
+}
+
+private actor FailingThenRecordingGapWriter: BrokerHistoryWriting {
+  private var remainingFailures: Int
+  private(set) var coverageGaps: [BrokerHistoryCoverageGap] = []
+
+  init(failureCount: Int) {
+    remainingFailures = failureCount
+  }
+
+  func append(_ messages: [BrokerHistoryMessage]) async throws {}
+
+  func recordCoverageGap(
+    _ gap: BrokerHistoryCoverageGap
+  ) async throws {
+    if remainingFailures > 0 {
+      remainingFailures -= 1
+      throw FailingHistoryError()
+    }
+    coverageGaps.append(gap)
   }
 
   func shutdown() async throws {}
@@ -559,6 +1051,7 @@ private actor SlowFirstHistoryWriter: BrokerHistoryWriting {
     }
   }
 
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws {}
   func shutdown() async throws {}
 }
 
@@ -605,6 +1098,8 @@ private actor AdversarialHistoryWriter: BrokerHistoryWriting {
     shutdownOverlappedAppend = activeAppendCount > 0
     events.append("shutdown")
   }
+
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws {}
 
   func waitForFirstAppend() async {
     guard !firstAppendStarted else { return }
@@ -666,7 +1161,8 @@ extension BrokerInboundMessage {
     epoch: ConnectionEpochID,
     ordinal: UInt64,
     topic: String,
-    payload: Data = Data("value".utf8)
+    payload: Data = Data("value".utf8),
+    receivedAt: Int64? = nil
   ) -> Self {
     Self(
       connectionEpoch: epoch,
@@ -676,7 +1172,7 @@ extension BrokerInboundMessage {
       qos: .atMostOnce,
       retained: false,
       duplicate: false,
-      receivedAtMicroseconds: Int64(ordinal)
+      receivedAtMicroseconds: receivedAt ?? Int64(ordinal)
     )
   }
 }

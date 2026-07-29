@@ -8,6 +8,57 @@ import Testing
 
 @Suite("SQLite history store")
 struct SQLiteHistoryStoreTests {
+  @Test("Coverage gaps persist exact closed and open-ended intervals")
+  func coverageGapRoundTrip() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: "JollysMQTTStorageTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    let epoch = UUID()
+
+    _ = try await store.recordCoverageGap(
+      HistoryCoverageGapInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        startedAtMicroseconds: 10,
+        endedAtMicroseconds: 20,
+        minimumMissingMessageCount: 3,
+        reason: .storageFailure,
+        isOpenEnded: false
+      )
+    )
+    _ = try await store.recordCoverageGap(
+      HistoryCoverageGapInput(
+        historySourceID: "source-a",
+        connectionEpoch: nil,
+        startedAtMicroseconds: 30,
+        endedAtMicroseconds: nil,
+        minimumMissingMessageCount: 1,
+        reason: .localOverload,
+        isOpenEnded: true
+      )
+    )
+
+    let gaps = try await store.coverageGaps(
+      historySourceID: "source-a"
+    )
+    #expect(gaps.map(\.connectionEpoch) == [epoch, nil])
+    #expect(gaps.map(\.startedAtMicroseconds) == [10, 30])
+    #expect(gaps.map(\.endedAtMicroseconds) == [20, nil])
+    #expect(gaps.map(\.minimumMissingMessageCount) == [3, 1])
+    #expect(gaps.map(\.reason) == [.storageFailure, .localOverload])
+    #expect(gaps.map(\.isOpenEnded) == [false, true])
+    #expect(
+      try await store.coverageGaps(
+        historySourceID: "source-a",
+        overlapping: 15...25
+      ).map(\.durableOrder) == [gaps[0].durableOrder]
+    )
+  }
+
   @Test("Connection epoch and ordinal survive durable history round trip")
   func connectionIdentityRoundTrip() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -467,6 +518,22 @@ struct SQLiteHistoryStoreTests {
       #expect(legacy.first?.payload == Data([1]))
       #expect(legacy.first?.connectionEpoch == nil)
       #expect(legacy.first?.connectionOrdinal == nil)
+      _ = try await store.recordCoverageGap(
+        HistoryCoverageGapInput(
+          historySourceID: "source-a",
+          connectionEpoch: nil,
+          startedAtMicroseconds: 2,
+          endedAtMicroseconds: 3,
+          minimumMissingMessageCount: 1,
+          reason: .storageFailure,
+          isOpenEnded: false
+        )
+      )
+      #expect(
+        try await store.coverageGaps(
+          historySourceID: "source-a"
+        ).count == 1
+      )
     }
 
     @Test("An interrupted uncommitted write recovers without partial history")

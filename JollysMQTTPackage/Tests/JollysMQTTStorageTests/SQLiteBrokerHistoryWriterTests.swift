@@ -49,4 +49,40 @@ struct SQLiteBrokerHistoryWriterTests {
     #expect(messages.map(\.connectionEpoch) == [epoch.rawValue, epoch.rawValue])
     #expect(messages.map(\.connectionOrdinal) == [2, 1])
   }
+
+  @Test("The feed writer durably exposes coverage gaps")
+  func persistsCoverageGap() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTBrokerHistoryWriterTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appending(path: "history.sqlite3")
+    let writer = SQLiteBrokerHistoryWriter(databaseURL: databaseURL)
+    let epoch = ConnectionEpochID()
+    let gap = BrokerHistoryCoverageGap(
+      historySourceID: "source-a",
+      connectionEpoch: epoch,
+      startedAtMicroseconds: 10,
+      endedAtMicroseconds: 20,
+      minimumMissingMessageCount: 4,
+      reason: .storageFailure,
+      isOpenEnded: false
+    )
+
+    try await writer.recordCoverageGap(gap)
+    try await writer.shutdown()
+
+    let store = try await SQLiteHistoryStore.open(databaseURL: databaseURL)
+    let stored = try #require(
+      try await store.coverageGaps(historySourceID: "source-a").first
+    )
+    #expect(stored.connectionEpoch == epoch.rawValue)
+    #expect(stored.startedAtMicroseconds == 10)
+    #expect(stored.endedAtMicroseconds == 20)
+    #expect(stored.minimumMissingMessageCount == 4)
+    #expect(stored.reason == .storageFailure)
+    #expect(stored.isOpenEnded == false)
+  }
 }

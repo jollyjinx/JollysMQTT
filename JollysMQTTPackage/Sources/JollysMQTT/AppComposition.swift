@@ -119,6 +119,10 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
     await currentFeed?.retry()
   }
 
+  func retryHistoryPersistence() async {
+    await currentFeed?.retryHistoryPersistence()
+  }
+
   func cancel() async {
     await currentFeed?.cancel()
   }
@@ -457,6 +461,10 @@ public final class WorkspaceSceneStore {
     topics.send(.jumpToLive)
   }
 
+  public func retryHistoryPersistence() async {
+    await connection.retryHistoryPersistence()
+  }
+
   public func waitUntilOwned() async {
     await lifecycle.waitUntilRunning()
   }
@@ -584,6 +592,15 @@ public final class ConnectionStore {
     )
     guard effect == .retry else { return }
     await feed.retry()
+  }
+
+  func retryHistoryPersistence() async {
+    let effect = ConnectionFeature.reduce(
+      state: &state,
+      intent: .retryHistoryPersistence
+    )
+    guard effect == .retryHistoryPersistence else { return }
+    await feed.retryHistoryPersistence()
   }
 
   func cancel() async {

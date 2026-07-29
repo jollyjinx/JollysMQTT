@@ -384,6 +384,15 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     await feed.retry()
   }
 
+  fileprivate func retryHistoryPersistence(
+    leaseID: UUID
+  ) async {
+    guard let profileID = leaseProfiles[leaseID],
+      let feed = entries[profileID]?.feed
+    else { return }
+    await feed.retryHistoryPersistence()
+  }
+
   fileprivate func reconnectAll(leaseID: UUID) async {
     guard let profileID = leaseProfiles[leaseID],
       var entry = entries[profileID],
@@ -652,7 +661,8 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
       lastFailure: entry.snapshot.lastFailure,
       retry: entry.snapshot.retry,
       generation: generation,
-      sharedResources: entry.resources
+      sharedResources: entry.resources,
+      diagnostic: entry.snapshot.diagnostic
     )
   }
 
@@ -830,6 +840,11 @@ public actor BrokerFeedRegistryLease: BrokerFeedLeaseControlling {
       configuration: configuration,
       sceneIsActive: sceneIsActive
     )
+  }
+
+  public func retryHistoryPersistence() async {
+    guard !isReleased else { return }
+    await registry.retryHistoryPersistence(leaseID: id)
   }
 
   public func cancel() async {

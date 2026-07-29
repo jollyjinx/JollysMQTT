@@ -32,6 +32,25 @@ public actor SQLiteBrokerHistoryWriter: BrokerHistoryWriting {
     )
   }
 
+  public func recordCoverageGap(
+    _ gap: BrokerHistoryCoverageGap
+  ) async throws {
+    guard !isShutdown else { return }
+    let store = try await openStore()
+    _ = try await store.recordCoverageGap(
+      HistoryCoverageGapInput(
+        historySourceID: gap.historySourceID,
+        connectionEpoch: gap.connectionEpoch?.rawValue,
+        startedAtMicroseconds: gap.startedAtMicroseconds,
+        endedAtMicroseconds: gap.endedAtMicroseconds,
+        minimumMissingMessageCount:
+          gap.minimumMissingMessageCount,
+        reason: gap.reason,
+        isOpenEnded: gap.isOpenEnded
+      )
+    )
+  }
+
   public func shutdown() async throws {
     guard !isShutdown else { return }
     isShutdown = true

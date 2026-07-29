@@ -1,8 +1,9 @@
 import CSQLite
 import Foundation
+import JollysMQTTCore
 
 public actor SQLiteHistoryStore {
-  public static let currentSchemaVersion = 2
+  public static let currentSchemaVersion = 3
 
   private let databaseURL: URL
   private let databaseHandle: UInt
@@ -217,6 +218,206 @@ public actor SQLiteHistoryStore {
         return messages
       default:
         throw sqliteError(code: result, operation: "read newest history")
+      }
+    }
+  }
+
+  public func recordCoverageGap(
+    _ gap: HistoryCoverageGapInput
+  ) throws -> HistoryCoverageGapAppendResult {
+    guard !gap.historySourceID.isEmpty,
+      !gap.historySourceID.contains("\0"),
+      gap.minimumMissingMessageCount > 0,
+      gap.isOpenEnded
+        ? gap.endedAtMicroseconds == nil
+        : gap.endedAtMicroseconds != nil,
+      gap.endedAtMicroseconds.map({
+        $0 >= gap.startedAtMicroseconds
+      }) ?? true
+    else {
+      throw HistoryStorageError.invalidCoverageGap
+    }
+    let statement = try prepare(
+      """
+      INSERT INTO history_coverage_gaps(
+          history_source_id,
+          connection_epoch,
+          started_at_microseconds,
+          ended_at_microseconds,
+          minimum_missing_message_count,
+          reason,
+          is_open_ended
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      """,
+      operation: "prepare coverage-gap insert"
+    )
+    defer { sqlite3_finalize(statement) }
+    try bind(
+      gap.historySourceID,
+      to: 1,
+      in: statement,
+      operation: "bind gap history source"
+    )
+    if let epoch = gap.connectionEpoch {
+      try bind(
+        epoch.uuidString.lowercased(),
+        to: 2,
+        in: statement,
+        operation: "bind gap connection epoch"
+      )
+    } else {
+      try check(
+        sqlite3_bind_null(statement, 2),
+        operation: "bind absent gap connection epoch"
+      )
+    }
+    try check(
+      sqlite3_bind_int64(statement, 3, gap.startedAtMicroseconds),
+      operation: "bind gap start"
+    )
+    if let endedAtMicroseconds = gap.endedAtMicroseconds {
+      try check(
+        sqlite3_bind_int64(statement, 4, endedAtMicroseconds),
+        operation: "bind gap end"
+      )
+    } else {
+      try check(
+        sqlite3_bind_null(statement, 4),
+        operation: "bind absent gap end"
+      )
+    }
+    try check(
+      sqlite3_bind_int64(
+        statement,
+        5,
+        Int64(gap.minimumMissingMessageCount)
+      ),
+      operation: "bind gap missing count"
+    )
+    try bind(
+      gap.reason.rawValue,
+      to: 6,
+      in: statement,
+      operation: "bind gap reason"
+    )
+    try check(
+      sqlite3_bind_int(statement, 7, gap.isOpenEnded ? 1 : 0),
+      operation: "bind gap open-ended state"
+    )
+    try expectDone(
+      sqlite3_step(statement),
+      operation: "insert coverage gap"
+    )
+    return HistoryCoverageGapAppendResult(
+      durableOrder: sqlite3_last_insert_rowid(database)
+    )
+  }
+
+  public func coverageGaps(
+    historySourceID: String,
+    overlapping interval: ClosedRange<Int64>? = nil,
+    limit: Int = 1_000
+  ) throws -> [StoredHistoryCoverageGap] {
+    guard limit >= 0, limit <= Int(Int32.max) else {
+      throw HistoryStorageError.invalidLimit(limit)
+    }
+    guard limit > 0 else { return [] }
+    let statement = try prepare(
+      """
+      SELECT
+          id,
+          history_source_id,
+          connection_epoch,
+          started_at_microseconds,
+          ended_at_microseconds,
+          minimum_missing_message_count,
+          reason,
+          is_open_ended
+      FROM history_coverage_gaps
+      WHERE history_source_id = ?
+        AND started_at_microseconds <= ?
+        AND (
+            ended_at_microseconds IS NULL
+            OR ended_at_microseconds >= ?
+        )
+      ORDER BY id ASC
+      LIMIT ?
+      """,
+      operation: "prepare coverage-gap query"
+    )
+    defer { sqlite3_finalize(statement) }
+    try bind(
+      historySourceID,
+      to: 1,
+      in: statement,
+      operation: "bind gap query history source"
+    )
+    try check(
+      sqlite3_bind_int64(
+        statement,
+        2,
+        interval?.upperBound ?? Int64.max
+      ),
+      operation: "bind gap query end"
+    )
+    try check(
+      sqlite3_bind_int64(
+        statement,
+        3,
+        interval?.lowerBound ?? Int64.min
+      ),
+      operation: "bind gap query start"
+    )
+    try check(
+      sqlite3_bind_int64(statement, 4, Int64(limit)),
+      operation: "bind gap query limit"
+    )
+
+    var gaps: [StoredHistoryCoverageGap] = []
+    while true {
+      let result = sqlite3_step(statement)
+      switch result {
+      case SQLITE_ROW:
+        let reasonText = textColumn(statement, index: 6)
+        guard
+          let reason = BrokerHistoryCoverageGapReason(
+            rawValue: reasonText
+          )
+        else {
+          throw HistoryStorageError.sqlite(
+            code: SQLITE_CORRUPT,
+            operation: "read coverage gap",
+            message: "Coverage gap reason is invalid."
+          )
+        }
+        gaps.append(
+          StoredHistoryCoverageGap(
+            durableOrder: sqlite3_column_int64(statement, 0),
+            historySourceID: textColumn(statement, index: 1),
+            connectionEpoch: optionalTextColumn(statement, index: 2)
+              .flatMap(UUID.init(uuidString:)),
+            startedAtMicroseconds: sqlite3_column_int64(
+              statement,
+              3
+            ),
+            endedAtMicroseconds:
+              sqlite3_column_type(statement, 4) == SQLITE_NULL
+              ? nil : sqlite3_column_int64(statement, 4),
+            minimumMissingMessageCount: Int(
+              sqlite3_column_int64(statement, 5)
+            ),
+            reason: reason,
+            isOpenEnded: sqlite3_column_int(statement, 7) != 0
+          )
+        )
+      case SQLITE_DONE:
+        return gaps
+      default:
+        throw sqliteError(
+          code: result,
+          operation: "read coverage gaps"
+        )
       }
     }
   }
@@ -575,6 +776,9 @@ public actor SQLiteHistoryStore {
       )
       if version == 1 {
         try migrateSchemaVersionOneToTwo()
+        try migrateSchemaVersionTwoToThree()
+      } else if version == 2 {
+        try migrateSchemaVersionTwoToThree()
       } else if version != Self.currentSchemaVersion {
         throw HistoryStorageError.sqlite(
           code: SQLITE_ERROR,
@@ -638,6 +842,7 @@ public actor SQLiteHistoryStore {
       """,
       operation: "create history index"
     )
+    try createCoverageGapSchema()
     try execute(
       "INSERT INTO schema_version(singleton, version) VALUES (1, \(Self.currentSchemaVersion))",
       operation: "record schema version"
@@ -664,6 +869,64 @@ public actor SQLiteHistoryStore {
       try? execute("ROLLBACK", operation: "rollback schema version two migration")
       throw error
     }
+  }
+
+  private func migrateSchemaVersionTwoToThree() throws {
+    try execute(
+      "BEGIN IMMEDIATE",
+      operation: "begin schema version three migration"
+    )
+    do {
+      try createCoverageGapSchema()
+      try execute(
+        "UPDATE schema_version SET version = 3 WHERE singleton = 1",
+        operation: "record schema version three"
+      )
+      try execute(
+        "COMMIT",
+        operation: "commit schema version three migration"
+      )
+    } catch {
+      try? execute(
+        "ROLLBACK",
+        operation: "rollback schema version three migration"
+      )
+      throw error
+    }
+  }
+
+  private func createCoverageGapSchema() throws {
+    try execute(
+      """
+      CREATE TABLE history_coverage_gaps (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          history_source_id TEXT NOT NULL,
+          connection_epoch TEXT,
+          started_at_microseconds INTEGER NOT NULL,
+          ended_at_microseconds INTEGER,
+          minimum_missing_message_count INTEGER NOT NULL
+              CHECK (minimum_missing_message_count > 0),
+          reason TEXT NOT NULL,
+          is_open_ended INTEGER NOT NULL CHECK (is_open_ended IN (0, 1)),
+          CHECK (
+              ended_at_microseconds IS NULL
+              OR ended_at_microseconds >= started_at_microseconds
+          )
+      )
+      """,
+      operation: "create coverage gaps table"
+    )
+    try execute(
+      """
+      CREATE INDEX history_coverage_gaps_source_time
+      ON history_coverage_gaps(
+          history_source_id,
+          started_at_microseconds,
+          id
+      )
+      """,
+      operation: "create coverage gaps index"
+    )
   }
 
   private func resolveTopicID(

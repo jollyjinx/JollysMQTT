@@ -1,5 +1,76 @@
 import Foundation
 
+public enum BrokerFeedDiagnosticCategory:
+  String,
+  Equatable,
+  Sendable
+{
+  case dns
+  case tcp
+  case tls
+  case connack
+  case suback
+  case localOverload
+  case storage
+  case cancellation
+  case configuration
+  case credentials
+  case protocolFailure
+}
+
+public enum BrokerFeedDiagnosticCode:
+  String,
+  Equatable,
+  Sendable
+{
+  case nameResolutionFailed
+  case networkUnavailable
+  case connectionFailed
+  case brokerUnavailable
+  case authenticationRejected
+  case trustRejected
+  case invalidConfiguration
+  case subscriptionRejected
+  case localIngressOverload
+  case credentialUnavailable
+  case sessionAlreadyInUse
+  case fixedClientIDConflict
+  case protocolFailure
+  case payloadTooLarge
+  case historyPersistenceFailed
+  case cancelled
+}
+
+public struct BrokerFeedDiagnostic:
+  Equatable,
+  Sendable,
+  CustomStringConvertible
+{
+  public let category: BrokerFeedDiagnosticCategory
+  public let code: BrokerFeedDiagnosticCode
+
+  public init(
+    category: BrokerFeedDiagnosticCategory,
+    code: BrokerFeedDiagnosticCode
+  ) {
+    self.category = category
+    self.code = code
+  }
+
+  public static let storageFailure = BrokerFeedDiagnostic(
+    category: .storage,
+    code: .historyPersistenceFailed
+  )
+  public static let cancellation = BrokerFeedDiagnostic(
+    category: .cancellation,
+    code: .cancelled
+  )
+
+  public var description: String {
+    "\(category.rawValue):\(code.rawValue)"
+  }
+}
+
 public enum BrokerFeedFailure: Error, Equatable, Sendable {
   case dnsResolutionFailed
   case networkUnavailable
@@ -34,6 +105,81 @@ public enum BrokerFeedFailure: Error, Equatable, Sendable {
       .protocolFailure,
       .payloadTooLarge:
       false
+    }
+  }
+
+  public var diagnostic: BrokerFeedDiagnostic {
+    switch self {
+    case .dnsResolutionFailed:
+      BrokerFeedDiagnostic(
+        category: .dns,
+        code: .nameResolutionFailed
+      )
+    case .networkUnavailable:
+      BrokerFeedDiagnostic(
+        category: .tcp,
+        code: .networkUnavailable
+      )
+    case .transportUnavailable:
+      BrokerFeedDiagnostic(
+        category: .tcp,
+        code: .connectionFailed
+      )
+    case .brokerUnavailable:
+      BrokerFeedDiagnostic(
+        category: .connack,
+        code: .brokerUnavailable
+      )
+    case .authenticationRejected:
+      BrokerFeedDiagnostic(
+        category: .connack,
+        code: .authenticationRejected
+      )
+    case .trustRejected:
+      BrokerFeedDiagnostic(
+        category: .tls,
+        code: .trustRejected
+      )
+    case .invalidConfiguration:
+      BrokerFeedDiagnostic(
+        category: .configuration,
+        code: .invalidConfiguration
+      )
+    case .subscriptionRejected:
+      BrokerFeedDiagnostic(
+        category: .suback,
+        code: .subscriptionRejected
+      )
+    case .localOverload:
+      BrokerFeedDiagnostic(
+        category: .localOverload,
+        code: .localIngressOverload
+      )
+    case .credentialUnavailable:
+      BrokerFeedDiagnostic(
+        category: .credentials,
+        code: .credentialUnavailable
+      )
+    case .sessionAlreadyInUse:
+      BrokerFeedDiagnostic(
+        category: .protocolFailure,
+        code: .sessionAlreadyInUse
+      )
+    case .fixedClientIDConflict:
+      BrokerFeedDiagnostic(
+        category: .configuration,
+        code: .fixedClientIDConflict
+      )
+    case .protocolFailure:
+      BrokerFeedDiagnostic(
+        category: .protocolFailure,
+        code: .protocolFailure
+      )
+    case .payloadTooLarge:
+      BrokerFeedDiagnostic(
+        category: .configuration,
+        code: .payloadTooLarge
+      )
     }
   }
 }
@@ -76,19 +222,22 @@ public struct BrokerFeedSnapshot: Equatable, Sendable {
   public let retry: BrokerFeedRetrySchedule?
   public let generation: BrokerFeedGenerationState
   public let sharedResources: BrokerFeedSharedResourceIdentity?
+  public let diagnostic: BrokerFeedDiagnostic?
 
   public init(
     phase: BrokerFeedPhase,
     lastFailure: BrokerFeedFailure? = nil,
     retry: BrokerFeedRetrySchedule? = nil,
     generation: BrokerFeedGenerationState = .current,
-    sharedResources: BrokerFeedSharedResourceIdentity? = nil
+    sharedResources: BrokerFeedSharedResourceIdentity? = nil,
+    diagnostic: BrokerFeedDiagnostic? = nil
   ) {
     self.phase = phase
     self.lastFailure = lastFailure
     self.retry = retry
     self.generation = generation
     self.sharedResources = sharedResources
+    self.diagnostic = diagnostic ?? lastFailure?.diagnostic
   }
 
   public static let idle = BrokerFeedSnapshot(phase: .idle)
@@ -227,11 +376,14 @@ public protocol BrokerFeedAttempting: Sendable {
   ) async throws
 
   func closeActiveConnection() async throws
+  func retryHistoryPersistence() async -> Bool
   func shutdownOwnedWork() async throws
   func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
 }
 
 extension BrokerFeedAttempting {
+  public func retryHistoryPersistence() async -> Bool { false }
+
   public func shutdownOwnedWork() async throws {}
 
   public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
@@ -294,6 +446,7 @@ public protocol BrokerFeedLeaseControlling: Sendable {
   func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
   func connect(_ configuration: BrokerFeedConfiguration) async
   func retry() async
+  func retryHistoryPersistence() async
   func cancel() async
   func setSceneActive(_ isActive: Bool) async
   func reconnectAllToApply() async
@@ -301,6 +454,8 @@ public protocol BrokerFeedLeaseControlling: Sendable {
 }
 
 extension BrokerFeedLeaseControlling {
+  public func retryHistoryPersistence() async {}
+
   public func reconnectAllToApply() async {}
 
   public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
@@ -380,6 +535,10 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
       return
     }
     launch()
+  }
+
+  public func retryHistoryPersistence() async {
+    _ = await attempt.retryHistoryPersistence()
   }
 
   public func cancel() async {
@@ -568,7 +727,12 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
     generation &+= 1
 
     if task != nil {
-      publish(BrokerFeedSnapshot(phase: .disconnecting))
+      publish(
+        BrokerFeedSnapshot(
+          phase: .disconnecting,
+          diagnostic: .cancellation
+        )
+      )
     }
     task?.cancel()
     if task != nil {
@@ -637,6 +801,7 @@ public enum ConnectionFeature {
 
   public enum Intent: Equatable, Sendable {
     case retry
+    case retryHistoryPersistence
     case cancel
     case applyLater
     case reconnectAllToApply
@@ -649,6 +814,7 @@ public enum ConnectionFeature {
   public enum Effect: Equatable, Sendable {
     case none
     case retry
+    case retryHistoryPersistence
     case cancel
     case reconnectAllToApply
   }
@@ -660,6 +826,8 @@ public enum ConnectionFeature {
     switch intent {
     case .retry:
       return .retry
+    case .retryHistoryPersistence:
+      return .retryHistoryPersistence
     case .cancel:
       return .cancel
     case .applyLater:

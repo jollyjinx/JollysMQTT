@@ -385,6 +385,46 @@ struct TopicOutlineFeatureTests {
     #expect(child.payloadSummary?.kind == .json)
   }
 
+  @Test("Stale cached values are labeled and cannot satisfy current-value search")
+  func staleValuesAreNotPresentedAsCurrent() async throws {
+    let ingestion = makeIngestion(brokerID: UUID())
+    let firstEpoch = ConnectionEpochID()
+    await ingestion.beginConnectionEpoch(firstEpoch)
+    await ingestion.ingest(
+      .outlineFixture(
+        epoch: firstEpoch,
+        ordinal: 1,
+        topic: "cached",
+        payload: Data("private-old-value".utf8),
+        qos: .exactlyOnce,
+        retained: true,
+        receivedAt: 1
+      )
+    )
+    _ = await ingestion.flush()
+    await ingestion.beginConnectionEpoch(ConnectionEpochID())
+    let snapshot = await ingestion.flush()
+    var state = TopicOutlineFeature.State()
+
+    TopicOutlineFeature.reduce(
+      state: &state,
+      action: .snapshotReceived(snapshot)
+    )
+    let row = try #require(state.rows.first)
+    #expect(row.isStale)
+    #expect(row.hasValue)
+    #expect(row.payloadSummary == nil)
+    #expect(row.qos == nil)
+    #expect(row.retained == false)
+    #expect(row.latestOrdinal == nil)
+
+    TopicOutlineFeature.reduce(
+      state: &state,
+      intent: .setSearchText("private-old-value")
+    )
+    #expect(state.rows.isEmpty)
+  }
+
   @Test("Sort modes use deterministic identity-preserving tie breakers")
   func deterministicSortModes() async throws {
     let brokerID = UUID()

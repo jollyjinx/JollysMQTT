@@ -855,6 +855,8 @@ private actor RegistryIngestionHistoryWriter: BrokerHistoryWriting {
     await recorder.record("append:\(messages.count)")
   }
 
+  func recordCoverageGap(_ gap: BrokerHistoryCoverageGap) async throws {}
+
   func shutdown() async {
     await recorder.record("shutdown")
   }
