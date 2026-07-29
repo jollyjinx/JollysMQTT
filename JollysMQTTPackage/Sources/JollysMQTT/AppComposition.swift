@@ -227,7 +227,8 @@ public struct JollysMQTTAppDependencies: Sendable {
     return JollysMQTTAppDependencies(
       profileRepository: LocalFirstProfileRepository(
         local: LocalProfileRepository(
-          fileURL: root.appending(path: "profiles.json")
+          fileURL: root.appending(path: "profiles.json"),
+          installationID: installationID
         )
       ),
       credentialRepository: CredentialRepository.shared,

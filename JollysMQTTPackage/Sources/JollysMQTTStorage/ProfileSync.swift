@@ -35,12 +35,17 @@ public enum ProfileSyncStatus: Equatable, Sendable {
 }
 
 public struct ProfileSyncExchange: Equatable, Sendable {
-  /// `nil` means that the engine fetched no profile changes. An empty array is
-  /// reserved for a later, explicit delete/tombstone merge.
   public let remoteProfiles: [RankedBrokerProfile]?
+  public let remoteRecords: [ProfileReplicaRecord]?
 
   public init(remoteProfiles: [RankedBrokerProfile]?) {
     self.remoteProfiles = remoteProfiles
+    self.remoteRecords = nil
+  }
+
+  public init(remoteRecords: [ProfileReplicaRecord]?) {
+    self.remoteRecords = remoteRecords
+    self.remoteProfiles = nil
   }
 
   public static let noChanges = ProfileSyncExchange(remoteProfiles: nil)
@@ -49,6 +54,7 @@ public struct ProfileSyncExchange: Equatable, Sendable {
 public struct ProfileSyncSnapshot: Equatable, Sendable {
   public let generation: UInt64
   public let profiles: [RankedBrokerProfile]
+  public let replicaRecords: [ProfileReplicaRecord]?
 
   public init(
     generation: UInt64,
@@ -56,6 +62,16 @@ public struct ProfileSyncSnapshot: Equatable, Sendable {
   ) {
     self.generation = generation
     self.profiles = profiles
+    self.replicaRecords = nil
+  }
+
+  public init(
+    generation: UInt64,
+    replica: ProfileReplica
+  ) {
+    self.generation = generation
+    self.profiles = replica.visibleProfiles
+    self.replicaRecords = replica.records
   }
 }
 
@@ -122,8 +138,11 @@ public actor LocalFirstProfileRepository:
 
   private var localMutationGeneration: UInt64 = 0
   private var latestRequestedMutationGeneration: UInt64 = 0
+  private var snapshotGeneration: UInt64 = 0
   private var latestSyncAttempt: UInt64 = 0
   private var persistenceTail: Task<ProfileSyncStatus, any Error>?
+  private var persistenceTailID: UInt64?
+  private var nextPersistenceOperationID: UInt64 = 0
   private var currentStatus: ProfileSyncStatus
 
   public init(
@@ -139,14 +158,13 @@ public actor LocalFirstProfileRepository:
     if let persistenceTail {
       _ = try? await persistenceTail.value
     }
-    let profiles = try await local.load()
-    currentStatus = await sync.stageLocalProfiles(
-      ProfileSyncSnapshot(
-        generation: localMutationGeneration,
-        profiles: profiles
-      )
+    let snapshot = try await makeSnapshot(
+      generation: snapshotGeneration
     )
-    return profiles
+    currentStatus = await sync.stageLocalProfiles(
+      snapshot
+    )
+    return snapshot.profiles
   }
 
   public func replaceAll(
@@ -154,22 +172,37 @@ public actor LocalFirstProfileRepository:
   ) async throws {
     latestRequestedMutationGeneration &+= 1
     let requestedGeneration = latestRequestedMutationGeneration
+    snapshotGeneration &+= 1
+    let requestedSnapshotGeneration = snapshotGeneration
     let predecessor = persistenceTail
     let local = local
     let sync = sync
-    let snapshot = ProfileSyncSnapshot(
-      generation: requestedGeneration,
-      profiles: profiles
-    )
     let operation = Task<ProfileSyncStatus, any Error> {
       if let predecessor {
         _ = try? await predecessor.value
       }
       try Task.checkCancellation()
       try await local.replaceAll(profiles)
+      let snapshot: ProfileSyncSnapshot
+      if let replicaLocal =
+        local as? any ProfileReplicaRepositoryProtocol
+      {
+        snapshot = ProfileSyncSnapshot(
+          generation: requestedSnapshotGeneration,
+          replica: try await replicaLocal.loadReplica()
+        )
+      } else {
+        snapshot = ProfileSyncSnapshot(
+          generation: requestedSnapshotGeneration,
+          profiles: profiles
+        )
+      }
       return await sync.stageLocalProfiles(snapshot)
     }
+    nextPersistenceOperationID &+= 1
+    let operationID = nextPersistenceOperationID
     persistenceTail = operation
+    persistenceTailID = operationID
 
     let stagedStatus: ProfileSyncStatus
     do {
@@ -179,10 +212,11 @@ public actor LocalFirstProfileRepository:
         operation.cancel()
       }
     } catch {
-      if requestedGeneration == latestRequestedMutationGeneration {
+      if persistenceTailID == operationID {
         latestRequestedMutationGeneration =
           localMutationGeneration
         persistenceTail = nil
+        persistenceTailID = nil
       }
       throw error
     }
@@ -191,9 +225,10 @@ public actor LocalFirstProfileRepository:
       localMutationGeneration,
       requestedGeneration
     )
-    if requestedGeneration == latestRequestedMutationGeneration {
+    if persistenceTailID == operationID {
       currentStatus = stagedStatus
       persistenceTail = nil
+      persistenceTailID = nil
     }
   }
 
@@ -215,15 +250,12 @@ public actor LocalFirstProfileRepository:
       _ = try? await persistenceTail.value
     }
 
-    let localProfiles = try await local.load()
     let requestedGeneration = localMutationGeneration
-    currentStatus = .syncing
-    _ = await sync.stageLocalProfiles(
-      ProfileSyncSnapshot(
-        generation: requestedGeneration,
-        profiles: localProfiles
-      )
+    let localSnapshot = try await makeSnapshot(
+      generation: snapshotGeneration
     )
+    currentStatus = .syncing
+    _ = await sync.stageLocalProfiles(localSnapshot)
 
     let exchange: ProfileSyncExchange
     do {
@@ -249,19 +281,45 @@ public actor LocalFirstProfileRepository:
       return currentStatus
     }
 
+    if let remoteRecords = exchange.remoteRecords,
+      let replicaLocal =
+        local as? any ProfileReplicaRepositoryProtocol
+    {
+      snapshotGeneration &+= 1
+      let remoteSnapshotGeneration = snapshotGeneration
+      do {
+        currentStatus = try await applyRemoteRecords(
+          remoteRecords,
+          to: replicaLocal,
+          snapshotGeneration: remoteSnapshotGeneration,
+          syncAttempt: syncAttempt
+        )
+      } catch is ProfileReplicaError {
+        currentStatus = .failed(
+          ProfileSyncFailure(
+            kind: .invalidRemoteProfile,
+            isRetryable: false
+          )
+        )
+      } catch let failure as ProfileSyncFailure {
+        currentStatus = .failed(failure)
+      }
+      try Task.checkCancellation()
+      return currentStatus
+    }
+
     try Task.checkCancellation()
     guard syncAttempt == latestSyncAttempt,
       requestedGeneration == localMutationGeneration
     else {
-      let newest = try await local.load()
+      let newest = try await makeSnapshot(
+        generation: snapshotGeneration
+      )
       guard syncAttempt == latestSyncAttempt else {
         return currentStatus
       }
       currentStatus = await sync.stageLocalProfiles(
-        ProfileSyncSnapshot(
-          generation: localMutationGeneration,
-          profiles: newest
-        )
+        newest
       )
       return currentStatus
     }
@@ -300,6 +358,75 @@ public actor LocalFirstProfileRepository:
     await sync.cancel()
   }
 
+  private func makeSnapshot(
+    generation: UInt64
+  ) async throws -> ProfileSyncSnapshot {
+    if let replicaLocal =
+      local as? any ProfileReplicaRepositoryProtocol
+    {
+      return ProfileSyncSnapshot(
+        generation: generation,
+        replica: try await replicaLocal.loadReplica()
+      )
+    }
+    return ProfileSyncSnapshot(
+      generation: generation,
+      profiles: try await local.load()
+    )
+  }
+
+  private func applyRemoteRecords(
+    _ records: [ProfileReplicaRecord],
+    to replicaLocal: any ProfileReplicaRepositoryProtocol,
+    snapshotGeneration remoteSnapshotGeneration: UInt64,
+    syncAttempt: UInt64
+  ) async throws -> ProfileSyncStatus {
+    let remote: ProfileReplica
+    do {
+      remote = try ProfileReplica(records: records)
+    } catch {
+      let failure = ProfileSyncFailure(
+        kind: .invalidRemoteProfile,
+        isRetryable: false
+      )
+      throw failure
+    }
+
+    let predecessor = persistenceTail
+    let sync = sync
+    let operation = Task<ProfileSyncStatus, any Error> {
+      if let predecessor {
+        _ = try? await predecessor.value
+      }
+      let localReplica = try await replicaLocal.loadReplica()
+      let merged = try localReplica.merging(remote)
+      if merged != localReplica {
+        try await replicaLocal.replaceReplica(merged)
+      }
+      _ = await sync.stageLocalProfiles(
+        ProfileSyncSnapshot(
+          generation: remoteSnapshotGeneration,
+          replica: merged
+        )
+      )
+      return await sync.status()
+    }
+    nextPersistenceOperationID &+= 1
+    let operationID = nextPersistenceOperationID
+    persistenceTail = operation
+    persistenceTailID = operationID
+
+    let status = try await operation.value
+    if persistenceTailID == operationID {
+      persistenceTail = nil
+      persistenceTailID = nil
+    }
+    guard syncAttempt == latestSyncAttempt else {
+      return currentStatus
+    }
+    return status
+  }
+
   private func applyRemoteProfiles(
     _ profiles: [RankedBrokerProfile],
     expectedLocalGeneration: UInt64,
@@ -324,7 +451,10 @@ public actor LocalFirstProfileRepository:
       try await local.replaceAll(profiles)
       return await sync.status()
     }
+    nextPersistenceOperationID &+= 1
+    let operationID = nextPersistenceOperationID
     persistenceTail = operation
+    persistenceTailID = operationID
 
     let status: ProfileSyncStatus
     do {
@@ -334,18 +464,16 @@ public actor LocalFirstProfileRepository:
         operation.cancel()
       }
     } catch {
-      if expectedLocalGeneration
-        == latestRequestedMutationGeneration
-      {
+      if persistenceTailID == operationID {
         persistenceTail = nil
+        persistenceTailID = nil
       }
       throw error
     }
 
-    if expectedLocalGeneration
-      == latestRequestedMutationGeneration
-    {
+    if persistenceTailID == operationID {
       persistenceTail = nil
+      persistenceTailID = nil
     }
     guard syncAttempt == latestSyncAttempt else {
       return currentStatus

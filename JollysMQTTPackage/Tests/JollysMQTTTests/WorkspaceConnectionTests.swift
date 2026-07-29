@@ -197,7 +197,8 @@ private struct WorkspaceConnectionFixture {
       ]
     )
     profileRepository = LocalProfileRepository(
-      fileURL: directory.appending(path: "profiles.json")
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceConnectionTestInstallationID
     )
     workspaceRepository = LocalWorkspaceRepository(
       directoryURL: directory.appending(
@@ -237,6 +238,10 @@ private struct WorkspaceConnectionFixture {
     try? FileManager.default.removeItem(at: directory)
   }
 }
+
+private let workspaceConnectionTestInstallationID = UUID(
+  uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+)
 
 private final class RecordingFeedFactory: Sendable {
   private let storage = Mutex<[RecordingFeed]>([])

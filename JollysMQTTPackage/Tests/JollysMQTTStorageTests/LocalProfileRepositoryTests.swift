@@ -28,16 +28,59 @@ struct LocalProfileRepositoryTests {
       reorderRank: 10
     )
 
-    let writer = LocalProfileRepository(fileURL: fileURL)
+    let writer = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
     try await writer.replaceAll([first, second])
 
-    let relaunched = LocalProfileRepository(fileURL: fileURL)
+    let relaunched = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
     let restored = try await relaunched.load()
 
     #expect(restored == [second, first])
     let bytes = try Data(contentsOf: fileURL)
     let object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
-    #expect(object["version"] as? Int == 1)
+    #expect(object["version"] as? Int == 2)
+  }
+
+  @Test("A v1 document migrates with one receiver-independent legacy revision")
+  func migratesV1DocumentDeterministically() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let fileURL = directory.appending(path: "profiles.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let profile = RankedBrokerProfile(
+      profile: fixtureProfile(id: UUID(), name: "Legacy"),
+      reorderRank: 10
+    )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    try JSONEncoder().encode(
+      LegacyProfileDocument(version: 1, profiles: [profile])
+    ).write(to: fileURL)
+
+    let first = try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: UUID(
+        uuidString: "AAAAAAAA-0000-0000-0000-000000000000"
+      )!
+    ).loadReplica()
+    let second = try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: UUID(
+        uuidString: "BBBBBBBB-0000-0000-0000-000000000000"
+      )!
+    ).loadReplica()
+    let migrated = try #require(first.records.first)
+
+    #expect(first == second)
+    #expect(migrated.content?.revision == .legacy)
+    #expect(migrated.rank?.revision == .legacy)
   }
 
   @Test("Corrupt primary data is replaced from the last-known-good backup")
@@ -47,7 +90,10 @@ struct LocalProfileRepositoryTests {
     let fileURL = directory.appending(path: "profiles.json")
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let repository = LocalProfileRepository(fileURL: fileURL)
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
     let original = RankedBrokerProfile(
       profile: fixtureProfile(id: UUID(), name: "Known Good"),
       reorderRank: 10
@@ -60,10 +106,16 @@ struct LocalProfileRepositoryTests {
     try await repository.replaceAll([original, newer])
     try Data("{not-json".utf8).write(to: fileURL)
 
-    let recovered = try await LocalProfileRepository(fileURL: fileURL).load()
+    let recovered = try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).load()
     #expect(recovered == [original])
 
-    let restoredPrimary = try await LocalProfileRepository(fileURL: fileURL).load()
+    let restoredPrimary = try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).load()
     #expect(restoredPrimary == [original])
   }
 
@@ -78,10 +130,18 @@ struct LocalProfileRepositoryTests {
       profile: fixtureProfile(id: UUID(), name: "First"),
       reorderRank: 10
     )
-    try await LocalProfileRepository(fileURL: fileURL).replaceAll([expected])
+    try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).replaceAll([expected])
     try Data("{truncated".utf8).write(to: fileURL)
 
-    #expect(try await LocalProfileRepository(fileURL: fileURL).load() == [expected])
+    #expect(
+      try await LocalProfileRepository(
+        fileURL: fileURL,
+        installationID: stableTestInstallationID
+      ).load() == [expected]
+    )
   }
 
   @Test("File protection is reapplied after every atomic profile document replacement")
@@ -92,7 +152,11 @@ struct LocalProfileRepositoryTests {
     defer { try? FileManager.default.removeItem(at: directory) }
 
     let policy = RecordingProfileFilePolicy()
-    let repository = LocalProfileRepository(fileURL: fileURL, filePolicy: policy)
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      filePolicy: policy,
+      installationID: stableTestInstallationID
+    )
     let original = RankedBrokerProfile(
       profile: fixtureProfile(id: UUID(), name: "Original"),
       reorderRank: 10
@@ -133,10 +197,14 @@ struct LocalProfileRepositoryTests {
       profile: fixtureProfile(id: UUID(), name: "Protected"),
       reorderRank: 10
     )
-    try await LocalProfileRepository(fileURL: fileURL).replaceAll([profile])
+    try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).replaceAll([profile])
     let repository = LocalProfileRepository(
       fileURL: fileURL,
-      filePolicy: FailingProfileFilePolicy()
+      filePolicy: FailingProfileFilePolicy(),
+      installationID: stableTestInstallationID
     )
 
     await #expect(throws: ProfileFilePolicyTestError.denied) {
@@ -155,13 +223,21 @@ struct LocalProfileRepositoryTests {
       profile: fixtureProfile(id: UUID(), name: "Complete"),
       reorderRank: 10
     )
-    let repository = LocalProfileRepository(fileURL: fileURL)
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
     try await repository.replaceAll([expected])
     try Data(repeating: 0xA5, count: 4_096).write(
       to: fileURL.appendingPathExtension("interrupted-write")
     )
 
-    #expect(try await LocalProfileRepository(fileURL: fileURL).load() == [expected])
+    #expect(
+      try await LocalProfileRepository(
+        fileURL: fileURL,
+        installationID: stableTestInstallationID
+      ).load() == [expected]
+    )
   }
 
   @Test("Serialized profiles and diagnostics contain no credential schema or bytes")
@@ -175,7 +251,10 @@ struct LocalProfileRepositoryTests {
       profile: fixtureProfile(id: UUID(), name: "Private"),
       reorderRank: 10
     )
-    try await LocalProfileRepository(fileURL: fileURL).replaceAll([profile])
+    try await LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    ).replaceAll([profile])
 
     let serialized = try Data(contentsOf: fileURL)
     let backup = try Data(contentsOf: fileURL.appendingPathExtension("backup"))
@@ -201,25 +280,29 @@ struct LocalProfileRepositoryTests {
       recursiveJSONKeys(in: object) == [
         "clientIDPolicy",
         "cleanSession",
+        "content",
+        "counter",
         "exponential",
         "filter",
         "host",
         "id",
         "initialDelaySeconds",
+        "installationID",
         "isEnabled",
         "keepAliveSeconds",
         "maximumDelaySeconds",
         "name",
         "port",
-        "profile",
-        "profiles",
         "qos",
+        "rank",
         "reconnectPolicy",
-        "reorderRank",
+        "records",
+        "revision",
         "stableGenerated",
         "subscriptions",
         "transport",
         "username",
+        "value",
         "version",
       ]
     )
@@ -236,19 +319,34 @@ struct LocalProfileRepositoryTests {
       profile: fixtureProfile(id: UUID(), name: "Current"),
       reorderRank: 10
     )
-    let repository = LocalProfileRepository(fileURL: fileURL)
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: stableTestInstallationID
+    )
     try await repository.replaceAll([expected])
     var object = try #require(
       JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
     )
-    object["version"] = 2
+    object["version"] = 3
     try JSONSerialization.data(withJSONObject: object).write(to: fileURL)
 
-    await #expect(throws: LocalProfileRepositoryError.unsupportedVersion(2)) {
-      try await LocalProfileRepository(fileURL: fileURL).load()
+    await #expect(throws: LocalProfileRepositoryError.unsupportedVersion(3)) {
+      try await LocalProfileRepository(
+        fileURL: fileURL,
+        installationID: stableTestInstallationID
+      ).load()
     }
   }
 }
+
+private struct LegacyProfileDocument: Encodable {
+  let version: Int
+  let profiles: [RankedBrokerProfile]
+}
+
+private let stableTestInstallationID = UUID(
+  uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+)
 
 private actor RecordingProfileFilePolicy: ProfileFilePolicy {
   struct Application: Equatable, Sendable {

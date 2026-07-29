@@ -48,7 +48,10 @@ struct ServerListFeatureTests {
     let fileURL = directory.appending(path: "profiles.json")
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let repository = LocalProfileRepository(fileURL: fileURL)
+    let repository = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: serverListTestInstallationID
+    )
     let id = UUID()
     let store = ServerListStore(repository: repository)
     await store.send(.createProfile(id: id))
@@ -57,7 +60,10 @@ struct ServerListFeatureTests {
     await store.send(.saveEditor)
 
     let relaunched = ServerListStore(
-      repository: LocalProfileRepository(fileURL: fileURL)
+      repository: LocalProfileRepository(
+        fileURL: fileURL,
+        installationID: serverListTestInstallationID
+      )
     )
     await relaunched.send(.load)
 
@@ -909,6 +915,10 @@ struct ServerListFeatureTests {
     #expect(!String(reflecting: authentication).contains(password))
   }
 }
+
+private let serverListTestInstallationID = UUID(
+  uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+)
 
 private struct FailingProfileRepository: ProfileRepositoryProtocol {
   func load() async throws -> [RankedBrokerProfile] { [] }

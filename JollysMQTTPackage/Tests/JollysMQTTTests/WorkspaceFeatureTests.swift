@@ -283,7 +283,8 @@ struct WorkspaceFeatureTests {
     let workspaceID = WorkspaceID()
     let chart = numericChartConfiguration(brokerID: brokerID)
     let profileRepository = LocalProfileRepository(
-      fileURL: directory.appending(path: "profiles.json")
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceFeatureTestInstallationID
     )
     try await profileRepository.replaceAll([
       workspaceRankedProfile(id: brokerID, name: "Chart", rank: 1)
@@ -438,7 +439,8 @@ struct WorkspaceFeatureTests {
     )
     let dependencies = JollysMQTTAppDependencies(
       profileRepository: LocalProfileRepository(
-        fileURL: directory.appending(path: "profiles.json")
+        fileURL: directory.appending(path: "profiles.json"),
+        installationID: workspaceFeatureTestInstallationID
       ),
       workspaceRepository: workspaceRepository
     )
@@ -498,7 +500,8 @@ struct WorkspaceFeatureTests {
       .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     let profileRepository = LocalProfileRepository(
-      fileURL: directory.appending(path: "profiles.json")
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceFeatureTestInstallationID
     )
     let workspaceRepository = LocalWorkspaceRepository(
       directoryURL: directory.appending(
@@ -680,7 +683,8 @@ struct WorkspaceFeatureTests {
       reorderRank: 1_024
     )
     let profileRepository = LocalProfileRepository(
-      fileURL: directory.appending(path: "profiles.json")
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceFeatureTestInstallationID
     )
     try await profileRepository.replaceAll([profile])
     let workspaceRepository = LocalWorkspaceRepository(
@@ -760,6 +764,10 @@ struct WorkspaceFeatureTests {
     #expect(!store.persistenceErrorPresented)
   }
 }
+
+private let workspaceFeatureTestInstallationID = UUID(
+  uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+)
 
 private func numericChartConfiguration(
   brokerID: UUID

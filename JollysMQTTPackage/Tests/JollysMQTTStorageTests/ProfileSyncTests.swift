@@ -352,14 +352,20 @@ struct ProfileSyncTests {
 
     let original = rankedProfile(name: "Backup")
     let newer = rankedProfile(name: "Primary")
-    let atomic = LocalProfileRepository(fileURL: fileURL)
+    let atomic = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: profileSyncTestInstallationID
+    )
     try await atomic.replaceAll([original])
     try await atomic.replaceAll([newer])
     try Data("{corrupt".utf8).write(to: fileURL)
 
     let sync = ScriptedProfileSync()
     let repository = LocalFirstProfileRepository(
-      local: LocalProfileRepository(fileURL: fileURL),
+      local: LocalProfileRepository(
+        fileURL: fileURL,
+        installationID: profileSyncTestInstallationID
+      ),
       sync: sync
     )
 
@@ -390,6 +396,251 @@ struct ProfileSyncTests {
     _ = try await task.value
 
     #expect(await local.load() == [profile])
+  }
+
+  @Test("A local edit racing a drained record exchange preserves both edits")
+  func localEditRacingRecordExchangeConverges() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let fileURL = directory.appending(path: "profiles.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let installationA = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000A"
+    )!
+    let installationB = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000B"
+    )!
+    let first = rankedProfile(name: "First")
+    let second = rankedProfile(name: "Second")
+    let local = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: installationA
+    )
+    try await local.replaceAll([first, second])
+    let baseline = try await local.loadReplica()
+    let remote = try baseline.applyingLocalSnapshot(
+      [renamed(first, "Remote first"), second],
+      installationID: installationB
+    )
+    let sync = ScriptedProfileSync()
+    let repository = LocalFirstProfileRepository(
+      local: local,
+      sync: sync
+    )
+
+    let syncTask = Task {
+      try await repository.synchronize()
+    }
+    await sync.waitForSynchronizeCount(1)
+    try await repository.replaceAll([
+      first,
+      renamed(second, "Local second"),
+    ])
+    await sync.completeSynchronize(
+      1,
+      with: .success(
+        ProfileSyncExchange(remoteRecords: remote.records)
+      )
+    )
+    _ = try await syncTask.value
+
+    let visible = try await repository.load()
+    #expect(
+      Set(visible.map(\.profile.name))
+        == ["Remote first", "Local second"]
+    )
+    let staged = await sync.stagedSnapshots()
+    #expect(staged.last?.replicaRecords != nil)
+    #expect(
+      Set(staged.last?.profiles.map(\.profile.name) ?? [])
+        == ["Remote first", "Local second"]
+    )
+  }
+
+  @Test("An older record exchange completing last is still merged")
+  func olderRecordExchangeIsNotDiscarded() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let fileURL = directory.appending(path: "profiles.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let installationA = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000A"
+    )!
+    let installationB = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000B"
+    )!
+    let first = rankedProfile(name: "First")
+    let second = rankedProfile(name: "Second")
+    let local = LocalProfileRepository(
+      fileURL: fileURL,
+      installationID: installationA
+    )
+    try await local.replaceAll([first, second])
+    let baseline = try await local.loadReplica()
+    let olderRemote = try baseline.applyingLocalSnapshot(
+      [renamed(first, "Older completion"), second],
+      installationID: installationA
+    )
+    let newerRemote = try baseline.applyingLocalSnapshot(
+      [first, renamed(second, "Newer completion")],
+      installationID: installationB
+    )
+    let sync = ScriptedProfileSync()
+    let repository = LocalFirstProfileRepository(
+      local: local,
+      sync: sync
+    )
+
+    let olderTask = Task {
+      try await repository.synchronize()
+    }
+    await sync.waitForSynchronizeCount(1)
+    let newerTask = Task {
+      try await repository.synchronize()
+    }
+    await sync.waitForSynchronizeCount(2)
+    await sync.completeSynchronize(
+      2,
+      with: .success(
+        ProfileSyncExchange(remoteRecords: newerRemote.records)
+      )
+    )
+    _ = try await newerTask.value
+    await sync.completeSynchronize(
+      1,
+      with: .success(
+        ProfileSyncExchange(remoteRecords: olderRemote.records)
+      )
+    )
+    _ = try await olderTask.value
+
+    #expect(
+      Set(try await repository.load().map(\.profile.name))
+        == ["Older completion", "Newer completion"]
+    )
+  }
+
+  @Test("Local and record-merge persistence tails remain one FIFO chain")
+  func recordMergeDoesNotDetachPersistenceTail() async throws {
+    let installationA = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000A"
+    )!
+    let installationB = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000B"
+    )!
+    let first = rankedProfile(name: "First")
+    let second = rankedProfile(name: "Second")
+    let initial = try ProfileReplica().applyingLocalSnapshot(
+      [first, second],
+      installationID: installationA
+    )
+    let remote = try initial.applyingLocalSnapshot(
+      [renamed(first, "Remote middle"), second],
+      installationID: installationB
+    )
+    let local = GatedReplicaRepository(
+      replica: initial,
+      installationID: installationA,
+      blockedWriteNumbers: [1, 2]
+    )
+    let sync = ScriptedProfileSync()
+    let repository = LocalFirstProfileRepository(
+      local: local,
+      sync: sync
+    )
+
+    let syncTask = Task {
+      try await repository.synchronize()
+    }
+    await sync.waitForSynchronizeCount(1)
+    let predecessor = Task {
+      try await repository.replaceAll([
+        first,
+        renamed(second, "Local predecessor"),
+      ])
+    }
+    await local.waitForWriteCount(1)
+    await sync.completeSynchronize(
+      1,
+      with: .success(
+        ProfileSyncExchange(remoteRecords: remote.records)
+      )
+    )
+    await local.releaseWrite(1)
+    try await predecessor.value
+    await local.waitForWriteCount(2)
+
+    let successor = Task {
+      try await repository.replaceAll([
+        renamed(first, "Remote middle"),
+        renamed(second, "Local successor"),
+      ])
+    }
+    await local.releaseWrite(2)
+    _ = try await syncTask.value
+    try await successor.value
+
+    let writes = await local.committedReplicas()
+    #expect(writes.count == 3)
+    #expect(
+      Set(writes[1].visibleProfiles.map(\.profile.name))
+        == ["Remote middle", "Local predecessor"]
+    )
+    #expect(
+      Set(writes[2].visibleProfiles.map(\.profile.name))
+        == ["Remote middle", "Local successor"]
+    )
+  }
+
+  @Test("Cancellation after a record exchange cannot discard the drained delta")
+  func cancellationAfterRecordExchangeStillCommits() async throws {
+    let installationA = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000A"
+    )!
+    let installationB = UUID(
+      uuidString: "00000000-0000-0000-0000-00000000000B"
+    )!
+    let profile = rankedProfile(name: "Initial")
+    let initial = try ProfileReplica().applyingLocalSnapshot(
+      [profile],
+      installationID: installationA
+    )
+    let remote = try initial.applyingLocalSnapshot(
+      [renamed(profile, "Fetched before cancellation")],
+      installationID: installationB
+    )
+    let local = GatedReplicaRepository(
+      replica: initial,
+      installationID: installationA,
+      blockedWriteNumbers: [1]
+    )
+    let sync = ScriptedProfileSync()
+    let repository = LocalFirstProfileRepository(
+      local: local,
+      sync: sync
+    )
+
+    let task = Task {
+      try await repository.synchronize()
+    }
+    await sync.waitForSynchronizeCount(1)
+    await sync.completeSynchronize(
+      1,
+      with: .success(
+        ProfileSyncExchange(remoteRecords: remote.records)
+      )
+    )
+    await local.waitForWriteCount(1)
+    task.cancel()
+    await local.releaseWrite(1)
+
+    await #expect(throws: CancellationError.self) {
+      try await task.value
+    }
+    #expect(
+      await local.load().map(\.profile.name)
+        == ["Fetched before cancellation"]
+    )
   }
 }
 
@@ -616,6 +867,67 @@ struct ProfileSyncStateStoreTests {
       #expect(try codec.decode(record) == profile)
     }
 
+    @Test("A v2 tombstone round-trips as an encrypted durable record")
+    func tombstoneRoundTrips() throws {
+      let id = UUID(
+        uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+      )!
+      let revision = ProfileLogicalRevision(
+        counter: 42,
+        installationID: UUID(
+          uuidString: "11111111-2222-3333-4444-555555555555"
+        )!
+      )
+      let tombstone = ProfileReplicaRecord(
+        id: id,
+        content: nil,
+        rank: nil,
+        tombstone: revision
+      )
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles",
+        recordType: "EncryptedBrokerProfile"
+      )
+
+      let record = try codec.encodeReplicaRecord(tombstone)
+
+      #expect(record.recordID.recordName == id.uuidString.lowercased())
+      #expect(try codec.decodeReplicaRecord(record) == tombstone)
+      #expect(record[CloudKitProfileRecordCodec.encryptedPayloadKey] == nil)
+    }
+
+    @Test("A v1 encrypted envelope gets the receiver-independent legacy revision")
+    func v1EnvelopeMigratesDeterministically() throws {
+      struct LegacyEnvelope: Encodable {
+        let version: Int
+        let rankedProfile: RankedBrokerProfile
+      }
+
+      let profile = rankedProfile(name: "Legacy cloud")
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles",
+        recordType: "EncryptedBrokerProfile"
+      )
+      let record = CKRecord(
+        recordType: codec.recordType,
+        recordID: CKRecord.ID(
+          recordName: profile.id.uuidString.lowercased(),
+          zoneID: codec.zoneID
+        )
+      )
+      record.encryptedValues[
+        CloudKitProfileRecordCodec.encryptedPayloadKey
+      ] = try JSONEncoder().encode(
+        LegacyEnvelope(version: 1, rankedProfile: profile)
+      )
+
+      let migrated = try codec.decodeReplicaRecord(record)
+
+      #expect(migrated.content?.revision == .legacy)
+      #expect(migrated.rank?.revision == .legacy)
+      #expect(migrated.visibleProfile == profile)
+    }
+
     @Test("Every private profile field exists only in encrypted values")
     func privateValuesNeverUseOrdinaryFields() throws {
       let profile = rankedProfile(
@@ -712,6 +1024,184 @@ struct ProfileSyncStateStoreTests {
       encoded["host"] = profile.profile.host
       #expect(throws: ProfileSyncFailure.self) {
         try codec.decode(encoded)
+      }
+    }
+
+    @Test("Fetched remote content is merged and re-staged before its server-tagged retry")
+    func fetchedContentIsMergedBeforeRetry() async throws {
+      let installationA = UUID(
+        uuidString: "00000000-0000-0000-0000-00000000000A"
+      )!
+      let installationB = UUID(
+        uuidString: "00000000-0000-0000-0000-00000000000B"
+      )!
+      let localProfile = rankedProfile(name: "Stale local")
+      let localReplica = try replica(
+        profiles: [localProfile],
+        revision: ProfileLogicalRevision(
+          counter: 1,
+          installationID: installationA
+        )
+      )
+      let remoteProfile = rankedProfile(
+        id: localProfile.id,
+        name: "Newer server"
+      )
+      let remoteReplica = try replica(
+        profiles: [remoteProfile],
+        revision: ProfileLogicalRevision(
+          counter: 2,
+          installationID: installationB
+        )
+      )
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles",
+        recordType: "EncryptedBrokerProfile"
+      )
+      let serverRecord = try codec.encodeReplicaRecord(
+        remoteReplica.records[0]
+      )
+      let delegate = CKSyncEngineProfileDelegate(
+        codec: codec,
+        stateStore: MemoryProfileSyncStateStore()
+      )
+      await delegate.stage(
+        ProfileSyncSnapshot(generation: 1, replica: localReplica)
+      )
+      await delegate.acceptFetchedRecord(serverRecord)
+
+      let fetched = try #require(
+        await delegate.takeFetchedExchangeBeforeSend()
+      )
+      let fetchedReplica = try ProfileReplica(
+        records: try #require(fetched.remoteRecords)
+      )
+      let merged = try localReplica.merging(fetchedReplica)
+      await delegate.stage(
+        ProfileSyncSnapshot(generation: 2, replica: merged)
+      )
+      let outbound = try #require(
+        await delegate.record(for: serverRecord.recordID)
+      )
+
+      #expect(outbound === serverRecord)
+      #expect(
+        try codec.decodeReplicaRecord(outbound)
+          == merged.records[0]
+      )
+      #expect(
+        try await delegate.takeFetchedExchangeBeforeSend()
+          == nil
+      )
+    }
+
+    @Test("Every server-record conflict in one batch becomes a domain merge input")
+    func multipleServerConflictsAreCollected() async throws {
+      let first = rankedProfile(name: "First")
+      let second = rankedProfile(name: "Second")
+      let revision = ProfileLogicalRevision(
+        counter: 8,
+        installationID: UUID(
+          uuidString: "00000000-0000-0000-0000-00000000000B"
+        )!
+      )
+      let remoteReplica = try replica(
+        profiles: [first, second],
+        revision: revision
+      )
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles",
+        recordType: "EncryptedBrokerProfile"
+      )
+      let serverRecords = try remoteReplica.records.map {
+        try codec.encodeReplicaRecord($0)
+      }
+      let attemptedRecords = try remoteReplica.records.map {
+        try codec.encodeReplicaRecord($0)
+      }
+      var failures = zip(attemptedRecords, serverRecords).map {
+        attempted, server in
+        CloudKitFailedProfileSave(
+          record: attempted,
+          error: CKError(
+            _nsError: NSError(
+              domain: CKError.errorDomain,
+              code: CKError.Code.serverRecordChanged.rawValue,
+              userInfo: [
+                CKRecordChangedErrorServerRecordKey: server
+              ]
+            )
+          )
+        )
+      }
+      let rejected = rankedProfile(
+        id: UUID(
+          uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+        )!,
+        name: "Rate limited"
+      )
+      failures.append(
+        CloudKitFailedProfileSave(
+          record: try codec.encode(rejected),
+          error: CKError(
+            _nsError: NSError(
+              domain: CKError.errorDomain,
+              code: CKError.Code.requestRateLimited.rawValue
+            )
+          )
+        )
+      )
+      let delegate = CKSyncEngineProfileDelegate(
+        codec: codec,
+        stateStore: MemoryProfileSyncStateStore()
+      )
+
+      await delegate.acceptFailedRecordSaves(
+        Array(failures.reversed())
+      )
+      await #expect(
+        throws: ProfileSyncFailure(
+          kind: .rateLimited,
+          isRetryable: true
+        )
+      ) {
+        try await delegate.takeFetchedExchangeBeforeSend()
+      }
+      await delegate.beginOperation()
+      let exchange = try #require(
+        await delegate.takeFetchedExchangeBeforeSend()
+      )
+
+      #expect(exchange.remoteRecords == remoteReplica.records)
+    }
+
+    @Test("CloudKit transport metadata never enters replica JSON")
+    func transportMetadataDoesNotEnterDomainJSON() throws {
+      let profile = rankedProfile(name: "Domain only")
+      let replica = try replica(
+        profiles: [profile],
+        revision: ProfileLogicalRevision(
+          counter: 3,
+          installationID: UUID(
+            uuidString: "00000000-0000-0000-0000-00000000000A"
+          )!
+        )
+      )
+      let text = try #require(
+        String(
+          data: JSONEncoder().encode(replica),
+          encoding: .utf8
+        )
+      )
+
+      for transportMetadata in [
+        "recordChangeTag",
+        "modificationDate",
+        "creationDate",
+        "etag",
+        "CKRecord",
+      ] {
+        #expect(!text.contains(transportMetadata))
       }
     }
   }
@@ -816,6 +1306,64 @@ private actor ScriptedProfileSyncEngine: ProfileSyncEngine {
   }
 }
 
+#if canImport(CloudKit)
+  private actor MemoryProfileSyncStateStore:
+    ProfileSyncStateStoring
+  {
+    private var candidates = ProfileSyncStateCandidates(
+      primary: nil,
+      backup: nil
+    )
+
+    func loadCandidates() -> ProfileSyncStateCandidates {
+      candidates
+    }
+
+    func save(_ data: Data) {
+      candidates = ProfileSyncStateCandidates(
+        primary: data,
+        backup: candidates.primary
+      )
+    }
+
+    func restoreBackup() {
+      candidates = ProfileSyncStateCandidates(
+        primary: candidates.backup,
+        backup: candidates.backup
+      )
+    }
+
+    func clear() {
+      candidates = ProfileSyncStateCandidates(
+        primary: nil,
+        backup: nil
+      )
+    }
+  }
+
+  private func replica(
+    profiles: [RankedBrokerProfile],
+    revision: ProfileLogicalRevision
+  ) throws -> ProfileReplica {
+    try ProfileReplica(
+      records: profiles.map {
+        ProfileReplicaRecord(
+          id: $0.id,
+          content: ProfileContentRegister(
+            value: $0.profile,
+            revision: revision
+          ),
+          rank: ProfileRankRegister(
+            value: $0.reorderRank,
+            revision: revision
+          ),
+          tombstone: nil
+        )
+      }
+    )
+  }
+#endif
+
 private actor MemoryProfileRepository: ProfileRepositoryProtocol {
   private var profiles: [RankedBrokerProfile]
 
@@ -886,6 +1434,88 @@ private actor GatedProfileRepository: ProfileRepositoryProtocol {
 
   func committedWrites() -> [[RankedBrokerProfile]] {
     writes
+  }
+
+  private func resumeCountWaiters() {
+    var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+    for waiter in countWaiters {
+      if writeCount >= waiter.0 {
+        waiter.1.resume()
+      } else {
+        remaining.append(waiter)
+      }
+    }
+    countWaiters = remaining
+  }
+}
+
+private actor GatedReplicaRepository:
+  ProfileReplicaRepositoryProtocol
+{
+  private var replica: ProfileReplica
+  private let installationID: UUID
+  private let blockedWriteNumbers: Set<Int>
+  private var writeCount = 0
+  private var writes: [ProfileReplica] = []
+  private var releases: [Int: CheckedContinuation<Void, Never>] = [:]
+  private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+  init(
+    replica: ProfileReplica,
+    installationID: UUID,
+    blockedWriteNumbers: Set<Int>
+  ) {
+    self.replica = replica
+    self.installationID = installationID
+    self.blockedWriteNumbers = blockedWriteNumbers
+  }
+
+  func load() -> [RankedBrokerProfile] {
+    replica.visibleProfiles
+  }
+
+  func loadReplica() -> ProfileReplica {
+    replica
+  }
+
+  func replaceAll(_ profiles: [RankedBrokerProfile]) async throws {
+    let updated = try replica.applyingLocalSnapshot(
+      profiles,
+      installationID: installationID
+    )
+    await commit(updated)
+  }
+
+  func replaceReplica(_ replica: ProfileReplica) async {
+    await commit(replica)
+  }
+
+  func waitForWriteCount(_ expected: Int) async {
+    guard writeCount < expected else { return }
+    await withCheckedContinuation { continuation in
+      countWaiters.append((expected, continuation))
+    }
+  }
+
+  func releaseWrite(_ number: Int) {
+    releases.removeValue(forKey: number)?.resume()
+  }
+
+  func committedReplicas() -> [ProfileReplica] {
+    writes
+  }
+
+  private func commit(_ replica: ProfileReplica) async {
+    writeCount += 1
+    let number = writeCount
+    resumeCountWaiters()
+    if blockedWriteNumbers.contains(number) {
+      await withCheckedContinuation { continuation in
+        releases[number] = continuation
+      }
+    }
+    writes.append(replica)
+    self.replica = replica
   }
 
   private func resumeCountWaiters() {
@@ -1045,3 +1675,29 @@ private func rankedProfile(
     reorderRank: 1_024
   )
 }
+
+private func renamed(
+  _ profile: RankedBrokerProfile,
+  _ name: String
+) -> RankedBrokerProfile {
+  RankedBrokerProfile(
+    profile: BrokerProfile(
+      id: profile.id,
+      name: name,
+      host: profile.profile.host,
+      port: profile.profile.port,
+      transport: profile.profile.transport,
+      username: profile.profile.username,
+      clientIDPolicy: profile.profile.clientIDPolicy,
+      cleanSession: profile.profile.cleanSession,
+      keepAliveSeconds: profile.profile.keepAliveSeconds,
+      reconnectPolicy: profile.profile.reconnectPolicy,
+      subscriptions: profile.profile.subscriptions
+    ),
+    reorderRank: profile.reorderRank
+  )
+}
+
+private let profileSyncTestInstallationID = UUID(
+  uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+)

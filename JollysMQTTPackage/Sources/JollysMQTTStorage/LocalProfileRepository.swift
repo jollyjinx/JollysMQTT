@@ -18,6 +18,13 @@ public protocol ProfileRepositoryProtocol: Sendable {
   func replaceAll(_ profiles: [RankedBrokerProfile]) async throws
 }
 
+public protocol ProfileReplicaRepositoryProtocol:
+  ProfileRepositoryProtocol
+{
+  func loadReplica() async throws -> ProfileReplica
+  func replaceReplica(_ replica: ProfileReplica) async throws
+}
+
 public enum LocalProfileRepositoryError: Error, Equatable, Sendable {
   case unsupportedVersion(Int)
   case corruptDocument
@@ -50,24 +57,27 @@ public struct SystemProfileFilePolicy: ProfileFilePolicy {
   }
 }
 
-public actor LocalProfileRepository: ProfileRepositoryProtocol {
+public actor LocalProfileRepository: ProfileReplicaRepositoryProtocol {
   public let fileURL: URL
   public let backupURL: URL
 
   private let fileManager: FileManager
   private let filePolicy: any ProfileFilePolicy
+  private let installationID: UUID
   private let encoder: JSONEncoder
   private let decoder: JSONDecoder
 
   public init(
     fileURL: URL,
     fileManager: FileManager = .default,
-    filePolicy: any ProfileFilePolicy = SystemProfileFilePolicy()
+    filePolicy: any ProfileFilePolicy = SystemProfileFilePolicy(),
+    installationID: UUID
   ) {
     self.fileURL = fileURL
     self.backupURL = fileURL.appendingPathExtension("backup")
     self.fileManager = fileManager
     self.filePolicy = filePolicy
+    self.installationID = installationID
 
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -76,26 +86,32 @@ public actor LocalProfileRepository: ProfileRepositoryProtocol {
   }
 
   public func load() async throws -> [RankedBrokerProfile] {
-    guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
+    try await loadReplica().visibleProfiles
+  }
 
-    let primaryDocument: LocalProfileDocument
+  public func loadReplica() async throws -> ProfileReplica {
+    guard fileManager.fileExists(atPath: fileURL.path) else {
+      return try ProfileReplica()
+    }
+
+    let primaryReplica: ProfileReplica
     do {
-      primaryDocument = try readValidatedDocument(at: fileURL)
+      primaryReplica = try readValidatedReplica(at: fileURL)
     } catch let primaryError as LocalProfileRepositoryError {
       guard primaryError.isRecoverableFromBackup else {
         throw primaryError
       }
       guard fileManager.fileExists(atPath: backupURL.path),
-        let backup = try? readValidatedDocument(at: backupURL)
+        let backup = try? readValidatedReplica(at: backupURL)
       else {
         throw primaryError
       }
 
       try await filePolicy.apply(to: backupURL, role: .backup)
-      let backupData = try encoder.encode(backup)
+      let backupData = try encode(replica: backup)
       try backupData.write(to: fileURL, options: [.atomic])
       try await filePolicy.apply(to: fileURL, role: .primary)
-      return backup.sortedForDisplay
+      return backup
     } catch {
       throw error
     }
@@ -104,17 +120,27 @@ public actor LocalProfileRepository: ProfileRepositoryProtocol {
     if fileManager.fileExists(atPath: backupURL.path) {
       try await filePolicy.apply(to: backupURL, role: .backup)
     }
-    return primaryDocument.sortedForDisplay
+    return primaryReplica
   }
 
   public func replaceAll(_ profiles: [RankedBrokerProfile]) async throws {
     try validate(profiles)
-
-    let document = LocalProfileDocument(
-      version: LocalProfileDocument.currentVersion,
-      profiles: profiles.sortedForStorage
+    let current =
+      if fileManager.fileExists(atPath: fileURL.path) {
+        try readValidatedReplica(at: fileURL)
+      } else {
+        try ProfileReplica()
+      }
+    let updated = try current.applyingLocalSnapshot(
+      profiles,
+      installationID: installationID
     )
-    let encoded = try encoder.encode(document)
+    try await replaceReplica(updated)
+  }
+
+  public func replaceReplica(_ replica: ProfileReplica) async throws {
+    try validate(replica.visibleProfiles)
+    let encoded = try encode(replica: replica)
     let directory = fileURL.deletingLastPathComponent()
     try fileManager.createDirectory(
       at: directory,
@@ -124,7 +150,7 @@ public actor LocalProfileRepository: ProfileRepositoryProtocol {
     var wroteBackup = false
     if fileManager.fileExists(atPath: fileURL.path),
       let currentData = try? Data(contentsOf: fileURL),
-      (try? readValidatedDocument(data: currentData)) != nil
+      (try? readValidatedReplica(data: currentData)) != nil
     {
       try currentData.write(to: backupURL, options: [.atomic])
       wroteBackup = true
@@ -140,22 +166,76 @@ public actor LocalProfileRepository: ProfileRepositoryProtocol {
     try await filePolicy.apply(to: fileURL, role: .primary)
   }
 
-  private func readValidatedDocument(at url: URL) throws -> LocalProfileDocument {
-    try readValidatedDocument(data: Data(contentsOf: url))
+  private func readValidatedReplica(at url: URL) throws -> ProfileReplica {
+    try readValidatedReplica(data: Data(contentsOf: url))
   }
 
-  private func readValidatedDocument(data: Data) throws -> LocalProfileDocument {
-    let document: LocalProfileDocument
+  private func readValidatedReplica(data: Data) throws -> ProfileReplica {
+    let header: LocalProfileDocumentHeader
     do {
-      document = try decoder.decode(LocalProfileDocument.self, from: data)
+      header = try decoder.decode(
+        LocalProfileDocumentHeader.self,
+        from: data
+      )
     } catch {
       throw LocalProfileRepositoryError.corruptDocument
     }
-    guard document.version == LocalProfileDocument.currentVersion else {
-      throw LocalProfileRepositoryError.unsupportedVersion(document.version)
+
+    switch header.version {
+    case 1:
+      do {
+        let legacy = try decoder.decode(
+          LocalProfileDocumentV1.self,
+          from: data
+        )
+        try validate(legacy.profiles)
+        return try ProfileReplica(
+          records: legacy.profiles.map {
+            ProfileReplicaRecord(
+              id: $0.id,
+              content: ProfileContentRegister(
+                value: $0.profile,
+                revision: .legacy
+              ),
+              rank: ProfileRankRegister(
+                value: $0.reorderRank,
+                revision: .legacy
+              ),
+              tombstone: nil
+            )
+          }
+        )
+      } catch let error as LocalProfileRepositoryError {
+        throw error
+      } catch {
+        throw LocalProfileRepositoryError.corruptDocument
+      }
+
+    case LocalProfileDocumentV2.currentVersion:
+      do {
+        let document = try decoder.decode(
+          LocalProfileDocumentV2.self,
+          from: data
+        )
+        return try ProfileReplica(records: document.records)
+      } catch {
+        throw LocalProfileRepositoryError.corruptDocument
+      }
+
+    default:
+      throw LocalProfileRepositoryError.unsupportedVersion(
+        header.version
+      )
     }
-    try validate(document.profiles)
-    return document
+  }
+
+  private func encode(replica: ProfileReplica) throws -> Data {
+    try encoder.encode(
+      LocalProfileDocumentV2(
+        version: LocalProfileDocumentV2.currentVersion,
+        records: replica.records
+      )
+    )
   }
 
   private func validate(_ profiles: [RankedBrokerProfile]) throws {
@@ -182,24 +262,18 @@ extension LocalProfileRepositoryError {
   }
 }
 
-private struct LocalProfileDocument: Codable, Sendable {
-  static let currentVersion = 1
-
+private struct LocalProfileDocumentHeader: Decodable, Sendable {
   let version: Int
-  let profiles: [RankedBrokerProfile]
-
-  var sortedForDisplay: [RankedBrokerProfile] {
-    profiles.sortedForStorage
-  }
 }
 
-extension Array where Element == RankedBrokerProfile {
-  fileprivate var sortedForStorage: Self {
-    sorted {
-      if $0.reorderRank == $1.reorderRank {
-        return $0.id.uuidString < $1.id.uuidString
-      }
-      return $0.reorderRank < $1.reorderRank
-    }
-  }
+private struct LocalProfileDocumentV1: Codable, Sendable {
+  let version: Int
+  let profiles: [RankedBrokerProfile]
+}
+
+private struct LocalProfileDocumentV2: Codable, Sendable {
+  static let currentVersion = 2
+
+  let version: Int
+  let records: [ProfileReplicaRecord]
 }

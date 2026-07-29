@@ -200,12 +200,31 @@
     }
 
     func encode(_ rankedProfile: RankedBrokerProfile) throws -> CKRecord {
-      let envelope = EncryptedProfileEnvelope(
-        version: EncryptedProfileEnvelope.currentVersion,
-        rankedProfile: rankedProfile
+      try encodeReplicaRecord(
+        ProfileReplicaRecord(
+          id: rankedProfile.id,
+          content: ProfileContentRegister(
+            value: rankedProfile.profile,
+            revision: .legacy
+          ),
+          rank: ProfileRankRegister(
+            value: rankedProfile.reorderRank,
+            revision: .legacy
+          ),
+          tombstone: nil
+        )
+      )
+    }
+
+    func encodeReplicaRecord(
+      _ replicaRecord: ProfileReplicaRecord
+    ) throws -> CKRecord {
+      let envelope = EncryptedProfileEnvelopeV2(
+        version: EncryptedProfileEnvelopeV2.currentVersion,
+        record: replicaRecord
       )
       let recordID = CKRecord.ID(
-        recordName: rankedProfile.id.uuidString.lowercased(),
+        recordName: replicaRecord.id.uuidString.lowercased(),
         zoneID: zoneID
       )
       let record = CKRecord(
@@ -218,6 +237,19 @@
     }
 
     func decode(_ record: CKRecord) throws -> RankedBrokerProfile {
+      guard let visible = try decodeReplicaRecord(record).visibleProfile
+      else {
+        throw ProfileSyncFailure(
+          kind: .invalidRemoteProfile,
+          isRetryable: false
+        )
+      }
+      return visible
+    }
+
+    func decodeReplicaRecord(
+      _ record: CKRecord
+    ) throws -> ProfileReplicaRecord {
       guard record.recordType == recordType,
         record.recordID.zoneID == zoneID,
         let recordID = UUID(uuidString: record.recordID.recordName),
@@ -238,10 +270,10 @@
         )
       }
 
-      let envelope: EncryptedProfileEnvelope
+      let header: EncryptedProfileEnvelopeHeader
       do {
-        envelope = try decoder.decode(
-          EncryptedProfileEnvelope.self,
+        header = try decoder.decode(
+          EncryptedProfileEnvelopeHeader.self,
           from: data
         )
       } catch {
@@ -250,32 +282,91 @@
           isRetryable: false
         )
       }
-      guard envelope.version == EncryptedProfileEnvelope.currentVersion,
-        envelope.rankedProfile.id == recordID,
-        envelope.rankedProfile.profile.validationIssues.isEmpty
+
+      let replicaRecord: ProfileReplicaRecord
+      do {
+        switch header.version {
+        case 1:
+          let legacy = try decoder.decode(
+            EncryptedProfileEnvelopeV1.self,
+            from: data
+          )
+          replicaRecord = ProfileReplicaRecord(
+            id: legacy.rankedProfile.id,
+            content: ProfileContentRegister(
+              value: legacy.rankedProfile.profile,
+              revision: .legacy
+            ),
+            rank: ProfileRankRegister(
+              value: legacy.rankedProfile.reorderRank,
+              revision: .legacy
+            ),
+            tombstone: nil
+          )
+        case EncryptedProfileEnvelopeV2.currentVersion:
+          replicaRecord = try decoder.decode(
+            EncryptedProfileEnvelopeV2.self,
+            from: data
+          ).record
+        default:
+          throw ProfileSyncFailure(
+            kind: .corruptRemotePayload,
+            isRetryable: false
+          )
+        }
+      } catch let failure as ProfileSyncFailure {
+        throw failure
+      } catch {
+        throw ProfileSyncFailure(
+          kind: .corruptRemotePayload,
+          isRetryable: false
+        )
+      }
+
+      guard replicaRecord.id == recordID,
+        let canonical = try? ProfileReplica(
+          records: [replicaRecord]
+        ).records.first
       else {
         throw ProfileSyncFailure(
           kind: .invalidRemoteProfile,
           isRetryable: false
         )
       }
-      return envelope.rankedProfile
+      return canonical
     }
   }
 
-  private struct EncryptedProfileEnvelope: Codable, Sendable {
-    static let currentVersion = 1
+  private struct EncryptedProfileEnvelopeHeader:
+    Decodable, Sendable
+  {
+    let version: Int
+  }
 
+  private struct EncryptedProfileEnvelopeV1: Codable, Sendable {
     let version: Int
     let rankedProfile: RankedBrokerProfile
   }
 
-  private actor CKSyncEngineProfileDelegate: CKSyncEngineDelegate {
+  private struct EncryptedProfileEnvelopeV2: Codable, Sendable {
+    static let currentVersion = 2
+
+    let version: Int
+    let record: ProfileReplicaRecord
+  }
+
+  struct CloudKitFailedProfileSave: Sendable {
+    let record: CKRecord
+    let error: CKError
+  }
+
+  actor CKSyncEngineProfileDelegate: CKSyncEngineDelegate {
     private let codec: CloudKitProfileRecordCodec
     private let stateStore: any ProfileSyncStateStoring
 
     private var stagedSnapshot: ProfileSyncSnapshot?
-    private var fetchedProfiles: [BrokerProfile.ID: RankedBrokerProfile] = [:]
+    private var fetchedRecords: [BrokerProfile.ID: ProfileReplicaRecord] = [:]
+    private var transportBases: [BrokerProfile.ID: CKRecord] = [:]
     private var operationFailure: ProfileSyncFailure?
 
     init(
@@ -299,35 +390,112 @@
     }
 
     func makeExchange() throws -> ProfileSyncExchange {
+      try takeFetchedExchangeBeforeSend() ?? .noChanges
+    }
+
+    /// Drains fetched domain records before any send is allowed. The driver
+    /// returns this exchange to the repository, which merges and re-stages the
+    /// converged snapshot before a later send operation.
+    func takeFetchedExchangeBeforeSend() throws -> ProfileSyncExchange? {
       if let operationFailure {
         self.operationFailure = nil
         throw operationFailure
       }
-      guard !fetchedProfiles.isEmpty else {
-        return .noChanges
+      guard !fetchedRecords.isEmpty else {
+        return nil
       }
 
-      var merged = Dictionary(
-        uniqueKeysWithValues: (stagedSnapshot?.profiles ?? []).map { ($0.id, $0) }
-      )
-      merged.merge(fetchedProfiles) { _, remote in remote }
-      fetchedProfiles.removeAll(keepingCapacity: true)
+      let changes = fetchedRecords.values.sorted {
+        $0.id.uuidString < $1.id.uuidString
+      }
+      fetchedRecords.removeAll(keepingCapacity: true)
       return ProfileSyncExchange(
-        remoteProfiles:
-          Array(merged.values).sortedForProfileSync
+        remoteRecords: changes
       )
+    }
+
+    func acceptFetchedRecord(_ record: CKRecord) {
+      do {
+        let replicaRecord = try codec.decodeReplicaRecord(record)
+        fetchedRecords[replicaRecord.id] = replicaRecord
+        transportBases[replicaRecord.id] = record
+      } catch let failure as ProfileSyncFailure {
+        recordOperationFailure(failure)
+      } catch {
+        recordOperationFailure(
+          ProfileSyncFailure(
+            kind: .corruptRemotePayload,
+            isRetryable: false
+          )
+        )
+      }
+    }
+
+    func acceptFailedRecordSaves(
+      _ failures: [CloudKitFailedProfileSave]
+    ) {
+      for failed in failures.sorted(by: {
+        $0.record.recordID.recordName
+          < $1.record.recordID.recordName
+      }) {
+        if failed.error.code == .serverRecordChanged,
+          let serverRecord =
+            failed.error.userInfo[
+              CKRecordChangedErrorServerRecordKey
+            ] as? CKRecord
+        {
+          acceptFetchedRecord(serverRecord)
+        } else {
+          recordOperationFailure(
+            CloudKitProfileSync.classify(failed.error)
+          )
+        }
+      }
     }
 
     func record(for recordID: CKRecord.ID) throws -> CKRecord? {
       guard recordID.zoneID == codec.zoneID,
         let id = UUID(uuidString: recordID.recordName),
-        let profile = stagedSnapshot?.profiles.first(
+        let replicaRecord = try stagedRecords().first(
           where: { $0.id == id }
         )
       else {
         return nil
       }
-      return try codec.encode(profile)
+      let encoded = try codec.encodeReplicaRecord(replicaRecord)
+      guard let transportBase = transportBases[id] else {
+        return encoded
+      }
+      transportBase.encryptedValues[
+        CloudKitProfileRecordCodec.encryptedPayloadKey
+      ] =
+        encoded.encryptedValues[
+          CloudKitProfileRecordCodec.encryptedPayloadKey
+        ]
+      return transportBase
+    }
+
+    private func stagedRecords() throws -> [ProfileReplicaRecord] {
+      guard let stagedSnapshot else { return [] }
+      if let records = stagedSnapshot.replicaRecords {
+        return records
+      }
+      return try ProfileReplica(
+        records: stagedSnapshot.profiles.map {
+          ProfileReplicaRecord(
+            id: $0.id,
+            content: ProfileContentRegister(
+              value: $0.profile,
+              revision: .legacy
+            ),
+            rank: ProfileRankRegister(
+              value: $0.reorderRank,
+              revision: .legacy
+            ),
+            tombstone: nil
+          )
+        }
+      ).records
     }
 
     func handleEvent(
@@ -356,26 +524,31 @@
       case .fetchedRecordZoneChanges(let changes):
         for modification in changes.modifications
         where modification.record.recordID.zoneID == codec.zoneID {
-          do {
-            let profile = try codec.decode(modification.record)
-            fetchedProfiles[profile.id] = profile
-          } catch let failure as ProfileSyncFailure {
-            operationFailure = failure
-          } catch {
-            operationFailure = ProfileSyncFailure(
-              kind: .corruptRemotePayload,
-              isRetryable: false
-            )
-          }
+          acceptFetchedRecord(modification.record)
         }
 
       case .sentRecordZoneChanges(let sent):
-        if let failed = sent.failedRecordSaves.first {
-          operationFailure = CloudKitProfileSync.classify(
-            failed.error
-          )
-        } else if let error = sent.failedRecordDeletes.values.first {
-          operationFailure = CloudKitProfileSync.classify(error)
+        for saved in sent.savedRecords {
+          if let id = UUID(uuidString: saved.recordID.recordName) {
+            transportBases[id] = saved
+          }
+        }
+        acceptFailedRecordSaves(
+          sent.failedRecordSaves.map {
+            CloudKitFailedProfileSave(
+              record: $0.record,
+              error: $0.error
+            )
+          }
+        )
+        for recordID in sent.failedRecordDeletes.keys.sorted(by: {
+          $0.recordName < $1.recordName
+        }) {
+          if let error = sent.failedRecordDeletes[recordID] {
+            recordOperationFailure(
+              CloudKitProfileSync.classify(error)
+            )
+          }
         }
 
       case .sentDatabaseChanges(let sent):
@@ -398,6 +571,14 @@
         break
       @unknown default:
         break
+      }
+    }
+
+    private func recordOperationFailure(
+      _ failure: ProfileSyncFailure
+    ) {
+      if operationFailure == nil {
+        operationFailure = failure
       }
     }
 
@@ -482,14 +663,15 @@
         ]
       )
       engine.state.add(
-        pendingRecordZoneChanges: snapshot.profiles.map {
-          .saveRecord(
-            CKRecord.ID(
-              recordName: $0.id.uuidString.lowercased(),
-              zoneID: codec.zoneID
+        pendingRecordZoneChanges: (snapshot.replicaRecords?.map(\.id)
+          ?? snapshot.profiles.map(\.id)).map {
+            .saveRecord(
+              CKRecord.ID(
+                recordName: $0.uuidString.lowercased(),
+                zoneID: codec.zoneID
+              )
             )
-          )
-        }
+          }
       )
     }
 
@@ -503,6 +685,11 @@
           )
         )
         try Task.checkCancellation()
+        if let fetched =
+          try await delegate.takeFetchedExchangeBeforeSend()
+        {
+          return fetched
+        }
         try await engine.sendChanges(
           CKSyncEngine.SendChangesOptions(
             scope: .zoneIDs([codec.zoneID])
