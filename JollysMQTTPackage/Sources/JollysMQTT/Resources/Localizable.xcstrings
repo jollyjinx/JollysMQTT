@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ line %lld: %@" : {
+      "comment" : "Accessible summary for one text payload difference.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ line %2$lld: %3$@"
+          }
+        }
+      }
+    },
+    "%@, Unix time %lld microseconds, QoS %lld, %@, %lld bytes" : {
+      "comment" : "Complete accessible metadata for one durable MQTT payload history row.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, Unix time %2$lld microseconds, QoS %3$lld, %4$@, %5$lld bytes"
+          }
+        }
+      }
+    },
     "%lld bytes" : {
       "comment" : "Exact MQTT payload size in bytes."
     },
@@ -48,6 +70,9 @@
         }
       }
     },
+    "%lld µs before the next newer value" : {
+      "comment" : "Exact elapsed microseconds from this row to its next newer MQTT value."
+    },
     "A received MQTT payload exceeded the configured size limit." : {
 
     },
@@ -62,6 +87,9 @@
     },
     "Add a broker profile to get started." : {
       "comment" : "Description on the initial empty broker-list screen."
+    },
+    "Added" : {
+      "comment" : "A JSON value was added in the current MQTT payload."
     },
     "Adds an enabled topic filter at QoS 0." : {
       "comment" : "Accessibility hint for adding a subscription filter."
@@ -81,11 +109,26 @@
     "Apply Later" : {
       "comment" : "Dismisses this workspace's warning while keeping the active broker generation."
     },
+    "At least %lld source messages were not persisted." : {
+      "comment" : "Minimum number of source-wide MQTT messages missing from durable history."
+    },
+    "At least one source message was not persisted." : {
+      "comment" : "A source-wide MQTT history gap contains at least one missing message."
+    },
     "Authentication" : {
       "comment" : "Header for broker authentication settings."
     },
     "Automatic Reconnect" : {
       "comment" : "Toggle controlling automatic reconnect attempts."
+    },
+    "Available comparison baseline" : {
+      "comment" : "Accessibility value for an unselected history baseline."
+    },
+    "Baseline (%lld bytes)" : {
+      "comment" : "Heading and exact byte count for the baseline hex preview."
+    },
+    "Before: %@" : {
+      "comment" : "Baseline preview for one JSON payload difference."
     },
     "Broad subscriptions can be expensive on production brokers." : {
       "comment" : "Warning about default wildcard MQTT subscriptions."
@@ -99,11 +142,25 @@
     "Broker Unavailable" : {
       "comment" : "Connected-workspace heading when its saved broker profile is unavailable."
     },
+    "Bytes different in compared prefix: %lld of %lld." : {
+      "comment" : "Summary for a bounded raw-byte MQTT payload comparison.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bytes different in compared prefix: %1$lld of %2$lld."
+          }
+        }
+      }
+    },
     "Cancel" : {
       "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels a retained-value deletion confirmation.\nCancels broker password entry.\nCancels the current broker connection or retry."
     },
     "Cancel after current topic" : {
       "comment" : "Stops recursive retained deletion after the current acknowledged publish settles."
+    },
+    "Changed" : {
+      "comment" : "A JSON value changed in the current MQTT payload."
     },
     "Changes visibility of descendants under %@." : {
       "comment" : "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
@@ -122,6 +179,9 @@
     },
     "Command-Return" : {
       "comment" : "Keyboard shortcut hint for publishing the current draft."
+    },
+    "Comparison output is bounded; additional differences may exist." : {
+      "comment" : "Notice shown when a payload comparison reaches a safety limit."
     },
     "Completed" : {
       "comment" : "Accessible status for a successfully acknowledged retained deletion."
@@ -156,6 +216,12 @@
     "Copied" : {
       "comment" : "Accessible confirmation after a payload copy action."
     },
+    "Copied history payload raw bytes" : {
+      "comment" : "Success after copying exact bytes from a durable history row."
+    },
+    "Copy" : {
+      "comment" : "Copies the exact raw bytes from one MQTT history row."
+    },
     "Copy Display Text" : {
       "comment" : "Copies the complete selected payload text."
     },
@@ -174,8 +240,20 @@
     "Copy Topic" : {
       "comment" : "Copies the exact selected MQTT topic."
     },
+    "Copy history payload raw bytes" : {
+      "comment" : "Accessible action to copy exact bytes from a history row."
+    },
+    "Current (%lld bytes)" : {
+      "comment" : "Heading and exact byte count for the current hex preview."
+    },
+    "Current compared with baseline" : {
+      "comment" : "Heading for an MQTT payload revision comparison."
+    },
     "Current retained deletion topic %@" : {
       "comment" : "Accessible label for the MQTT topic whose retained delete is in flight. The variable is the exact topic."
+    },
+    "Current: %@" : {
+      "comment" : "Current preview for one JSON payload difference."
     },
     "Delete" : {
       "comment" : "Context action that requests broker profile deletion."
@@ -210,6 +288,12 @@
     "Details" : {
       "comment" : "Compact connected-workspace payload-details destination."
     },
+    "Direction: Published" : {
+      "comment" : "Direction of an outgoing durable MQTT history row."
+    },
+    "Direction: Received" : {
+      "comment" : "Direction of an incoming durable MQTT history row."
+    },
     "Disconnected" : {
       "comment" : "Broker connection phase shown while no connection work is active."
     },
@@ -218,6 +302,9 @@
     },
     "Dismiss" : {
       "comment" : "Dismisses a retained deletion result report."
+    },
+    "Dismiss history copy result" : {
+      "comment" : "Dismisses a history payload copy result."
     },
     "Duplicate" : {
       "comment" : "Context action that duplicates a broker profile."
@@ -236,6 +323,9 @@
     },
     "Enables drag handles for reordering broker profiles." : {
       "comment" : "Accessibility hint for editing broker list order."
+    },
+    "Ended at Unix time %lld µs" : {
+      "comment" : "Exact end of a source-wide durable MQTT history gap."
     },
     "Enter a port from 1 through 65535." : {
       "comment" : "Validation error for an invalid broker port."
@@ -285,8 +375,29 @@
     "Hex" : {
       "comment" : "Publish composer hexadecimal byte input mode."
     },
+    "History" : {
+      "comment" : "Heading for durable MQTT payload history."
+    },
+    "History QoS %lld" : {
+      "comment" : "MQTT quality of service in a durable history row."
+    },
+    "History becomes available for the current value of a connected topic." : {
+      "comment" : "History placeholder when no current MQTT topic is selected."
+    },
+    "History could not be loaded." : {
+      "comment" : "Error shown when a durable MQTT history page fails to load."
+    },
     "History is degraded. Live topics are still updating, but %lld messages are not covered by durable history." : {
       "comment" : "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
+    },
+    "History payload copy failed" : {
+      "comment" : "Failure after copying bytes from a durable history row."
+    },
+    "History retained delivery: No" : {
+      "comment" : "History metadata saying an MQTT publish did not carry the retained-delivery flag."
+    },
+    "History retained delivery: Yes" : {
+      "comment" : "History metadata saying an MQTT publish carried the retained-delivery flag."
     },
     "Home Broker" : {
       "comment" : "Example placeholder for a broker display name."
@@ -366,8 +477,14 @@
     "Live topics will appear here as messages arrive." : {
       "comment" : "Description shown before the broker has delivered any topics."
     },
+    "Loading History" : {
+      "comment" : "Progress label while durable MQTT history loads."
+    },
     "Loading broker profiles" : {
       "comment" : "Accessibility label for profile loading progress."
+    },
+    "Local overload" : {
+      "comment" : "Reason for a source-wide durable MQTT history gap."
     },
     "Maximum delay: %lld seconds" : {
       "comment" : "Reconnect maximum delay. The variable is a number of seconds."
@@ -387,6 +504,9 @@
     "New Window" : {
       "comment" : "Command that opens a fresh broker-list workspace."
     },
+    "Newer" : {
+      "comment" : "Loads a newer page of MQTT payload history."
+    },
     "Next retry %@" : {
       "comment" : "Relative time until the next automatic broker reconnect."
     },
@@ -396,14 +516,23 @@
     "No Current Payload" : {
       "comment" : "Inspector title for a stale cached topic."
     },
+    "No JSON differences." : {
+      "comment" : "Empty result for a structural JSON payload comparison."
+    },
     "No Matching Topics" : {
       "comment" : "Empty topic explorer title when search has no matches."
     },
     "No current retryable retained values" : {
       "comment" : "Accessible summary when retained deletion reconfirmation has no current targets."
     },
+    "No durable history is available for this topic and connection source." : {
+      "comment" : "Empty durable MQTT history message."
+    },
     "No non-stale locally known value-bearing topics are available in the selected scope." : {
       "comment" : "Explains why a retained deletion request produced no current local targets."
+    },
+    "No text differences." : {
+      "comment" : "Empty result for a text payload comparison."
     },
     "None of the retryable topics is a current locally known value on this connection." : {
       "comment" : "Explains why reconnect reconfirmation found no still-current retryable targets."
@@ -413,6 +542,9 @@
     },
     "OK" : {
       "comment" : "Dismisses a credential operation error.\nDismisses a workspace state error."
+    },
+    "Older" : {
+      "comment" : "Loads an older page of MQTT payload history."
     },
     "Opens the broker profile editor." : {
       "comment" : "Accessibility hint for the add broker action."
@@ -446,6 +578,9 @@
     },
     "Payload" : {
       "comment" : "Accessible label for the MQTT publish payload editor."
+    },
+    "Payload size: %lld bytes" : {
+      "comment" : "Exact payload size for one durable history row."
     },
     "Persistent sessions require a stable client ID." : {
       "comment" : "Validation error for incompatible MQTT session settings."
@@ -515,6 +650,9 @@
     },
     "Remove" : {
       "comment" : "Action that removes an MQTT subscription filter."
+    },
+    "Removed" : {
+      "comment" : "A JSON value was removed from the current MQTT payload."
     },
     "Removes this topic filter from the profile." : {
       "comment" : "Accessibility hint for removing a subscription filter."
@@ -589,6 +727,9 @@
     "Select a Topic" : {
       "comment" : "Inspector title when no MQTT topic is selected."
     },
+    "Selected comparison baseline" : {
+      "comment" : "Accessibility value for the selected history baseline."
+    },
     "Show Brokers" : {
       "comment" : "Returns a connected workspace to the broker list."
     },
@@ -606,6 +747,9 @@
     "Sort Topics" : {
       "comment" : "Label for choosing the topic outline sort order."
     },
+    "Source-wide history coverage gaps" : {
+      "comment" : "Heading for gaps affecting the complete MQTT connection source."
+    },
     "Stable Generated" : {
       "comment" : "Client ID mode derived stably for the installation and profile."
     },
@@ -622,6 +766,12 @@
           }
         }
       }
+    },
+    "Started at Unix time %lld µs" : {
+      "comment" : "Exact start of a source-wide durable MQTT history gap."
+    },
+    "Storage failure" : {
+      "comment" : "Reason for a source-wide durable MQTT history gap."
     },
     "Structure" : {
       "comment" : "JSON inspector structural presentation mode."
@@ -691,6 +841,9 @@
     "The device password is unavailable." : {
       "comment" : "Explains a terminal device-local credential failure."
     },
+    "The gap is still open." : {
+      "comment" : "A source-wide durable MQTT history gap has no known end."
+    },
     "The network connection ended." : {
       "comment" : "Explains a transient transport failure."
     },
@@ -720,6 +873,9 @@
     },
     "These actions attempt to clear broker-retained state. Locally observed topics are not the broker’s complete retained-message inventory." : {
       "comment" : "Safety explanation that local retained deletion cannot claim a complete broker inventory."
+    },
+    "These gaps affect the connection source and do not prove that this topic lost a message." : {
+      "comment" : "Clarifies that source-wide durable history gaps are not topic-loss evidence."
     },
     "This cached topic has not been observed in the current connection. Its old payload is not shown as current." : {
       "comment" : "Explains why a stale cached MQTT payload is suppressed."
@@ -753,6 +909,9 @@
     },
     "Try a different topic path or current value." : {
       "comment" : "Description shown when no indexed topic or payload summary matches search."
+    },
+    "Unix time: %lld µs" : {
+      "comment" : "Exact local receive timestamp in microseconds for one durable MQTT history row."
     },
     "Use Selected Topic" : {
       "comment" : "Re-enables publish-topic prefill from outline selection."

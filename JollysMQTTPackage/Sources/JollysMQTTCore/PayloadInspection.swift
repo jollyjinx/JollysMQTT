@@ -449,11 +449,11 @@ public actor PayloadInspector: PayloadInspecting {
   }
 
   public func inspect(_ message: PayloadMessage) -> PayloadInspection {
-    let presentation = classify(message.payload)
+    let presentation = presentation(for: message.payload)
     return PayloadInspection(message: message, presentation: presentation)
   }
 
-  private func classify(_ data: Data) -> PayloadPresentation {
+  public func presentation(for data: Data) -> PayloadPresentation {
     var notice: PayloadInspectionNotice?
     if data.count <= limits.maximumJSONBytes {
       switch JSONNestingScanner.scan(

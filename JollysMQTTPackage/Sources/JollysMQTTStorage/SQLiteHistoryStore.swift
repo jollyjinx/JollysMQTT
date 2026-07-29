@@ -165,11 +165,81 @@ public actor SQLiteHistoryStore {
     topic: String,
     limit: Int
   ) throws -> [StoredHistoryMessage] {
+    try historyMessages(
+      historySourceID: historySourceID,
+      topic: topic,
+      beforeDurableOrder: nil,
+      limit: limit
+    )
+  }
+
+  public func page(_ request: HistoryPageRequest) throws -> HistoryPage {
+    guard request.limit >= 0, request.limit < Int(Int32.max) else {
+      throw HistoryStorageError.invalidLimit(request.limit)
+    }
+    guard request.coverageGapLimit >= 0,
+      request.coverageGapLimit <= Int(Int32.max)
+    else {
+      throw HistoryStorageError.invalidLimit(request.coverageGapLimit)
+    }
+    guard request.limit > 0 else {
+      return HistoryPage(messages: [], nextCursor: nil)
+    }
+    let fetched = try historyMessages(
+      historySourceID: request.historySourceID,
+      topic: request.topic,
+      beforeDurableOrder: request.beforeDurableOrder,
+      limit: request.limit + 1
+    )
+    let hasMore = fetched.count > request.limit
+    let messages = Array(fetched.prefix(request.limit))
+    var timeRange: ClosedRange<Int64>?
+    for message in messages {
+      if let range = timeRange {
+        let lower = min(
+          range.lowerBound,
+          message.receivedAtMicroseconds
+        )
+        let upper = max(
+          range.upperBound,
+          message.receivedAtMicroseconds
+        )
+        timeRange = lower...upper
+      } else {
+        timeRange =
+          message.receivedAtMicroseconds...message.receivedAtMicroseconds
+      }
+    }
+    let gaps: [StoredHistoryCoverageGap] =
+      if let timeRange {
+        try coverageGaps(
+          historySourceID: request.historySourceID,
+          overlapping: timeRange,
+          limit: request.coverageGapLimit
+        )
+      } else {
+        []
+      }
+    return HistoryPage(
+      messages: messages,
+      coverageGaps: gaps,
+      nextCursor: hasMore ? messages.last?.durableOrder : nil
+    )
+  }
+
+  private func historyMessages(
+    historySourceID: String,
+    topic: String,
+    beforeDurableOrder: Int64?,
+    limit: Int
+  ) throws -> [StoredHistoryMessage] {
     guard limit >= 0, limit <= Int(Int32.max) else {
       throw HistoryStorageError.invalidLimit(limit)
     }
     guard limit > 0 else { return [] }
 
+    let cursorPredicate =
+      beforeDurableOrder == nil ? "" : "AND messages.id < ?"
     let statement = try prepare(
       """
       SELECT
@@ -187,6 +257,7 @@ public actor SQLiteHistoryStore {
       FROM messages
       JOIN topics ON topics.id = messages.topic_id
       WHERE topics.history_source_id = ? AND topics.topic = ?
+        \(cursorPredicate)
       ORDER BY messages.id DESC
       LIMIT ?
       """,
@@ -196,8 +267,18 @@ public actor SQLiteHistoryStore {
 
     try bind(historySourceID, to: 1, in: statement, operation: "bind history source")
     try bind(topic, to: 2, in: statement, operation: "bind topic")
+    let limitIndex: Int32
+    if let beforeDurableOrder {
+      try check(
+        sqlite3_bind_int64(statement, 3, beforeDurableOrder),
+        operation: "bind history cursor"
+      )
+      limitIndex = 4
+    } else {
+      limitIndex = 3
+    }
     try check(
-      sqlite3_bind_int(statement, 3, Int32(limit)),
+      sqlite3_bind_int(statement, limitIndex, Int32(limit)),
       operation: "bind history limit"
     )
 

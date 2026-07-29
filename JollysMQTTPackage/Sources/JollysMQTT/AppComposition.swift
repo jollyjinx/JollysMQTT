@@ -178,13 +178,16 @@ public struct JollysMQTTAppDependencies: Sendable {
       path: "history",
       directoryHint: .isDirectory
     )
+    let historyRepositories = SQLiteBrokerHistoryRepositoryPool(
+      directoryURL: historyDirectory
+    )
+    let historyRepositoryProvider = BrokerHistoryRepositoryProvider {
+      brokerID in
+      historyRepositories.repository(for: brokerID)
+    }
     let registry = BrokerFeedRegistry { configuration in
       let profile = configuration.profile
-      let historyWriter = SQLiteBrokerHistoryWriter(
-        databaseURL: historyDirectory.appending(
-          path: "\(profile.id.uuidString.lowercased()).sqlite3"
-        )
-      )
+      let historyWriter = historyRepositories.repository(for: profile.id)
       let ingestion = BrokerFeedIngestion(
         brokerID: profile.id,
         historySourceID: MQTTBrokerFeedAttempt.historySourceID(
@@ -213,7 +216,8 @@ public struct JollysMQTTAppDependencies: Sendable {
       brokerFeedFactory: .init { workspaceID in
         registry.makeLease(workspaceID: workspaceID)
       },
-      brokerFeedGenerationCoordinator: registry
+      brokerFeedGenerationCoordinator: registry,
+      historyRepositoryProvider: historyRepositoryProvider
     )
   }()
 
@@ -223,6 +227,7 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let workspaceReleaser: any WorkspaceLeaseReleasing
   public let brokerFeedFactory: BrokerFeedLeaseFactory
   public let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
+  public let historyRepositoryProvider: BrokerHistoryRepositoryProvider
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
@@ -232,7 +237,8 @@ public struct JollysMQTTAppDependencies: Sendable {
     brokerFeedFactory: BrokerFeedLeaseFactory = .noop,
     brokerFeedGenerationCoordinator:
       any BrokerFeedGenerationCoordinating =
-      NoopBrokerFeedGenerationCoordinator()
+      NoopBrokerFeedGenerationCoordinator(),
+    historyRepositoryProvider: BrokerHistoryRepositoryProvider = .empty
   ) {
     self.profileRepository = profileRepository
     self.credentialRepository = credentialRepository
@@ -241,6 +247,7 @@ public struct JollysMQTTAppDependencies: Sendable {
     self.brokerFeedFactory = brokerFeedFactory
     self.brokerFeedGenerationCoordinator =
       brokerFeedGenerationCoordinator
+    self.historyRepositoryProvider = historyRepositoryProvider
   }
 
   @MainActor
@@ -273,6 +280,7 @@ public final class WorkspaceSceneStore {
   public let payloadInspector: PayloadInspectorStore
   public let publishComposer: PublishStore
   public let retainedDeletion: RetainedDeletionStore
+  public let history: HistoryStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -303,6 +311,10 @@ public final class WorkspaceSceneStore {
     self.publishComposer = publishComposer
     let retainedDeletion = RetainedDeletionStore(publisher: feed)
     self.retainedDeletion = retainedDeletion
+    let history = HistoryStore(
+      repositories: dependencies.historyRepositoryProvider
+    )
+    self.history = history
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
@@ -334,6 +346,23 @@ public final class WorkspaceSceneStore {
     self.topics.onRetainedDeletionContextChange = {
       [weak retainedDeletion] context, snapshot in
       retainedDeletion?.updateContext(context, snapshot: snapshot)
+    }
+    self.topics.onHistoryContextChange = {
+      [weak history] selection, snapshot in
+      guard
+        let historySourceID = snapshot.historySourceID,
+        case .current(let current) = selection
+      else {
+        history?.updateContext(nil)
+        return
+      }
+      history?.updateContext(
+        HistoryContext(
+          brokerID: current.topicID.brokerID,
+          historySourceID: historySourceID,
+          current: current
+        )
+      )
     }
   }
 
@@ -551,6 +580,13 @@ public final class TopicOutlineStore {
         BrokerTopicTreeSnapshot
       ) -> Void
     )?
+  var onHistoryContextChange:
+    (
+      @MainActor @Sendable (
+        PayloadTopicSelection,
+        BrokerTopicTreeSnapshot
+      ) -> Void
+    )?
 
   init(feed: any BrokerFeedLeaseControlling) {
     self.feed = feed
@@ -571,12 +607,20 @@ public final class TopicOutlineStore {
       expectedBrokerID: expectedBrokerID
     )
     onPayloadSelectionChange?(state.payloadSelection)
+    onHistoryContextChange?(
+      state.payloadSelection,
+      state.liveSnapshot
+    )
     notifyRetainedDeletionContext()
   }
 
   func send(_ intent: TopicOutlineFeature.Intent) {
     TopicOutlineFeature.reduce(state: &state, intent: intent)
     onPayloadSelectionChange?(state.payloadSelection)
+    onHistoryContextChange?(
+      state.payloadSelection,
+      state.liveSnapshot
+    )
     notifyRetainedDeletionContext()
   }
 
@@ -592,6 +636,10 @@ public final class TopicOutlineStore {
       action: .snapshotReceived(snapshot)
     )
     onPayloadSelectionChange?(state.payloadSelection)
+    onHistoryContextChange?(
+      state.payloadSelection,
+      state.liveSnapshot
+    )
     notifyRetainedDeletionContext()
   }
 

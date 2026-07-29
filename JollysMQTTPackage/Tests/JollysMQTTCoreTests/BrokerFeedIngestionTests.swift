@@ -5,6 +5,20 @@ import Testing
 
 @Suite("Broker feed ingestion")
 struct BrokerFeedIngestionTests {
+  @Test("Topic snapshots carry the active opaque history source")
+  func snapshotHistorySource() async {
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "opaque-source-id",
+      historyWriter: RecordingHistoryWriter()
+    )
+
+    let snapshot = await ingestion.flush()
+
+    #expect(snapshot.historySourceID == "opaque-source-id")
+    #expect(BrokerTopicTreeSnapshot.empty.historySourceID == nil)
+  }
+
   @Test("The topic tree preserves every empty level and value-bearing parent")
   func exactTopicTreeShape() async throws {
     let brokerID = UUID()

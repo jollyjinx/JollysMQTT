@@ -50,6 +50,74 @@ public struct StoredHistoryMessage: Sendable, Equatable {
   public let retained: Bool
   public let receivedAtMicroseconds: Int64
   public let payload: Data
+
+  public init(
+    durableOrder: Int64,
+    historySourceID: String,
+    connectionEpoch: UUID?,
+    connectionOrdinal: UInt64?,
+    operationID: PublishOperationID?,
+    direction: PayloadDeliveryDirection,
+    topic: String,
+    qos: MQTTQualityOfService,
+    retained: Bool,
+    receivedAtMicroseconds: Int64,
+    payload: Data
+  ) {
+    self.durableOrder = durableOrder
+    self.historySourceID = historySourceID
+    self.connectionEpoch = connectionEpoch
+    self.connectionOrdinal = connectionOrdinal
+    self.operationID = operationID
+    self.direction = direction
+    self.topic = topic
+    self.qos = qos
+    self.retained = retained
+    self.receivedAtMicroseconds = receivedAtMicroseconds
+    self.payload = payload
+  }
+}
+
+public struct HistoryPageRequest: Sendable, Equatable {
+  public let historySourceID: String
+  public let topic: String
+  public let beforeDurableOrder: Int64?
+  public let limit: Int
+  public let coverageGapLimit: Int
+
+  public init(
+    historySourceID: String,
+    topic: String,
+    beforeDurableOrder: Int64? = nil,
+    limit: Int = 50,
+    coverageGapLimit: Int = 100
+  ) {
+    self.historySourceID = historySourceID
+    self.topic = topic
+    self.beforeDurableOrder = beforeDurableOrder
+    self.limit = limit
+    self.coverageGapLimit = coverageGapLimit
+  }
+}
+
+public struct HistoryPage: Sendable, Equatable {
+  public let messages: [StoredHistoryMessage]
+  public let coverageGaps: [StoredHistoryCoverageGap]
+  public let nextCursor: Int64?
+
+  public init(
+    messages: [StoredHistoryMessage],
+    coverageGaps: [StoredHistoryCoverageGap] = [],
+    nextCursor: Int64?
+  ) {
+    self.messages = messages
+    self.coverageGaps = coverageGaps
+    self.nextCursor = nextCursor
+  }
+}
+
+public protocol BrokerHistoryReading: Sendable {
+  func page(_ request: HistoryPageRequest) async throws -> HistoryPage
 }
 
 public struct HistoryCoverageGapInput: Sendable, Equatable {

@@ -201,6 +201,7 @@ private struct ConnectedWorkspaceView: View {
         topicState: topicState,
         sceneStore: sceneStore,
         inspectorStore: sceneStore.payloadInspector,
+        historyStore: sceneStore.history,
         publishStore: sceneStore.publishComposer
       )
       if topicState.snapshot.historyIsHealthy == false {
@@ -240,6 +241,7 @@ private struct SelectedPayloadWorkspace: View {
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var historyStore: HistoryStore
   @Bindable var publishStore: PublishStore
 
   var body: some View {
@@ -253,6 +255,7 @@ private struct SelectedPayloadWorkspace: View {
         Divider()
         PayloadInspectorPane(
           store: inspectorStore,
+          historyStore: historyStore,
           layout: .wide
         )
         .frame(minWidth: 360)
@@ -264,6 +267,7 @@ private struct SelectedPayloadWorkspace: View {
         topicState: topicState,
         sceneStore: sceneStore,
         inspectorStore: inspectorStore,
+        historyStore: historyStore,
         publishStore: publishStore
       )
     }
@@ -274,6 +278,7 @@ private struct PayloadCompactWorkspace: View {
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var historyStore: HistoryStore
   @Bindable var publishStore: PublishStore
 
   var body: some View {
@@ -320,6 +325,7 @@ private struct PayloadCompactWorkspace: View {
       case .details:
         PayloadInspectorPane(
           store: inspectorStore,
+          historyStore: historyStore,
           layout: .compact
         )
       case .publish:
@@ -607,6 +613,7 @@ private struct PublishStatusView: View {
 
 private struct PayloadInspectorPane: View {
   @Bindable var store: PayloadInspectorStore
+  @Bindable var historyStore: HistoryStore
   let layout: PayloadInspectorLayout
 
   var body: some View {
@@ -626,6 +633,8 @@ private struct PayloadInspectorPane: View {
             if let outcome = store.state.copyOutcome {
               PayloadCopyOutcomeView(outcome: outcome)
             }
+            Divider()
+            HistoryBrowserView(store: historyStore)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(16)

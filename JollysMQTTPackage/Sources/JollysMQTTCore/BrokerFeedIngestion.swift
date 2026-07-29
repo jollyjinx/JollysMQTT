@@ -342,6 +342,7 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
   public let valueTopicCount: Int
   public let historyIsHealthy: Bool
   public let unpersistedMessageCount: Int
+  public let historySourceID: String?
   public let connectionEpoch: ConnectionEpochID?
   public let activeHistoryGap: BrokerHistoryCoverageGap?
 
@@ -356,6 +357,7 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     valueTopicCount: Int,
     historyIsHealthy: Bool,
     unpersistedMessageCount: Int,
+    historySourceID: String? = nil,
     connectionEpoch: ConnectionEpochID? = nil,
     activeHistoryGap: BrokerHistoryCoverageGap? = nil
   ) {
@@ -365,6 +367,7 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     self.valueTopicCount = valueTopicCount
     self.historyIsHealthy = historyIsHealthy
     self.unpersistedMessageCount = unpersistedMessageCount
+    self.historySourceID = historySourceID
     self.connectionEpoch = connectionEpoch
     self.activeHistoryGap = activeHistoryGap
   }
@@ -376,6 +379,7 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
     valueTopicCount: 0,
     historyIsHealthy: true,
     unpersistedMessageCount: 0,
+    historySourceID: nil,
     connectionEpoch: nil,
     activeHistoryGap: nil
   )
@@ -898,6 +902,7 @@ public actor BrokerFeedIngestion {
       historyIsHealthy: historyIsHealthy,
       unpersistedMessageCount:
         unpersistedMessageCount + pendingHistory.count,
+      historySourceID: historySourceID,
       connectionEpoch: connectionEpoch,
       activeHistoryGap: primaryPendingHistoryGap
     )
