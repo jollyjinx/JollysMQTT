@@ -135,20 +135,113 @@ struct BrokerFeedTransportTests {
     #expect(transport.feedFailure == expected)
   }
 
-  @Test("The publish command seam is bounded and terminally closable")
-  func boundedPublishCommands() async {
+  @Test("A full publish queue rejects before any command can reach transport")
+  func boundedPublishCommands() async throws {
     let queue = BrokerFeedPublishCommandQueue(capacity: 1)
-    let command = BrokerFeedPublishCommand(
+    let first = BrokerPublishRequest.fixture(id: 1)
+    let rejected = BrokerPublishRequest.fixture(id: 2)
+    let firstResult = Task { await queue.submit(first) }
+    await waitForPendingOperationCount(1, in: queue)
+
+    #expect(await queue.submit(rejected) == .failure(.queueFull))
+    var iterator = await queue.commands().makeAsyncIterator()
+    #expect(try #require(await iterator.next()).request == first)
+    await queue.close(reason: .cancelled)
+    #expect(await firstResult.value == .failure(.cancelled))
+  }
+
+  @Test("Connection teardown resolves queued and in-flight operations exactly once")
+  func teardownResolvesAllCommands() async throws {
+    let queue = BrokerFeedPublishCommandQueue(capacity: 2)
+    let first = BrokerPublishRequest.fixture(id: 1)
+    let second = BrokerPublishRequest.fixture(id: 2)
+    let firstResult = Task { await queue.submit(first) }
+    let secondResult = Task { await queue.submit(second) }
+    await waitForPendingOperationCount(2, in: queue)
+    var iterator = await queue.commands().makeAsyncIterator()
+    #expect(try #require(await iterator.next()).request == first)
+
+    await queue.close(reason: .transportUnavailable)
+    await queue.close(reason: .cancelled)
+
+    #expect(await firstResult.value == .failure(.transportUnavailable))
+    #expect(await secondResult.value == .failure(.transportUnavailable))
+    #expect(await queue.pendingOperationCount() == 0)
+  }
+
+  @Test("A replacement connection queue cannot consume prior-generation commands")
+  func connectionGenerationDoesNotLeakCommands() async throws {
+    let oldQueue = BrokerFeedPublishCommandQueue(capacity: 2)
+    let oldRequest = BrokerPublishRequest.fixture(id: 1)
+    let oldResult = Task { await oldQueue.submit(oldRequest) }
+    await waitForPendingOperationCount(1, in: oldQueue)
+    await oldQueue.close(reason: .transportUnavailable)
+
+    let newQueue = BrokerFeedPublishCommandQueue(capacity: 2)
+    let newRequest = BrokerPublishRequest.fixture(id: 2)
+    let newResult = Task { await newQueue.submit(newRequest) }
+    await waitForPendingOperationCount(1, in: newQueue)
+    var iterator = await newQueue.commands().makeAsyncIterator()
+
+    #expect(try #require(await iterator.next()).request == newRequest)
+    #expect(await oldResult.value == .failure(.transportUnavailable))
+    let success = BrokerPublishSuccess(
+      operationID: newRequest.operationID,
+      completion: .transportAccepted,
+      completedAtMicroseconds: 42
+    )
+    await newQueue.complete(success)
+    #expect(await newResult.value == .success(success))
+  }
+
+  @Test(
+    "Successful QoS completion is honest about transport acceptance and acknowledgement",
+    arguments: [
+      (
+        JollysMQTTCore.MQTTQualityOfService.atMostOnce,
+        BrokerPublishCompletion.transportAccepted
+      ),
+      (.atLeastOnce, .acknowledged),
+      (.exactlyOnce, .acknowledged),
+    ]
+  )
+  func qosCompletion(
+    qos: JollysMQTTCore.MQTTQualityOfService,
+    completion: BrokerPublishCompletion
+  ) {
+    #expect(BrokerPublishCompletion(successfulQoS: qos) == completion)
+  }
+}
+
+private func waitForPendingOperationCount(
+  _ count: Int,
+  in queue: BrokerFeedPublishCommandQueue
+) async {
+  for _ in 0..<1_000 {
+    if await queue.pendingOperationCount() == count {
+      return
+    }
+    await Task.yield()
+  }
+  Issue.record("Publish submission did not reach the queue.")
+}
+
+extension BrokerPublishRequest {
+  fileprivate static func fixture(id: UInt8) -> BrokerPublishRequest {
+    BrokerPublishRequest(
+      operationID: PublishOperationID(
+        rawValue: UUID(
+          uuidString: String(
+            format: "00000000-0000-0000-0000-%012x",
+            id
+          )
+        )!
+      ),
       topic: "test/topic",
-      payload: Data(),
+      payload: Data([id]),
       qos: .atMostOnce,
       retain: false
     )
-
-    #expect(await queue.enqueue(command) == .accepted)
-    #expect(await queue.enqueue(command) == .queueFull)
-    await queue.close()
-    #expect(await queue.enqueue(command) == .closed)
   }
 }
 

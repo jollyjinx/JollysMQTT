@@ -3,7 +3,7 @@ import Foundation
 import JollysMQTTCore
 
 public actor SQLiteHistoryStore {
-  public static let currentSchemaVersion = 3
+  public static let currentSchemaVersion = 4
 
   private let databaseURL: URL
   private let databaseHandle: UInt
@@ -119,10 +119,14 @@ public actor SQLiteHistoryStore {
             topic_id,
             connection_epoch,
             connection_ordinal,
+            operation_id,
+            direction,
+            qos,
+            retained,
             received_at_microseconds,
             payload
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         operation: "prepare message insert"
       )
@@ -174,6 +178,10 @@ public actor SQLiteHistoryStore {
           topics.topic,
           messages.connection_epoch,
           messages.connection_ordinal,
+          messages.operation_id,
+          messages.direction,
+          messages.qos,
+          messages.retained,
           messages.received_at_microseconds,
           messages.payload
       FROM messages
@@ -209,9 +217,21 @@ public actor SQLiteHistoryStore {
               sqlite3_column_type(statement, 4) == SQLITE_NULL
               ? nil
               : UInt64(bitPattern: sqlite3_column_int64(statement, 4)),
+            operationID: optionalTextColumn(statement, index: 5)
+              .flatMap(UUID.init(uuidString:))
+              .map(PublishOperationID.init(rawValue:)),
+            direction:
+              PayloadDeliveryDirection(
+                rawValue: textColumn(statement, index: 6)
+              ) ?? .received,
             topic: textColumn(statement, index: 2),
-            receivedAtMicroseconds: sqlite3_column_int64(statement, 5),
-            payload: dataColumn(statement, index: 6)
+            qos:
+              MQTTQualityOfService(
+                rawValue: Int(sqlite3_column_int(statement, 7))
+              ) ?? .atMostOnce,
+            retained: sqlite3_column_int(statement, 8) != 0,
+            receivedAtMicroseconds: sqlite3_column_int64(statement, 9),
+            payload: dataColumn(statement, index: 10)
           )
         )
       case SQLITE_DONE:
@@ -777,8 +797,12 @@ public actor SQLiteHistoryStore {
       if version == 1 {
         try migrateSchemaVersionOneToTwo()
         try migrateSchemaVersionTwoToThree()
+        try migrateSchemaVersionThreeToFour()
       } else if version == 2 {
         try migrateSchemaVersionTwoToThree()
+        try migrateSchemaVersionThreeToFour()
+      } else if version == 3 {
+        try migrateSchemaVersionThreeToFour()
       } else if version != Self.currentSchemaVersion {
         throw HistoryStorageError.sqlite(
           code: SQLITE_ERROR,
@@ -829,8 +853,34 @@ public actor SQLiteHistoryStore {
           topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
           connection_epoch TEXT,
           connection_ordinal INTEGER,
+          operation_id TEXT,
+          direction TEXT NOT NULL CHECK (direction IN ('received', 'published')),
+          qos INTEGER NOT NULL CHECK (qos BETWEEN 0 AND 2),
+          retained INTEGER NOT NULL CHECK (retained IN (0, 1)),
           received_at_microseconds INTEGER NOT NULL,
-          payload BLOB NOT NULL
+          payload BLOB NOT NULL,
+          CHECK (
+              (
+                  direction = 'received'
+                  AND operation_id IS NULL
+                  AND (
+                      (
+                          connection_epoch IS NULL
+                          AND connection_ordinal IS NULL
+                      )
+                      OR (
+                          connection_epoch IS NOT NULL
+                          AND connection_ordinal IS NOT NULL
+                      )
+                  )
+              )
+              OR (
+                  direction = 'published'
+                  AND connection_epoch IS NULL
+                  AND connection_ordinal IS NULL
+                  AND operation_id IS NOT NULL
+              )
+          )
       )
       """,
       operation: "create messages table"
@@ -847,6 +897,45 @@ public actor SQLiteHistoryStore {
       "INSERT INTO schema_version(singleton, version) VALUES (1, \(Self.currentSchemaVersion))",
       operation: "record schema version"
     )
+  }
+
+  private func migrateSchemaVersionThreeToFour() throws {
+    try execute(
+      "BEGIN IMMEDIATE",
+      operation: "begin schema version four migration"
+    )
+    do {
+      try execute(
+        "ALTER TABLE messages ADD COLUMN operation_id TEXT",
+        operation: "add publish operation identity"
+      )
+      try execute(
+        "ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'",
+        operation: "add message direction"
+      )
+      try execute(
+        "ALTER TABLE messages ADD COLUMN qos INTEGER NOT NULL DEFAULT 0",
+        operation: "add message quality of service"
+      )
+      try execute(
+        "ALTER TABLE messages ADD COLUMN retained INTEGER NOT NULL DEFAULT 0",
+        operation: "add retained-delivery metadata"
+      )
+      try execute(
+        "UPDATE schema_version SET version = 4 WHERE singleton = 1",
+        operation: "record schema version four"
+      )
+      try execute(
+        "COMMIT",
+        operation: "commit schema version four migration"
+      )
+    } catch {
+      try? execute(
+        "ROLLBACK",
+        operation: "rollback schema version four migration"
+      )
+      throw error
+    }
   }
 
   private func migrateSchemaVersionOneToTwo() throws {
@@ -1021,18 +1110,45 @@ public actor SQLiteHistoryStore {
         operation: "bind absent connection ordinal"
       )
     }
+    if let operationID = message.operationID {
+      try bind(
+        operationID.rawValue.uuidString.lowercased(),
+        to: 4,
+        in: statement,
+        operation: "bind publish operation identity"
+      )
+    } else {
+      try check(
+        sqlite3_bind_null(statement, 4),
+        operation: "bind absent publish operation identity"
+      )
+    }
+    try bind(
+      message.direction.rawValue,
+      to: 5,
+      in: statement,
+      operation: "bind message direction"
+    )
     try check(
-      sqlite3_bind_int64(statement, 4, message.receivedAtMicroseconds),
+      sqlite3_bind_int(statement, 6, Int32(message.qos.rawValue)),
+      operation: "bind message quality of service"
+    )
+    try check(
+      sqlite3_bind_int(statement, 7, message.retained ? 1 : 0),
+      operation: "bind retained-delivery metadata"
+    )
+    try check(
+      sqlite3_bind_int64(statement, 8, message.receivedAtMicroseconds),
       operation: "bind receive timestamp"
     )
     let blobResult: Int32
     if message.payload.isEmpty {
-      blobResult = sqlite3_bind_zeroblob(statement, 5, 0)
+      blobResult = sqlite3_bind_zeroblob(statement, 9, 0)
     } else {
       blobResult = message.payload.withUnsafeBytes { bytes in
         sqlite3_bind_blob(
           statement,
-          5,
+          9,
           bytes.baseAddress,
           Int32(bytes.count),
           sqliteTransient
@@ -1067,6 +1183,26 @@ public actor SQLiteHistoryStore {
         throw HistoryStorageError.invalidMessage(
           index: index,
           reason: .payloadTooLarge(byteCount: message.payload.count)
+        )
+      }
+      let hasReceivedIdentity =
+        message.connectionEpoch != nil
+        && message.connectionOrdinal != nil
+      let hasNoReceivedIdentity =
+        message.connectionEpoch == nil
+        && message.connectionOrdinal == nil
+      let identityIsValid =
+        switch message.direction {
+        case .received:
+          message.operationID == nil
+            && (hasReceivedIdentity || hasNoReceivedIdentity)
+        case .published:
+          message.operationID != nil && hasNoReceivedIdentity
+        }
+      if !identityIsValid {
+        throw HistoryStorageError.invalidMessage(
+          index: index,
+          reason: .invalidIdentity
         )
       }
     }

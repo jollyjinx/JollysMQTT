@@ -1,4 +1,5 @@
 import Foundation
+import JollysMQTTCore
 import JollysMQTTStorage
 import Testing
 
@@ -8,6 +9,64 @@ import Testing
 
 @Suite("SQLite history store")
 struct SQLiteHistoryStoreTests {
+  @Test("An outgoing operation and identical incoming echo remain distinct")
+  func outgoingAndEchoHaveDistinctIdentity() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    let payload = Data("same".utf8)
+    let operationID = PublishOperationID()
+    let epoch = UUID()
+
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        operationID: operationID,
+        direction: .published,
+        topic: "factory/status",
+        qos: .atLeastOnce,
+        retained: true,
+        receivedAtMicroseconds: 100,
+        payload: payload
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        connectionOrdinal: 1,
+        direction: .received,
+        topic: "factory/status",
+        qos: .atLeastOnce,
+        retained: false,
+        receivedAtMicroseconds: 100,
+        payload: payload
+      ),
+    ])
+
+    let messages = try await store.newestMessages(
+      historySourceID: "source-a",
+      topic: "factory/status",
+      limit: 10
+    )
+
+    #expect(messages.count == 2)
+    #expect(messages.map(\.direction) == [.received, .published])
+    #expect(messages.map(\.operationID) == [nil, operationID])
+    #expect(messages.map(\.connectionEpoch) == [epoch, nil])
+    #expect(messages.map(\.qos) == [.atLeastOnce, .atLeastOnce])
+    #expect(messages.map(\.retained) == [false, true])
+    #expect(messages[0].durableOrder != messages[1].durableOrder)
+  }
+
   @Test("Coverage gaps persist exact closed and open-ended intervals")
   func coverageGapRoundTrip() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -518,6 +577,10 @@ struct SQLiteHistoryStoreTests {
       #expect(legacy.first?.payload == Data([1]))
       #expect(legacy.first?.connectionEpoch == nil)
       #expect(legacy.first?.connectionOrdinal == nil)
+      #expect(legacy.first?.operationID == nil)
+      #expect(legacy.first?.direction == .received)
+      #expect(legacy.first?.qos == .atMostOnce)
+      #expect(legacy.first?.retained == false)
       _ = try await store.recordCoverageGap(
         HistoryCoverageGapInput(
           historySourceID: "source-a",

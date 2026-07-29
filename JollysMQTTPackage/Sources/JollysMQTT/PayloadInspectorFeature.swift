@@ -21,6 +21,7 @@ public enum PayloadInspectorJSONMode: Equatable, Sendable {
 public enum PayloadInspectorCompactSection: Equatable, Sendable {
   case topics
   case details
+  case publish
 }
 
 public enum PayloadUnavailableReason: Equatable, Sendable {

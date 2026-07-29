@@ -22,9 +22,13 @@ public actor SQLiteBrokerHistoryWriter: BrokerHistoryWriting {
       messages.map {
         HistoryMessageInput(
           historySourceID: $0.historySourceID,
-          connectionEpoch: $0.connectionEpoch.rawValue,
+          connectionEpoch: $0.connectionEpoch?.rawValue,
           connectionOrdinal: $0.ordinal,
+          operationID: $0.operationID,
+          direction: $0.direction,
           topic: $0.topic,
+          qos: $0.qos,
+          retained: $0.retained,
           receivedAtMicroseconds: $0.receivedAtMicroseconds,
           payload: $0.payload
         )

@@ -6,16 +6,7 @@ import JollysMQTTTransport
 import Network
 
 struct BrokerFeedPublishCommand: Sendable {
-  let topic: String
-  let payload: Data
-  let qos: JollysMQTTTransport.MQTTQualityOfService
-  let retain: Bool
-}
-
-enum BrokerFeedPublishEnqueueResult: Equatable, Sendable {
-  case accepted
-  case queueFull
-  case closed
+  let request: BrokerPublishRequest
 }
 
 private struct BrokerFeedLocalOverload: Error, Sendable {
@@ -26,6 +17,9 @@ private struct BrokerFeedLocalOverload: Error, Sendable {
 actor BrokerFeedPublishCommandQueue {
   private let stream: AsyncStream<BrokerFeedPublishCommand>
   private let continuation: AsyncStream<BrokerFeedPublishCommand>.Continuation
+  private var completions: [PublishOperationID: CheckedContinuation<BrokerPublishResult, Never>] =
+    [:]
+  private var isClosed = false
 
   init(capacity: Int = 32) {
     precondition(capacity > 0)
@@ -35,18 +29,37 @@ actor BrokerFeedPublishCommandQueue {
     )
   }
 
-  func enqueue(
-    _ command: BrokerFeedPublishCommand
-  ) -> BrokerFeedPublishEnqueueResult {
-    switch continuation.yield(command) {
-    case .enqueued:
-      .accepted
-    case .dropped:
-      .queueFull
-    case .terminated:
-      .closed
-    @unknown default:
-      .closed
+  func submit(_ request: BrokerPublishRequest) async -> BrokerPublishResult {
+    guard !isClosed else {
+      return .failure(.notConnected)
+    }
+    // Caller cancellation does not revoke an MQTT operation once queued. The
+    // connection session owns it until completion or structured teardown.
+    return await withCheckedContinuation { completion in
+      guard completions[request.operationID] == nil else {
+        completion.resume(returning: .failure(.transportUnavailable))
+        return
+      }
+      completions[request.operationID] = completion
+      switch continuation.yield(BrokerFeedPublishCommand(request: request)) {
+      case .enqueued:
+        break
+      case .dropped:
+        resolve(
+          operationID: request.operationID,
+          with: .failure(.queueFull)
+        )
+      case .terminated:
+        resolve(
+          operationID: request.operationID,
+          with: .failure(.notConnected)
+        )
+      @unknown default:
+        resolve(
+          operationID: request.operationID,
+          with: .failure(.notConnected)
+        )
+      }
     }
   }
 
@@ -54,8 +67,37 @@ actor BrokerFeedPublishCommandQueue {
     stream
   }
 
-  func close() {
+  func complete(_ success: BrokerPublishSuccess) {
+    resolve(operationID: success.operationID, with: .success(success))
+  }
+
+  func fail(
+    operationID: PublishOperationID,
+    reason: BrokerPublishFailure
+  ) {
+    resolve(operationID: operationID, with: .failure(reason))
+  }
+
+  func close(reason: BrokerPublishFailure = .cancelled) {
+    guard !isClosed else { return }
+    isClosed = true
     continuation.finish()
+    let pending = completions.values
+    completions.removeAll(keepingCapacity: false)
+    for completion in pending {
+      completion.resume(returning: .failure(reason))
+    }
+  }
+
+  func pendingOperationCount() -> Int {
+    completions.count
+  }
+
+  private func resolve(
+    operationID: PublishOperationID,
+    with result: BrokerPublishResult
+  ) {
+    completions.removeValue(forKey: operationID)?.resume(returning: result)
   }
 }
 
@@ -66,10 +108,11 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   private let ingressPolicy: MQTTIngressPolicy
   private let boundaryPolicy: MQTTInboundBoundaryPolicy
   private let ingestion: BrokerFeedIngestion?
-  private let publishCommands: BrokerFeedPublishCommandQueue
+  private let publishQueueCapacity: Int
   private var ownedWorkIsShutdown = false
 
   private var activeConnection: MQTTConnectionScope?
+  private var activePublishCommands: BrokerFeedPublishCommandQueue?
   private var persistentSession: MQTTInProcessSession?
   private var persistentSessionClientID: String?
 
@@ -83,16 +126,16 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     ),
     boundaryPolicy: MQTTInboundBoundaryPolicy = .init(),
     ingestion: BrokerFeedIngestion? = nil,
-    publishCommands: BrokerFeedPublishCommandQueue =
-      BrokerFeedPublishCommandQueue()
+    publishQueueCapacity: Int = 32
   ) {
+    precondition(publishQueueCapacity > 0)
     self.client = client
     self.credentialResolver = credentialResolver
     self.installationID = installationID
     self.ingressPolicy = ingressPolicy
     self.boundaryPolicy = boundaryPolicy
     self.ingestion = ingestion
-    self.publishCommands = publishCommands
+    self.publishQueueCapacity = publishQueueCapacity
   }
 
   func runAttempt(
@@ -156,8 +199,18 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   func shutdownOwnedWork() async {
     guard !ownedWorkIsShutdown else { return }
     ownedWorkIsShutdown = true
-    await publishCommands.close()
+    await activePublishCommands?.close(reason: .cancelled)
+    activePublishCommands = nil
     await ingestion?.shutdown()
+  }
+
+  func publish(
+    _ request: BrokerPublishRequest
+  ) async -> BrokerPublishResult {
+    guard !ownedWorkIsShutdown, let activePublishCommands else {
+      return .failure(.notConnected)
+    }
+    return await activePublishCommands.submit(request)
   }
 
   func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot> {
@@ -251,65 +304,131 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   ) async throws {
     await ingestion?.beginConnectionEpoch(connection.connectionEpoch)
     await events.subscribing()
+    let publishCommands = BrokerFeedPublishCommandQueue(
+      capacity: publishQueueCapacity
+    )
     let commandStream = await publishCommands.commands()
 
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask {
-        let report = try await connection.consumeBoundedSubscription(
-          to: filters,
-          policy: self.ingressPolicy,
-          boundaryPolicy: self.boundaryPolicy,
-          onSubscribed: {
-            await events.connected()
-          },
-          process: { message in
-            await self.ingestion?.ingest(
-              BrokerInboundMessage(
-                connectionEpoch: message.connectionEpoch,
-                ordinal: message.ordinal,
-                topic: message.topic,
-                payload: message.payload,
-                qos: message.qos.coreQoS,
-                retained: message.retained,
-                duplicate: message.duplicate,
-                receivedAtMicroseconds: message.receivedAtMicroseconds
+    do {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+          let report = try await connection.consumeBoundedSubscription(
+            to: filters,
+            policy: self.ingressPolicy,
+            boundaryPolicy: self.boundaryPolicy,
+            onSubscribed: {
+              await self.activatePublishCommands(publishCommands)
+              await events.connected()
+            },
+            process: { message in
+              await self.ingestion?.ingest(
+                BrokerInboundMessage(
+                  connectionEpoch: message.connectionEpoch,
+                  ordinal: message.ordinal,
+                  topic: message.topic,
+                  payload: message.payload,
+                  qos: message.qos.coreQoS,
+                  retained: message.retained,
+                  duplicate: message.duplicate,
+                  receivedAtMicroseconds: message.receivedAtMicroseconds
+                )
               )
-            )
-          }
-        )
-        if report.termination == .localOverload {
-          if let gap = report.coverageGap {
-            throw BrokerFeedLocalOverload(
-              connectionEpoch: connection.connectionEpoch,
-              gap: gap
-            )
-          }
-          throw BrokerFeedFailure.localOverload
-        }
-        throw BrokerFeedFailure.transportUnavailable
-      }
-      group.addTask {
-        for await command in commandStream {
-          try Task.checkCancellation()
-          try await connection.publish(
-            topic: command.topic,
-            payload: command.payload,
-            qos: command.qos,
-            retain: command.retain
+            }
           )
+          if report.termination == .localOverload {
+            if let gap = report.coverageGap {
+              throw BrokerFeedLocalOverload(
+                connectionEpoch: connection.connectionEpoch,
+                gap: gap
+              )
+            }
+            throw BrokerFeedFailure.localOverload
+          }
+          throw BrokerFeedFailure.transportUnavailable
         }
-        try Task.checkCancellation()
-      }
+        group.addTask {
+          for await command in commandStream {
+            try Task.checkCancellation()
+            do {
+              try await connection.publish(
+                topic: command.request.topic,
+                payload: command.request.payload,
+                qos: command.request.qos.transportQoS,
+                retain: command.request.retain
+              )
+              let success = BrokerPublishSuccess(
+                operationID: command.request.operationID,
+                completion: BrokerPublishCompletion(
+                  successfulQoS: command.request.qos
+                ),
+                completedAtMicroseconds: Int64(
+                  Date().timeIntervalSince1970 * 1_000_000
+                )
+              )
+              await self.ingestion?.recordSuccessfulPublish(
+                command.request,
+                completedAtMicroseconds: success.completedAtMicroseconds
+              )
+              await publishCommands.complete(success)
+            } catch is CancellationError {
+              await publishCommands.fail(
+                operationID: command.request.operationID,
+                reason: .cancelled
+              )
+              throw CancellationError()
+            } catch {
+              await publishCommands.fail(
+                operationID: command.request.operationID,
+                reason: .transportUnavailable
+              )
+            }
+          }
+          try Task.checkCancellation()
+        }
 
-      do {
-        _ = try await group.next()
-        group.cancelAll()
-        while (try await group.next()) != nil {}
-      } catch {
-        group.cancelAll()
-        throw error
+        do {
+          _ = try await group.next()
+          group.cancelAll()
+          while (try await group.next()) != nil {}
+        } catch {
+          group.cancelAll()
+          throw error
+        }
       }
+      await deactivatePublishCommands(
+        publishCommands,
+        reason: .transportUnavailable
+      )
+    } catch is CancellationError {
+      await deactivatePublishCommands(
+        publishCommands,
+        reason: .cancelled
+      )
+      throw CancellationError()
+    } catch {
+      await deactivatePublishCommands(
+        publishCommands,
+        reason: .transportUnavailable
+      )
+      throw error
     }
+  }
+
+  private func activatePublishCommands(
+    _ commands: BrokerFeedPublishCommandQueue
+  ) {
+    guard !ownedWorkIsShutdown else { return }
+    activePublishCommands = commands
+  }
+
+  private func deactivatePublishCommands(
+    _ commands: BrokerFeedPublishCommandQueue,
+    reason: BrokerPublishFailure
+  ) async {
+    if activePublishCommands === commands {
+      activePublishCommands = nil
+    }
+    await commands.close(reason: reason)
   }
 
   private func setActiveConnection(_ connection: MQTTConnectionScope) {

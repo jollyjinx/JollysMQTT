@@ -393,6 +393,18 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     await feed.retryHistoryPersistence()
   }
 
+  fileprivate func publish(
+    leaseID: UUID,
+    request: BrokerPublishRequest
+  ) async -> BrokerPublishResult {
+    guard let profileID = leaseProfiles[leaseID],
+      let feed = entries[profileID]?.feed
+    else {
+      return .failure(.notConnected)
+    }
+    return await feed.publish(request)
+  }
+
   fileprivate func reconnectAll(leaseID: UUID) async {
     guard let profileID = leaseProfiles[leaseID],
       var entry = entries[profileID],
@@ -845,6 +857,15 @@ public actor BrokerFeedRegistryLease: BrokerFeedLeaseControlling {
   public func retryHistoryPersistence() async {
     guard !isReleased else { return }
     await registry.retryHistoryPersistence(leaseID: id)
+  }
+
+  public func publish(
+    _ request: BrokerPublishRequest
+  ) async -> BrokerPublishResult {
+    guard !isReleased else {
+      return .failure(.notConnected)
+    }
+    return await registry.publish(leaseID: id, request: request)
   }
 
   public func cancel() async {

@@ -5,7 +5,11 @@ public struct HistoryMessageInput: Sendable, Equatable {
   public let historySourceID: String
   public let connectionEpoch: UUID?
   public let connectionOrdinal: UInt64?
+  public let operationID: PublishOperationID?
+  public let direction: PayloadDeliveryDirection
   public let topic: String
+  public let qos: MQTTQualityOfService
+  public let retained: Bool
   public let receivedAtMicroseconds: Int64
   public let payload: Data
 
@@ -13,14 +17,22 @@ public struct HistoryMessageInput: Sendable, Equatable {
     historySourceID: String,
     connectionEpoch: UUID? = nil,
     connectionOrdinal: UInt64? = nil,
+    operationID: PublishOperationID? = nil,
+    direction: PayloadDeliveryDirection = .received,
     topic: String,
+    qos: MQTTQualityOfService = .atMostOnce,
+    retained: Bool = false,
     receivedAtMicroseconds: Int64,
     payload: Data
   ) {
     self.historySourceID = historySourceID
     self.connectionEpoch = connectionEpoch
     self.connectionOrdinal = connectionOrdinal
+    self.operationID = operationID
+    self.direction = direction
     self.topic = topic
+    self.qos = qos
+    self.retained = retained
     self.receivedAtMicroseconds = receivedAtMicroseconds
     self.payload = payload
   }
@@ -31,7 +43,11 @@ public struct StoredHistoryMessage: Sendable, Equatable {
   public let historySourceID: String
   public let connectionEpoch: UUID?
   public let connectionOrdinal: UInt64?
+  public let operationID: PublishOperationID?
+  public let direction: PayloadDeliveryDirection
   public let topic: String
+  public let qos: MQTTQualityOfService
+  public let retained: Bool
   public let receivedAtMicroseconds: Int64
   public let payload: Data
 }
@@ -186,6 +202,7 @@ public enum InvalidHistoryMessageReason: Sendable, Equatable {
   case emptyTopic
   case containsNullCharacter
   case payloadTooLarge(byteCount: Int)
+  case invalidIdentity
 }
 
 public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvertible {

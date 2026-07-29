@@ -200,7 +200,8 @@ private struct ConnectedWorkspaceView: View {
       SelectedPayloadWorkspace(
         topicState: topicState,
         sceneStore: sceneStore,
-        inspectorStore: sceneStore.payloadInspector
+        inspectorStore: sceneStore.payloadInspector,
+        publishStore: sceneStore.publishComposer
       )
       if topicState.snapshot.historyIsHealthy == false {
         VStack(spacing: 8) {
@@ -239,6 +240,7 @@ private struct SelectedPayloadWorkspace: View {
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var publishStore: PublishStore
 
   var body: some View {
     ViewThatFits(in: .horizontal) {
@@ -254,11 +256,15 @@ private struct SelectedPayloadWorkspace: View {
           layout: .wide
         )
         .frame(minWidth: 360)
+        Divider()
+        PublishComposerView(store: publishStore)
+          .frame(minWidth: 320)
       }
       PayloadCompactWorkspace(
         topicState: topicState,
         sceneStore: sceneStore,
-        inspectorStore: inspectorStore
+        inspectorStore: inspectorStore,
+        publishStore: publishStore
       )
     }
   }
@@ -268,6 +274,7 @@ private struct PayloadCompactWorkspace: View {
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var publishStore: PublishStore
 
   var body: some View {
     VStack(spacing: 12) {
@@ -289,27 +296,312 @@ private struct PayloadCompactWorkspace: View {
           comment: "Compact connected-workspace payload-details destination."
         )
         .tag(PayloadInspectorCompactSection.details)
+        Text(
+          "Publish",
+          bundle: #bundle,
+          comment: "Compact connected-workspace publish destination."
+        )
+        .tag(PayloadInspectorCompactSection.publish)
       } label: {
         Text(
           "Workspace Section",
           bundle: #bundle,
-          comment: "Label for choosing Topics or Details in compact layout."
+          comment: "Label for choosing Topics, Details, or Publish in compact layout."
         )
       }
       .pickerStyle(.segmented)
 
-      if inspectorStore.state.compactSection == .topics {
+      switch inspectorStore.state.compactSection {
+      case .topics:
         TopicExplorerView(
           state: topicState,
           sceneStore: sceneStore
         )
-      } else {
+      case .details:
         PayloadInspectorPane(
           store: inspectorStore,
           layout: .compact
         )
+      case .publish:
+        PublishComposerView(store: publishStore)
       }
     }
+  }
+}
+
+private struct PublishComposerView: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
+        Text(
+          "Publish",
+          bundle: #bundle,
+          comment: "Heading for the MQTT publish composer."
+        )
+        .font(.headline)
+
+        PublishTopicField(store: store)
+        PublishPayloadEditor(store: store)
+        PublishDeliveryControls(store: store)
+        PublishPrimaryAction(store: store)
+
+        if !store.state.history.entries.isEmpty {
+          PublishDraftHistoryMenu(store: store)
+        }
+        if store.state.status != .idle {
+          PublishStatusView(status: store.state.status)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(16)
+    }
+    .accessibilityElement(children: .contain)
+  }
+}
+
+private struct PublishTopicField: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField(
+        text: Binding(
+          get: { store.state.draft.topic },
+          set: { store.send(.editTopic($0)) }
+        ),
+        prompt: Text(
+          "factory/line/status",
+          bundle: #bundle,
+          comment: "Example MQTT publication topic in the composer."
+        )
+      ) {
+        Text(
+          "Topic",
+          bundle: #bundle,
+          comment: "Label for the exact MQTT publication topic."
+        )
+      }
+      .textFieldStyle(.roundedBorder)
+      .autocorrectionDisabled()
+      #if os(iOS)
+        .textInputAutocapitalization(.never)
+      #endif
+
+      if store.state.topicWasManuallyEdited,
+        store.state.selectedTopic != nil
+      {
+        Button {
+          store.send(.followSelectedTopic)
+        } label: {
+          Text(
+            "Use Selected Topic",
+            bundle: #bundle,
+            comment: "Re-enables publish-topic prefill from outline selection."
+          )
+        }
+        .buttonStyle(.bordered)
+      }
+    }
+  }
+}
+
+private struct PublishPayloadEditor: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Picker(
+        selection: Binding(
+          get: { store.state.draft.inputMode },
+          set: { store.send(.setInputMode($0)) }
+        )
+      ) {
+        Text(
+          "Text",
+          bundle: #bundle,
+          comment: "Publish composer UTF-8 text input mode."
+        )
+        .tag(PublishInputMode.text)
+        Text(
+          "JSON",
+          bundle: #bundle,
+          comment: "Publish composer JSON input mode."
+        )
+        .tag(PublishInputMode.json)
+        Text(
+          "Hex",
+          bundle: #bundle,
+          comment: "Publish composer hexadecimal byte input mode."
+        )
+        .tag(PublishInputMode.hex)
+      } label: {
+        Text(
+          "Input Mode",
+          bundle: #bundle,
+          comment: "Label for choosing how publish payload input is decoded."
+        )
+      }
+      .pickerStyle(.segmented)
+
+      TextEditor(
+        text: Binding(
+          get: { store.state.draft.payloadSource },
+          set: { store.send(.editPayload($0)) }
+        )
+      )
+      .font(.body.monospaced())
+      .frame(minHeight: 160)
+      .padding(8)
+      .background(.quaternary, in: .rect(cornerRadius: 8))
+      .accessibilityLabel(
+        Text(
+          "Payload",
+          bundle: #bundle,
+          comment: "Accessible label for the MQTT publish payload editor."
+        )
+      )
+
+      if store.state.draft.inputMode == .json {
+        Button {
+          store.send(.formatJSON)
+        } label: {
+          Text(
+            "Validate and Format JSON",
+            bundle: #bundle,
+            comment: "Validates and pretty-prints JSON in the publish composer."
+          )
+        }
+        .buttonStyle(.bordered)
+      }
+    }
+  }
+}
+
+private struct PublishDeliveryControls: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Picker(
+        selection: Binding(
+          get: { store.state.draft.qos },
+          set: { store.send(.setQoS($0)) }
+        )
+      ) {
+        ForEach(
+          JollysMQTTCore.MQTTQualityOfService.allCases,
+          id: \.rawValue
+        ) { qos in
+          Text(
+            "QoS \(qos.rawValue)",
+            bundle: #bundle,
+            comment: "MQTT publication quality of service option."
+          )
+          .tag(qos)
+        }
+      } label: {
+        Text(
+          "Quality of Service",
+          bundle: #bundle,
+          comment: "Label for the MQTT publish QoS picker."
+        )
+      }
+      .pickerStyle(.segmented)
+
+      Toggle(
+        isOn: Binding(
+          get: { store.state.draft.retain },
+          set: { store.send(.setRetain($0)) }
+        )
+      ) {
+        Text(
+          "Retain",
+          bundle: #bundle,
+          comment: "Requests broker retention for the MQTT publication."
+        )
+      }
+    }
+  }
+}
+
+private struct PublishPrimaryAction: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    Button {
+      store.publish()
+    } label: {
+      if store.state.isPublishing {
+        HStack(spacing: 8) {
+          ProgressView()
+            .controlSize(.small)
+          Text(
+            "Publishing",
+            bundle: #bundle,
+            comment: "Publish button label while awaiting transport completion."
+          )
+        }
+      } else {
+        Text(
+          "Publish",
+          bundle: #bundle,
+          comment: "Sends the composed MQTT publication."
+        )
+      }
+    }
+    .buttonStyle(.borderedProminent)
+    .keyboardShortcut(.return, modifiers: .command)
+    .disabled(store.state.isPublishing)
+    .accessibilityHint(
+      Text(
+        "Command-Return",
+        bundle: #bundle,
+        comment: "Keyboard shortcut hint for publishing the current draft."
+      )
+    )
+  }
+}
+
+private struct PublishDraftHistoryMenu: View {
+  @Bindable var store: PublishStore
+
+  var body: some View {
+    Menu {
+      ForEach(store.state.history.entries) { entry in
+        Button {
+          store.send(.restoreHistory(entry.id))
+        } label: {
+          Text(verbatim: entry.draft.historyLabel)
+        }
+      }
+    } label: {
+      Label {
+        Text(
+          "Successful Drafts",
+          bundle: #bundle,
+          comment: "Opens bounded history of successfully published drafts."
+        )
+      } icon: {
+        Image(systemName: "clock.arrow.circlepath")
+      }
+    }
+  }
+}
+
+private struct PublishStatusView: View {
+  let status: PublishStatus
+
+  var body: some View {
+    Label {
+      Text(status.localizedDescription)
+    } icon: {
+      Image(systemName: status.systemImage)
+    }
+    .font(.caption)
+    .foregroundStyle(status.isFailure ? Color.red : Color.secondary)
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -865,6 +1157,149 @@ extension PayloadCopyOutcome {
   fileprivate var isSuccess: Bool {
     if case .succeeded = self { return true }
     return false
+  }
+}
+
+extension PublishDraft {
+  var historyLabel: String {
+    let topicPreview =
+      String(topic.prefix(80))
+      + (topic.count > 80 ? "…" : "")
+    let compactPayload =
+      payloadSource
+      .replacingOccurrences(of: "\n", with: " ")
+      .replacingOccurrences(of: "\r", with: " ")
+    let preview =
+      String(compactPayload.prefix(32))
+      + (compactPayload.count > 32 ? "…" : "")
+    return preview.isEmpty
+      ? topicPreview
+      : "\(topicPreview) — \(preview)"
+  }
+}
+
+extension PublishStatus {
+  var systemImage: String {
+    switch self {
+    case .idle:
+      "circle"
+    case .publishing:
+      "clock.arrow.circlepath"
+    case .succeeded:
+      "checkmark.circle"
+    case .rejected:
+      "exclamationmark.triangle"
+    }
+  }
+
+  fileprivate var isFailure: Bool {
+    if case .rejected = self { return true }
+    return false
+  }
+
+  fileprivate var localizedDescription: LocalizedStringResource {
+    switch self {
+    case .idle:
+      LocalizedStringResource(
+        "Ready to publish",
+        bundle: #bundle,
+        comment: "Neutral MQTT publish composer state."
+      )
+    case .publishing:
+      LocalizedStringResource(
+        "Waiting for MQTT completion",
+        bundle: #bundle,
+        comment: "Publish state while transport acceptance or acknowledgement is pending."
+      )
+    case .succeeded(let success):
+      switch success.completion {
+      case .transportAccepted:
+        LocalizedStringResource(
+          "QoS 0 publish accepted by the transport",
+          bundle: #bundle,
+          comment: "Honest success description for an MQTT QoS 0 publish."
+        )
+      case .acknowledged:
+        LocalizedStringResource(
+          "Publish acknowledged by the broker",
+          bundle: #bundle,
+          comment: "Honest success description for an MQTT QoS 1 or 2 publish."
+        )
+      }
+    case .rejected(let failure):
+      failure.localizedDescription
+    }
+  }
+}
+
+extension BrokerPublishFailure {
+  fileprivate var localizedDescription: LocalizedStringResource {
+    switch self {
+    case .invalidDraft(let validation):
+      validation.localizedDescription
+    case .notConnected:
+      LocalizedStringResource(
+        "Connect to the broker before publishing.",
+        bundle: #bundle,
+        comment: "Publish rejection when no connected feed can accept a command."
+      )
+    case .queueFull:
+      LocalizedStringResource(
+        "The publish queue is full. Nothing was sent.",
+        bundle: #bundle,
+        comment: "Synchronous visible rejection before MQTT transport is called."
+      )
+    case .transportUnavailable:
+      LocalizedStringResource(
+        "The publish did not complete.",
+        bundle: #bundle,
+        comment: "Publish failure after the transport could not complete the operation."
+      )
+    case .cancelled:
+      LocalizedStringResource(
+        "The publish was cancelled.",
+        bundle: #bundle,
+        comment: "Publish failure when its connection or owning feed is cancelled."
+      )
+    }
+  }
+}
+
+extension PublishDraftValidationError {
+  fileprivate var localizedDescription: LocalizedStringResource {
+    switch self {
+    case .invalidTopic:
+      LocalizedStringResource(
+        "Enter a valid publication topic without + or # wildcards.",
+        bundle: #bundle,
+        comment: "Validation error for an invalid MQTT publication topic."
+      )
+    case .invalidJSON:
+      LocalizedStringResource(
+        "Enter valid JSON for JSON mode.",
+        bundle: #bundle,
+        comment: "Validation error for malformed publish JSON."
+      )
+    case .invalidHex:
+      LocalizedStringResource(
+        "Enter hexadecimal byte pairs separated only by whitespace.",
+        bundle: #bundle,
+        comment: "Validation error for malformed hexadecimal publish input."
+      )
+    case .retainedDeletionRequiresConfirmation:
+      LocalizedStringResource(
+        "A retained zero-byte publish deletes a retained value and requires confirmation.",
+        bundle: #bundle,
+        comment: "Blocks an unconfirmed destructive retained-value deletion."
+      )
+    case .payloadTooLarge(let byteCount, let maximumByteCount):
+      LocalizedStringResource(
+        "The \(byteCount)-byte payload exceeds the \(maximumByteCount)-byte publish limit.",
+        bundle: #bundle,
+        comment:
+          "Publish payload limit error. The first variable is actual bytes; the second is the maximum."
+      )
+    }
   }
 }
 

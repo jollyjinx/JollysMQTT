@@ -136,6 +136,15 @@ private actor WorkspaceBrokerFeedLease: BrokerFeedLeaseControlling {
     await currentFeed?.reconnectAllToApply()
   }
 
+  func publish(
+    _ request: BrokerPublishRequest
+  ) async -> BrokerPublishResult {
+    guard let currentFeed else {
+      return .failure(.notConnected)
+    }
+    return await currentFeed.publish(request)
+  }
+
   func release() async {
     let feed = currentFeed
     let observer = observationTask
@@ -262,6 +271,7 @@ public final class WorkspaceSceneStore {
   public let connection: ConnectionStore
   public let topics: TopicOutlineStore
   public let payloadInspector: PayloadInspectorStore
+  public let publishComposer: PublishStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -288,6 +298,8 @@ public final class WorkspaceSceneStore {
     self.topics = TopicOutlineStore(feed: feed)
     let payloadInspector = PayloadInspectorStore()
     self.payloadInspector = payloadInspector
+    let publishComposer = PublishStore(publisher: feed)
+    self.publishComposer = publishComposer
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
@@ -307,9 +319,13 @@ public final class WorkspaceSceneStore {
         await workspace.flush()
       }
     )
-    self.topics.onPayloadSelectionChange = { [weak payloadInspector] selection in
+    self.topics.onPayloadSelectionChange = {
+      [weak payloadInspector, weak publishComposer] selection in
       payloadInspector?.send(
         .selectionChanged(selection)
+      )
+      publishComposer?.send(
+        .selectionChanged(selection.topic)
       )
     }
   }

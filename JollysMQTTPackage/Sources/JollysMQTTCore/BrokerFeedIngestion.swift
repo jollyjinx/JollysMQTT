@@ -39,13 +39,47 @@ public struct BrokerInboundMessage: Equatable, Sendable {
   }
 }
 
+public enum BrokerHistoryMessageIdentity: Equatable, Sendable {
+  case received(connectionEpoch: ConnectionEpochID, ordinal: UInt64)
+  case published(operationID: PublishOperationID)
+}
+
 public struct BrokerHistoryMessage: Equatable, Sendable {
   public let historySourceID: String
-  public let connectionEpoch: ConnectionEpochID
-  public let ordinal: UInt64
+  public let identity: BrokerHistoryMessageIdentity
   public let topic: String
   public let payload: Data
+  public let qos: MQTTQualityOfService
+  public let retained: Bool
   public let receivedAtMicroseconds: Int64
+
+  public var direction: PayloadDeliveryDirection {
+    switch identity {
+    case .received: .received
+    case .published: .published
+    }
+  }
+
+  public var connectionEpoch: ConnectionEpochID? {
+    guard case .received(let connectionEpoch, _) = identity else {
+      return nil
+    }
+    return connectionEpoch
+  }
+
+  public var ordinal: UInt64? {
+    guard case .received(_, let ordinal) = identity else {
+      return nil
+    }
+    return ordinal
+  }
+
+  public var operationID: PublishOperationID? {
+    guard case .published(let operationID) = identity else {
+      return nil
+    }
+    return operationID
+  }
 
   public init(
     historySourceID: String,
@@ -53,14 +87,38 @@ public struct BrokerHistoryMessage: Equatable, Sendable {
     ordinal: UInt64,
     topic: String,
     payload: Data,
+    qos: MQTTQualityOfService = .atMostOnce,
+    retained: Bool = false,
     receivedAtMicroseconds: Int64
   ) {
     self.historySourceID = historySourceID
-    self.connectionEpoch = connectionEpoch
-    self.ordinal = ordinal
+    self.identity = .received(
+      connectionEpoch: connectionEpoch,
+      ordinal: ordinal
+    )
     self.topic = topic
     self.payload = payload
+    self.qos = qos
+    self.retained = retained
     self.receivedAtMicroseconds = receivedAtMicroseconds
+  }
+
+  public init(
+    historySourceID: String,
+    operationID: PublishOperationID,
+    topic: String,
+    payload: Data,
+    qos: MQTTQualityOfService,
+    retained: Bool,
+    completedAtMicroseconds: Int64
+  ) {
+    self.historySourceID = historySourceID
+    self.identity = .published(operationID: operationID)
+    self.topic = topic
+    self.payload = payload
+    self.qos = qos
+    self.retained = retained
+    self.receivedAtMicroseconds = completedAtMicroseconds
   }
 }
 
@@ -447,18 +505,42 @@ public actor BrokerFeedIngestion {
     }
     insert(message)
     schedulePresentation()
+    await recordHistory(
+      BrokerHistoryMessage(
+        historySourceID: historySourceID,
+        connectionEpoch: message.connectionEpoch,
+        ordinal: message.ordinal,
+        topic: message.topic,
+        payload: message.payload,
+        qos: message.qos,
+        retained: message.retained,
+        receivedAtMicroseconds: message.receivedAtMicroseconds
+      )
+    )
+  }
+
+  public func recordSuccessfulPublish(
+    _ request: BrokerPublishRequest,
+    completedAtMicroseconds: Int64
+  ) async {
+    guard !isShutdownRequested else { return }
+    await recordHistory(
+      BrokerHistoryMessage(
+        historySourceID: historySourceID,
+        operationID: request.operationID,
+        topic: request.topic,
+        payload: request.payload,
+        qos: request.qos,
+        retained: request.retain,
+        completedAtMicroseconds: completedAtMicroseconds
+      )
+    )
+  }
+
+  private func recordHistory(_ message: BrokerHistoryMessage) async {
     await waitForHistoryRecoveryIfNeeded()
     if historyIsHealthy {
-      pendingHistory.append(
-        BrokerHistoryMessage(
-          historySourceID: historySourceID,
-          connectionEpoch: message.connectionEpoch,
-          ordinal: message.ordinal,
-          topic: message.topic,
-          payload: message.payload,
-          receivedAtMicroseconds: message.receivedAtMicroseconds
-        )
-      )
+      pendingHistory.append(message)
     } else {
       addMissingHistoryMessage(message)
     }
@@ -905,9 +987,7 @@ public actor BrokerFeedIngestion {
     }
   }
 
-  private func addMissingHistoryMessage(
-    _ message: BrokerInboundMessage
-  ) {
+  private func addMissingHistoryMessage(_ message: BrokerHistoryMessage) {
     unpersistedMessageCount += 1
     mergePendingHistoryGap(
       BrokerHistoryCoverageGap(

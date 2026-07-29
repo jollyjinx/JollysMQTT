@@ -639,6 +639,44 @@ struct BrokerFeedIngestionTests {
     #expect(await ingestion.flush().unpersistedMessageCount == 7)
   }
 
+  @Test("A successful publish is durable with its operation identity")
+  func successfulPublishHistoryIdentity() async throws {
+    let writer = RecordingHistoryWriter()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 1,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+    let operationID = PublishOperationID()
+    let request = BrokerPublishRequest(
+      operationID: operationID,
+      topic: "factory/command",
+      payload: Data("start".utf8),
+      qos: .exactlyOnce,
+      retain: true
+    )
+
+    await ingestion.recordSuccessfulPublish(
+      request,
+      completedAtMicroseconds: 123
+    )
+
+    let message = try #require(await writer.messages.first)
+    #expect(message.identity == .published(operationID: operationID))
+    #expect(message.connectionEpoch == nil)
+    #expect(message.ordinal == nil)
+    #expect(message.topic == request.topic)
+    #expect(message.payload == request.payload)
+    #expect(message.qos == request.qos)
+    #expect(message.retained == request.retain)
+    #expect(message.receivedAtMicroseconds == 123)
+  }
+
   @Test("Failed overload recording preserves an existing storage gap")
   func overloadFailurePreservesStorageCoverageUntilAtomicRecovery() async throws {
     let writer = MultipleGapRecoveryWriter()
@@ -812,10 +850,12 @@ struct BrokerFeedIngestionTests {
 
 private actor RecordingHistoryWriter: BrokerHistoryWriting {
   private(set) var ordinals: [[UInt64]] = []
+  private(set) var messages: [BrokerHistoryMessage] = []
   private(set) var coverageGaps: [BrokerHistoryCoverageGap] = []
 
   func append(_ messages: [BrokerHistoryMessage]) async throws {
-    ordinals.append(messages.map(\.ordinal))
+    self.messages.append(contentsOf: messages)
+    ordinals.append(messages.compactMap(\.ordinal))
   }
 
   func recordCoverageGap(
@@ -888,7 +928,7 @@ private actor RecoveringHistoryWriter: BrokerHistoryWriting {
       appendFails = false
       throw FailingHistoryError()
     }
-    appendedOrdinals.append(contentsOf: messages.map(\.ordinal))
+    appendedOrdinals.append(contentsOf: messages.compactMap(\.ordinal))
   }
 
   func recordCoverageGap(
@@ -945,7 +985,7 @@ private actor MultipleGapRecoveryWriter: BrokerHistoryWriting {
       appendFails = false
       throw FailingHistoryError()
     }
-    appendedOrdinals.append(contentsOf: messages.map(\.ordinal))
+    appendedOrdinals.append(contentsOf: messages.compactMap(\.ordinal))
   }
 
   func recordCoverageGap(
@@ -1069,7 +1109,7 @@ private actor AdversarialHistoryWriter: BrokerHistoryWriting {
 
   func append(_ messages: [BrokerHistoryMessage]) async throws {
     activeAppendCount += 1
-    let ordinals = messages.map(\.ordinal)
+    let ordinals = messages.compactMap(\.ordinal)
     events.append("append-start:\(ordinals)")
     if !firstAppendStarted {
       firstAppendStarted = true

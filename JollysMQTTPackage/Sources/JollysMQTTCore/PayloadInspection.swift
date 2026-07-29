@@ -55,6 +55,17 @@ public enum PayloadTopicSelection: Equatable, Sendable {
   case noCurrentValue(BrokerTopicID)
   case stale(BrokerTopicID)
   case current(PayloadMessage)
+
+  public var topic: String? {
+    switch self {
+    case .none:
+      nil
+    case .noCurrentValue(let id), .stale(let id):
+      id.fullTopic
+    case .current(let message):
+      message.topicID.fullTopic
+    }
+  }
 }
 
 extension BrokerTopicTreeSnapshot {

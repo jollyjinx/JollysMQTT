@@ -40,6 +40,9 @@
     "A received MQTT payload exceeded the configured size limit." : {
 
     },
+    "A retained zero-byte publish deletes a retained value and requires confirmation." : {
+      "comment" : "Blocks an unconfirmed destructive retained-value deletion."
+    },
     "Add Broker" : {
       "comment" : "Toolbar action that creates a broker profile."
     },
@@ -106,8 +109,14 @@
     "Collapse Topic" : {
       "comment" : "Accessible action that collapses a topic branch."
     },
+    "Command-Return" : {
+      "comment" : "Keyboard shortcut hint for publishing the current draft."
+    },
     "Connect" : {
       "comment" : "Primary action that connects to a selected broker."
+    },
+    "Connect to the broker before publishing." : {
+      "comment" : "Publish rejection when no connected feed can accept a command."
     },
     "Connected" : {
       "comment" : "Broker connection phase shown after subscribing succeeds."
@@ -199,8 +208,17 @@
     "Enter a valid keepalive interval." : {
       "comment" : "Validation error for MQTT keepalive."
     },
+    "Enter a valid publication topic without + or # wildcards." : {
+      "comment" : "Validation error for an invalid MQTT publication topic."
+    },
     "Enter a valid username." : {
       "comment" : "Validation error for an invalid MQTT username."
+    },
+    "Enter hexadecimal byte pairs separated only by whitespace." : {
+      "comment" : "Validation error for malformed hexadecimal publish input."
+    },
+    "Enter valid JSON for JSON mode." : {
+      "comment" : "Validation error for malformed publish JSON."
     },
     "Expand Topic" : {
       "comment" : "Accessible action that expands a topic branch."
@@ -217,6 +235,9 @@
     "Freeze View" : {
       "comment" : "Pauses presentation updates while live topic ingestion continues."
     },
+    "Hex" : {
+      "comment" : "Publish composer hexadecimal byte input mode."
+    },
     "History is degraded. Live topics are still updating, but %lld messages are not covered by durable history." : {
       "comment" : "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
     },
@@ -229,8 +250,14 @@
     "Initial delay: %lld seconds" : {
       "comment" : "Reconnect initial delay. The variable is a number of seconds."
     },
+    "Input Mode" : {
+      "comment" : "Label for choosing how publish payload input is decoded."
+    },
     "Inspecting Payload" : {
       "comment" : "Progress label while the selected MQTT payload is parsed."
+    },
+    "JSON" : {
+      "comment" : "Publish composer JSON input mode."
     },
     "JSON Presentation" : {
       "comment" : "Label for choosing structural or raw JSON presentation."
@@ -361,6 +388,9 @@
     "Passwords are stored separately on this device." : {
       "comment" : "Explains that secret material is outside the profile editor model."
     },
+    "Payload" : {
+      "comment" : "Accessible label for the MQTT publish payload editor."
+    },
     "Persistent sessions require a stable client ID." : {
       "comment" : "Validation error for incompatible MQTT session settings."
     },
@@ -376,14 +406,29 @@
     "Profile changes could not be saved." : {
       "comment" : "Error shown when local profile persistence fails."
     },
+    "Publish" : {
+      "comment" : "Compact connected-workspace publish destination.\nHeading for the MQTT publish composer.\nSends the composed MQTT publication."
+    },
+    "Publish acknowledged by the broker" : {
+      "comment" : "Honest success description for an MQTT QoS 1 or 2 publish."
+    },
     "Published" : {
       "comment" : "Direction of an outgoing MQTT publish."
+    },
+    "Publishing" : {
+      "comment" : "Publish button label while awaiting transport completion."
     },
     "QoS" : {
       "comment" : "Label for MQTT requested quality of service."
     },
     "QoS %lld" : {
-      "comment" : "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
+      "comment" : "MQTT publication quality of service option.\nMQTT quality-of-service metadata. The variable is 0, 1, or 2."
+    },
+    "QoS 0 publish accepted by the transport" : {
+      "comment" : "Honest success description for an MQTT QoS 0 publish."
+    },
+    "Quality of Service" : {
+      "comment" : "Label for the MQTT publish QoS picker."
     },
     "Random per Connection" : {
       "comment" : "Client ID mode that creates an ID for every clean connection."
@@ -393,6 +438,9 @@
     },
     "Ready to connect to %@." : {
       "comment" : "Placeholder connected state. The variable is a broker profile name."
+    },
+    "Ready to publish" : {
+      "comment" : "Neutral MQTT publish composer state."
     },
     "Received" : {
       "comment" : "Direction of an incoming MQTT publish."
@@ -414,6 +462,9 @@
     },
     "Resolving broker" : {
       "comment" : "Broker connection phase shown before opening the transport."
+    },
+    "Retain" : {
+      "comment" : "Requests broker retention for the MQTT publication."
     },
     "Retained delivery" : {
       "comment" : "Indicates that the latest MQTT delivery carried the retained flag."
@@ -516,6 +567,9 @@
     "Subscriptions" : {
       "comment" : "Header for MQTT subscription filters."
     },
+    "Successful Drafts" : {
+      "comment" : "Opens bounded history of successfully published drafts."
+    },
     "Suspended" : {
       "comment" : "Broker connection phase shown while a scene is dormant."
     },
@@ -524,6 +578,20 @@
     },
     "TLS" : {
       "comment" : "System-trust TLS broker transport."
+    },
+    "Text" : {
+      "comment" : "Publish composer UTF-8 text input mode."
+    },
+    "The %lld-byte payload exceeds the %lld-byte publish limit." : {
+      "comment" : "Publish payload limit error. The first variable is actual bytes; the second is the maximum.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The %1$lld-byte payload exceeds the %2$lld-byte publish limit."
+          }
+        }
+      }
     },
     "The MQTT session is already in use." : {
       "comment" : "Explains a terminal duplicate MQTT session failure."
@@ -564,6 +632,15 @@
     "The password is stored only in this device’s Keychain." : {
       "comment" : "Privacy explanation below transient broker password entry."
     },
+    "The publish did not complete." : {
+      "comment" : "Publish failure after the transport could not complete the operation."
+    },
+    "The publish queue is full. Nothing was sent." : {
+      "comment" : "Synchronous visible rejection before MQTT transport is called."
+    },
+    "The publish was cancelled." : {
+      "comment" : "Publish failure when its connection or owning feed is cancelled."
+    },
     "The reconnect delays are incompatible." : {
       "comment" : "Validation error for reconnect delay settings."
     },
@@ -575,6 +652,9 @@
     },
     "This cached topic has not been observed in the current connection. Its old payload is not shown as current." : {
       "comment" : "Explains why a stale cached MQTT payload is suppressed."
+    },
+    "Topic" : {
+      "comment" : "Label for the exact MQTT publication topic."
     },
     "Topic %@" : {
       "comment" : "Accessible exact MQTT topic in the payload inspector."
@@ -597,8 +677,17 @@
     "Try a different topic path or current value." : {
       "comment" : "Description shown when no indexed topic or payload summary matches search."
     },
+    "Use Selected Topic" : {
+      "comment" : "Re-enables publish-topic prefill from outline selection."
+    },
     "Username" : {
       "comment" : "Label for the optional MQTT username."
+    },
+    "Validate and Format JSON" : {
+      "comment" : "Validates and pretty-prints JSON in the publish composer."
+    },
+    "Waiting for MQTT completion" : {
+      "comment" : "Publish state while transport acceptance or acknowledgement is pending."
     },
     "Waiting for Topics" : {
       "comment" : "Empty topic explorer title before live messages arrive."
@@ -607,13 +696,16 @@
       "comment" : "Broker connection phase shown during automatic backoff."
     },
     "Workspace Section" : {
-      "comment" : "Label for choosing Topics or Details in compact layout."
+      "comment" : "Label for choosing Topics, Details, or Publish in compact layout."
     },
     "Workspace State Unavailable" : {
       "comment" : "Title for workspace restoration or persistence failure."
     },
     "Workspace state could not be restored or saved. Existing data was left unchanged." : {
       "comment" : "Explains a workspace restoration or persistence failure."
+    },
+    "factory/line/status" : {
+      "comment" : "Example MQTT publication topic in the composer."
     }
   },
   "version" : "1.0"

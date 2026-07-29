@@ -379,6 +379,7 @@ public protocol BrokerFeedAttempting: Sendable {
   func retryHistoryPersistence() async -> Bool
   func shutdownOwnedWork() async throws
   func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
+  func publish(_ request: BrokerPublishRequest) async -> BrokerPublishResult
 }
 
 extension BrokerFeedAttempting {
@@ -394,6 +395,12 @@ extension BrokerFeedAttempting {
     continuation.yield(.empty)
     continuation.finish()
     return stream
+  }
+
+  public func publish(
+    _ request: BrokerPublishRequest
+  ) -> BrokerPublishResult {
+    .failure(.notConnected)
   }
 }
 
@@ -441,7 +448,7 @@ public struct BrokerFeedJitter: Sendable {
   }
 }
 
-public protocol BrokerFeedLeaseControlling: Sendable {
+public protocol BrokerFeedLeaseControlling: BrokerPublishing, Sendable {
   func snapshots() async -> AsyncStream<BrokerFeedSnapshot>
   func topicSnapshots() async -> AsyncStream<BrokerTopicTreeSnapshot>
   func connect(_ configuration: BrokerFeedConfiguration) async
@@ -457,6 +464,12 @@ extension BrokerFeedLeaseControlling {
   public func retryHistoryPersistence() async {}
 
   public func reconnectAllToApply() async {}
+
+  public func publish(
+    _ request: BrokerPublishRequest
+  ) -> BrokerPublishResult {
+    .failure(.notConnected)
+  }
 
   public func topicSnapshots() -> AsyncStream<BrokerTopicTreeSnapshot> {
     let (stream, continuation) = AsyncStream.makeStream(
@@ -539,6 +552,15 @@ public actor BrokerFeed: BrokerFeedLeaseControlling {
 
   public func retryHistoryPersistence() async {
     _ = await attempt.retryHistoryPersistence()
+  }
+
+  public func publish(
+    _ request: BrokerPublishRequest
+  ) async -> BrokerPublishResult {
+    guard !isReleased, current.phase == .connected else {
+      return .failure(.notConnected)
+    }
+    return await attempt.publish(request)
   }
 
   public func cancel() async {
