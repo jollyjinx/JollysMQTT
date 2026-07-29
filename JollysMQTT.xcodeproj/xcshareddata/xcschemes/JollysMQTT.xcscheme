@@ -39,6 +39,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "B06483C61BBAF33C79210ECC"
+               BuildableName = "JollysMQTTUITests.xctest"
+               BlueprintName = "JollysMQTTUITests"
+               ReferencedContainer = "container:JollysMQTT.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

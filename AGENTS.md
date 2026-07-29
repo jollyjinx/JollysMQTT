@@ -31,8 +31,8 @@ The repository is currently in the planning phase. Read
 | `JollysMQTTApp/` | Thin `@main` scene declaration, assets, plists, app icon |
 | `JollysMQTTPackage/Sources/JollysMQTTCore/` | Domain values, feature state/reducers, topic trie, payload interpretation |
 | `JollysMQTTPackage/Sources/JollysMQTTTransport/` | The only target that imports mqtt-nio/NIO |
-| `JollysMQTTPackage/Sources/JollysMQTTStorage/` | Profiles, iCloud merge, Keychain credentials, local history, workspace records |
-| `JollysMQTTPackage/Sources/CSQLite/` | Module map for the system SQLite library, if the history benchmark confirms the planned SQLite backend |
+| `JollysMQTTPackage/Sources/JollysMQTTStorage/` | Profiles, encrypted CloudKit sync, Keychain credentials, local SQLite history, workspace records |
+| `JollysMQTTPackage/Sources/CSQLite/` | Module map for the system SQLite library |
 | `JollysMQTTPackage/Sources/JollysMQTT/` | Reusable SwiftUI root, window workspace UI, platform adapters, Charts |
 | `JollysMQTTPackage/Tests/` | Unit, reducer, persistence, transport, and integration tests |
 | `AI/` | Architecture, decisions, implementation plans, and durable findings |
@@ -50,6 +50,9 @@ declared by an application bundle.
 - Pool a live feed by its effective connection configuration. Multiple windows
   for the same profile have independent UI state but normally share one MQTT
   connection, topic index, and history writer.
+- Allow only one active effective configuration for a profile. Saving
+  connection-affecting edits never mutates a running feed; applying them
+  requires an explicit reconnect of all attached workspaces.
 - Use feature-scoped MVI for workflows; do not create a single app-wide
   reducer containing every topic update.
 - Views render state and send intents. They do not call mqtt-nio, Keychain,
@@ -64,21 +67,40 @@ declared by an application bundle.
   collection indices or regenerated UUIDs for outline identity.
 - Coalesce high-frequency transport events before updating SwiftUI. Do not
   invalidate the whole topic outline for every MQTT message.
+- Treat the mqtt-nio subscription sequence as an unbounded upstream edge.
+  Consume it into an explicitly bounded ingress queue and disconnect with a
+  visible overload error rather than allowing unbounded memory growth.
+- The application queue does not bound mqtt-nio's internal buffer. Milestone 0
+  must measure total-process memory under overload; feature work is blocked on
+  an upstream fix, a narrow patch, or a verified newer release if teardown
+  cannot satisfy the memory budget.
 
 ## Persistence and privacy
 
-- Synchronize broker profile metadata through iCloud key-value storage.
+- Synchronize broker profile metadata through encrypted fields in the user's
+  private CloudKit database in official signed builds. Keep a local-first
+  profile replica so the app remains usable without an iCloud account,
+  network, CloudKit entitlement, or configured container.
+- Open-source and self-built variants default to local-only profiles unless
+  their builder supplies an Apple team, bundle identifier, CloudKit container,
+  entitlements, and schema. Never grant third-party builds access to the
+  official production container.
 - Store passwords and private keys in Keychain, never in profile JSON, iCloud
-  KVS, logs, fixtures, or documentation.
+  records, logs, fixtures, or documentation.
 - Credentials are device-local in the first release. A device receiving a
   synced profile without credentials prompts on connect.
 - Window/workspace state and message history are local to a device. They are
   not iCloud-synchronized.
 - Preserve deleted-profile tombstones long enough to prevent an older device
-  from resurrecting deleted profiles.
+  from resurrecting deleted profiles. V1 retains them indefinitely; do not
+  introduce time-based compaction without proof that every returning replica
+  has observed the deletion.
 - Treat broker addresses, usernames, topic names, payloads, and history as
   private data.
 - Do not log payload bodies or credentials by default.
+- Protect local profile, workspace, and history files with platform data
+  protection where available and exclude volatile message history from device
+  backups.
 
 ## mqtt-nio dependency rule
 
@@ -103,6 +125,8 @@ configuration. Do not inherit mqtt-nio's default POSIX event loop on iOS.
 
 ## UI rules
 
+- Follow `AI/MACOS_WORKSPACE_LAYOUT.md` for connected macOS toolbar placement,
+  split-view sizing, desktop row density, and exceptional-state banners.
 - New macOS windows (`Command-N`) and new iPad scenes start at the server list.
 - Connecting transforms the current workspace; it does not implicitly create a
   second window.

@@ -31,7 +31,8 @@ struct LocalWorkspaceRepositoryTests {
       selectedTopic: "factory/line/status",
       expandedTopics: ["factory", "factory/line"],
       topicSearchText: "status",
-      topicSortMode: .recentActivity
+      topicSortMode: .recentActivity,
+      destination: .charts
     )
     let repository = LocalWorkspaceRepository(directoryURL: fixture.directory)
 
@@ -201,6 +202,7 @@ struct LocalWorkspaceRepositoryTests {
     #expect(record.expandedTopics.isEmpty)
     #expect(record.topicSearchText.isEmpty)
     #expect(record.topicSortMode == .name)
+    #expect(record.destination == .topics)
     #expect(record.numericChart == nil)
   }
 

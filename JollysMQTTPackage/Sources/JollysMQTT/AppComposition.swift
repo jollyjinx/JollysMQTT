@@ -535,6 +535,14 @@ public final class WorkspaceSceneStore {
     set { setTopicSortMode(newValue) }
   }
 
+  public var destination: WorkspaceDestination {
+    get { workspace.state.record.destination }
+    set {
+      payloadInspector.send(.setCompactSection(newValue))
+      workspace.sendImmediately(.setDestination(newValue))
+    }
+  }
+
   public func run() async {
     guard !hasRun else { return }
     hasRun = true
@@ -566,6 +574,9 @@ public final class WorkspaceSceneStore {
     await workspace.load()
     numericChartDashboard.restore(
       workspace.state.record.numericChartDashboard
+    )
+    payloadInspector.send(
+      .setCompactSection(workspace.state.record.destination)
     )
     let expectedBrokerID: UUID?
     switch workspace.state.record.route {
@@ -692,8 +703,12 @@ public final class WorkspaceSceneStore {
     else {
       return
     }
+    guard selectedTopicID != id else { return }
     topics.send(.selectTopic(id))
     workspace.sendImmediately(.selectTopic(id?.fullTopic))
+    if case .current = topics.state.payloadSelection {
+      destination = .details
+    }
   }
 
   public func toggleTopicExpansion(_ id: BrokerTopicID) {

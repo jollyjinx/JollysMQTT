@@ -25,6 +25,28 @@ struct WorkspaceFeatureTests {
     #expect(effect == .save(first.record))
   }
 
+  @Test("The selected adaptive destination is persisted")
+  func destinationIsPersisted() {
+    var state = WorkspaceFeature.State(
+      record: WorkspaceRecord(id: WorkspaceID()),
+      isLoaded: true
+    )
+
+    let effect = WorkspaceFeature.reduce(
+      state: &state,
+      intent: .setDestination(.publish)
+    )
+
+    #expect(state.record.destination == .publish)
+    #expect(effect == .save(state.record))
+    #expect(
+      WorkspaceFeature.reduce(
+        state: &state,
+        intent: .setDestination(.publish)
+      ) == nil
+    )
+  }
+
   @Test("Deleting a broker scrubs its private workspace presentation")
   func brokerDeletionScrubsPrivateWorkspacePresentation() {
     let deletedBrokerID = UUID()
@@ -284,21 +306,6 @@ struct WorkspaceFeatureTests {
     #expect(state.record.numericChartDashboard.cards.isEmpty)
   }
 
-  @Test("The wide layout keeps topic, payload, publish, and chart in one candidate")
-  func wideChartCoexistsWithTopicExplorer() {
-    let layout = SelectedPayloadWorkspaceLayout(hasPinnedChart: true)
-
-    #expect(
-      layout.wideCandidateRegions == [
-        .topicExplorer,
-        .payloadInspector,
-        .publishComposer,
-        .numericChart,
-      ]
-    )
-    #expect(layout.showsWideChart)
-  }
-
   @Test("The scene rejects chart pinning outside its connected broker")
   @MainActor
   func scenePinningRequiresConnectedBroker() {
@@ -380,6 +387,66 @@ struct WorkspaceFeatureTests {
     await scene.workspace.flush()
     let persisted = try await workspaceRepository.load(id: workspaceID)
     #expect(persisted.numericChart?.isPaused == true)
+  }
+
+  @Test("Incoming topic updates preserve the selected workspace destination")
+  @MainActor
+  func incomingTopicUpdatesPreserveDestination() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let brokerID = UUID()
+    let workspaceID = WorkspaceID()
+    let profileRepository = LocalProfileRepository(
+      fileURL: directory.appending(path: "profiles.json"),
+      installationID: workspaceFeatureTestInstallationID
+    )
+    try await profileRepository.replaceAll([
+      workspaceRankedProfile(id: brokerID, name: "Chart", rank: 1)
+    ])
+    let workspaceRepository = LocalWorkspaceRepository(
+      directoryURL: directory.appending(
+        path: "workspaces",
+        directoryHint: .isDirectory
+      )
+    )
+    try await workspaceRepository.save(
+      WorkspaceRecord(
+        id: workspaceID,
+        route: .connected(profileID: brokerID),
+        selectedProfileID: brokerID,
+        selectedTopic: "factory/temperature",
+        destination: .charts
+      )
+    )
+    let scene = JollysMQTTAppDependencies(
+      profileRepository: profileRepository,
+      workspaceRepository: workspaceRepository
+    ).makeSceneStore(id: workspaceID)
+    await scene.start()
+
+    scene.topics.receive(
+      await workspaceTopicSnapshot(
+        brokerID: brokerID,
+        historySourceID: "current-source"
+      )
+    )
+
+    #expect(scene.destination == .charts)
+
+    scene.toggleTopicExpansion(
+      BrokerTopicID(brokerID: brokerID, fullTopic: "factory")
+    )
+    scene.selectTopic(nil)
+    scene.destination = .charts
+    scene.selectTopic(
+      BrokerTopicID(
+        brokerID: brokerID,
+        fullTopic: "factory/temperature"
+      )
+    )
+
+    #expect(scene.destination == .details)
   }
 
   @Test("The observable store restores routing and presentation on relaunch")

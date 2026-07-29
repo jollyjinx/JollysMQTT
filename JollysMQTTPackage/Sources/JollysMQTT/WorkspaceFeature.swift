@@ -30,6 +30,7 @@ public enum WorkspaceFeature {
       fallbackSelection: UUID?
     )
     case selectTopic(String?)
+    case setDestination(WorkspaceDestination)
     case setTopicOutlinePresentation(
       expandedTopics: Set<String>,
       searchText: String,
@@ -112,6 +113,11 @@ public enum WorkspaceFeature {
     case .selectTopic(let topic):
       guard state.record.selectedTopic != topic else { return nil }
       state.record.selectedTopic = topic
+      return .save(state.record)
+
+    case .setDestination(let destination):
+      guard state.record.destination != destination else { return nil }
+      state.record.destination = destination
       return .save(state.record)
 
     case .setTopicOutlinePresentation(

@@ -26,6 +26,7 @@ public struct JollysMQTTWindowCommands: Commands {
 
 public struct JollysMQTTRootView: View {
   @State private var sceneStore: WorkspaceSceneStore
+  @State private var helpPresented = false
 
   @MainActor
   public init(
@@ -39,6 +40,35 @@ public struct JollysMQTTRootView: View {
 
   public var body: some View {
     WorkspaceSceneView(store: sceneStore)
+      .toolbar {
+        ToolbarItem(placement: .automatic) {
+          Button {
+            helpPresented = true
+          } label: {
+            Label {
+              Text(
+                "Help",
+                bundle: #bundle,
+                comment: "Opens JollysMQTT onboarding and operational help."
+              )
+            } icon: {
+              Image(systemName: "questionmark.circle")
+            }
+          }
+          .keyboardShortcut("/", modifiers: [.command, .shift])
+          .accessibilityIdentifier("help.open")
+          .accessibilityHint(
+            Text(
+              "Explains subscriptions, retained delivery, suspension, credentials, overload, history coverage, and profile sync.",
+              bundle: #bundle,
+              comment: "Accessibility hint for the application help button."
+            )
+          )
+        }
+      }
+      .sheet(isPresented: $helpPresented) {
+        JollysMQTTHelpView()
+      }
   }
 }
 
@@ -156,6 +186,254 @@ private struct ConnectedWorkspaceView: View {
   let onShowBrokers: () -> Void
 
   var body: some View {
+    #if os(macOS)
+      MacConnectedWorkspaceView(
+        profileName: profileName,
+        snapshot: snapshot,
+        topicState: topicState,
+        generationWarning: generationWarning,
+        sceneStore: sceneStore,
+        onRetry: onRetry,
+        onCancel: onCancel,
+        onApplyLater: onApplyLater,
+        onReconnectAll: onReconnectAll,
+        onShowBrokers: onShowBrokers
+      )
+    #else
+      TouchConnectedWorkspaceView(
+        profileName: profileName,
+        selectedTopic: selectedTopic,
+        snapshot: snapshot,
+        topicState: topicState,
+        generationWarning: generationWarning,
+        sceneStore: sceneStore,
+        onRetry: onRetry,
+        onCancel: onCancel,
+        onApplyLater: onApplyLater,
+        onReconnectAll: onReconnectAll,
+        onShowBrokers: onShowBrokers
+      )
+    #endif
+  }
+}
+
+#if os(macOS)
+  private struct MacConnectedWorkspaceView: View {
+    let profileName: String?
+    let snapshot: BrokerFeedSnapshot
+    let topicState: TopicOutlineFeature.State
+    let generationWarning: BrokerFeedGenerationWarning?
+    @Bindable var sceneStore: WorkspaceSceneStore
+    let onRetry: () -> Void
+    let onCancel: () -> Void
+    let onApplyLater: () -> Void
+    let onReconnectAll: () -> Void
+    let onShowBrokers: () -> Void
+
+    var body: some View {
+      SelectedPayloadWorkspace(
+        topicState: topicState,
+        sceneStore: sceneStore,
+        inspectorStore: sceneStore.payloadInspector,
+        historyStore: sceneStore.history,
+        publishStore: sceneStore.publishComposer
+      )
+      .safeAreaInset(edge: .top, spacing: 0) {
+        MacWorkspaceBanners(
+          snapshot: snapshot,
+          generationWarning: generationWarning,
+          historyIsHealthy: topicState.snapshot.historyIsHealthy,
+          unpersistedMessageCount:
+            topicState.snapshot.unpersistedMessageCount,
+          onApplyLater: onApplyLater,
+          onReconnectAll: onReconnectAll,
+          onRetryHistory: {
+            Task {
+              await sceneStore.retryHistoryPersistence()
+            }
+          }
+        )
+      }
+      .toolbar {
+        ToolbarItem(placement: .automatic) {
+          MacBrokerToolbarLabel(profileName: profileName)
+        }
+        ToolbarItem(placement: .automatic) {
+          MacConnectionToolbarLabel(snapshot: snapshot)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+          if snapshot.lastFailure != nil || snapshot.phase == .idle {
+            Button(action: onRetry) {
+              Label {
+                Text(
+                  "Retry",
+                  bundle: #bundle,
+                  comment: "Retries a broker connection after a failure or cancellation."
+                )
+              } icon: {
+                Image(systemName: "arrow.clockwise")
+              }
+            }
+          }
+          if snapshot.phase.isConnectionWorkActive {
+            Button(role: .cancel, action: onCancel) {
+              Label {
+                Text(
+                  "Disconnect",
+                  bundle: #bundle,
+                  comment: "Disconnects the current broker workspace."
+                )
+              } icon: {
+                Image(systemName: "stop.circle")
+              }
+            }
+          }
+          Button(action: onShowBrokers) {
+            Label {
+              Text(
+                "Brokers",
+                bundle: #bundle,
+                comment: "Returns a connected workspace to the broker list."
+              )
+            } icon: {
+              Image(systemName: "server.rack")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private struct MacBrokerToolbarLabel: View {
+    let profileName: String?
+
+    var body: some View {
+      Label {
+        if let profileName {
+          Text(verbatim: profileName)
+            .lineLimit(1)
+        } else {
+          Text(
+            "Broker Unavailable",
+            bundle: #bundle,
+            comment: "Toolbar title when the connected workspace broker profile is unavailable."
+          )
+        }
+      } icon: {
+        Image(systemName: "network")
+      }
+      .help(
+        Text(
+          "Current broker",
+          bundle: #bundle,
+          comment: "Help text for the current-broker toolbar item."
+        )
+      )
+    }
+  }
+
+  private struct MacConnectionToolbarLabel: View {
+    let snapshot: BrokerFeedSnapshot
+
+    var body: some View {
+      Label {
+        Text(snapshot.phase.localizedTitle)
+      } icon: {
+        if snapshot.phase.showsProgress {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Image(systemName: snapshot.phase.systemImageName)
+        }
+      }
+      .foregroundStyle(
+        snapshot.lastFailure == nil ? Color.secondary : Color.red
+      )
+      .accessibilityLabel(snapshot.phase.localizedTitle)
+    }
+  }
+
+  private struct MacWorkspaceBanners: View {
+    let snapshot: BrokerFeedSnapshot
+    let generationWarning: BrokerFeedGenerationWarning?
+    let historyIsHealthy: Bool
+    let unpersistedMessageCount: Int
+    let onApplyLater: () -> Void
+    let onReconnectAll: () -> Void
+    let onRetryHistory: () -> Void
+
+    var body: some View {
+      VStack(spacing: 0) {
+        if let generationWarning {
+          BrokerGenerationWarningView(
+            warning: generationWarning,
+            onApplyLater: onApplyLater,
+            onReconnectAll: onReconnectAll
+          )
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          Divider()
+        }
+        if snapshot.lastFailure != nil || snapshot.retry != nil {
+          MacConnectionIssueBanner(snapshot: snapshot)
+          Divider()
+        }
+        if !historyIsHealthy {
+          HistoryDegradedView(
+            unpersistedMessageCount: unpersistedMessageCount,
+            onRetry: onRetryHistory,
+            isCompact: true
+          )
+          Divider()
+        }
+      }
+      .background(.bar)
+    }
+  }
+
+  private struct MacConnectionIssueBanner: View {
+    let snapshot: BrokerFeedSnapshot
+
+    var body: some View {
+      HStack(spacing: 8) {
+        Image(systemName: "exclamationmark.triangle")
+          .foregroundStyle(.red)
+        if let failure = snapshot.lastFailure {
+          Text(failure.localizedDescription)
+            .lineLimit(2)
+        }
+        if let retryAt = snapshot.retry?.retryAt {
+          Text(
+            "Next retry \(retryAt, style: .relative)",
+            bundle: #bundle,
+            comment: "Relative time until the next automatic broker reconnect."
+          )
+          .foregroundStyle(.secondary)
+        }
+        Spacer()
+      }
+      .font(.callout)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .accessibilityElement(children: .combine)
+    }
+  }
+#endif
+
+private struct TouchConnectedWorkspaceView: View {
+  let profileName: String?
+  let selectedTopic: String?
+  let snapshot: BrokerFeedSnapshot
+  let topicState: TopicOutlineFeature.State
+  let generationWarning: BrokerFeedGenerationWarning?
+  @Bindable var sceneStore: WorkspaceSceneStore
+  let onRetry: () -> Void
+  let onCancel: () -> Void
+  let onApplyLater: () -> Void
+  let onReconnectAll: () -> Void
+  let onShowBrokers: () -> Void
+
+  var body: some View {
     VStack(spacing: 20) {
       ConnectedWorkspaceHeader(
         profileName: profileName,
@@ -205,39 +483,73 @@ private struct ConnectedWorkspaceView: View {
         publishStore: sceneStore.publishComposer
       )
       if topicState.snapshot.historyIsHealthy == false {
-        VStack(spacing: 8) {
-          Label {
-            Text(
-              "History is degraded. Live topics are still updating, but \(topicState.snapshot.unpersistedMessageCount) messages are not covered by durable history.",
-              bundle: #bundle,
-              comment:
-                "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
-            )
-          } icon: {
-            Image(systemName: "externaldrive.badge.exclamationmark")
-          }
-          Button {
+        HistoryDegradedView(
+          unpersistedMessageCount:
+            topicState.snapshot.unpersistedMessageCount,
+          onRetry: {
             Task {
               await sceneStore.retryHistoryPersistence()
             }
-          } label: {
-            Text(
-              "Retry History",
-              bundle: #bundle,
-              comment: "Attempts to resume durable MQTT history persistence."
-            )
-          }
-          .buttonStyle(.borderedProminent)
-        }
-        .foregroundStyle(.secondary)
-        .accessibilityElement(children: .contain)
+          },
+          isCompact: false
+        )
       }
     }
     .padding(20)
   }
 }
 
+private struct HistoryDegradedView: View {
+  let unpersistedMessageCount: Int
+  let onRetry: () -> Void
+  let isCompact: Bool
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 8) {
+        warning
+        Spacer()
+        retryButton
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        warning
+        retryButton
+      }
+    }
+    .font(isCompact ? .callout : .body)
+    .foregroundStyle(.secondary)
+    .padding(.horizontal, isCompact ? 12 : 0)
+    .padding(.vertical, isCompact ? 8 : 0)
+    .accessibilityElement(children: .contain)
+  }
+
+  private var warning: some View {
+    Label {
+      Text(
+        "History is degraded. Live topics are still updating, but \(unpersistedMessageCount) messages are not covered by durable history.",
+        bundle: #bundle,
+        comment:
+          "Warns that durable history failed while live MQTT ingestion continues. The variable is the number of messages known not to be persisted."
+      )
+    } icon: {
+      Image(systemName: "externaldrive.badge.exclamationmark")
+    }
+  }
+
+  private var retryButton: some View {
+    Button(action: onRetry) {
+      Text(
+        "Retry History",
+        bundle: #bundle,
+        comment: "Attempts to resume durable MQTT history persistence."
+      )
+    }
+    .buttonStyle(.borderedProminent)
+  }
+}
+
 private struct SelectedPayloadWorkspace: View {
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
@@ -245,44 +557,19 @@ private struct SelectedPayloadWorkspace: View {
   @Bindable var publishStore: PublishStore
 
   var body: some View {
-    let layout = SelectedPayloadWorkspaceLayout(
-      hasPinnedChart:
-        !sceneStore.numericChartDashboard.state.cards.isEmpty
-    )
-    ViewThatFits(in: .horizontal) {
-      VStack(spacing: 16) {
-        HStack(alignment: .top, spacing: 16) {
-          TopicExplorerView(
-            state: topicState,
-            sceneStore: sceneStore
-          )
-          .frame(minWidth: 320)
-          Divider()
-          PayloadInspectorPane(
-            store: inspectorStore,
-            historyStore: historyStore,
-            historyMaintenanceStore: sceneStore.historyMaintenance,
-            numericChartDashboard: sceneStore.numericChartDashboard,
-            onPinNumericChart: sceneStore.pinNumericChart,
-            layout: .wide
-          )
-          .frame(minWidth: 360)
-          Divider()
-          PublishComposerView(store: publishStore)
-            .frame(minWidth: 320)
-        }
-        if layout.showsWideChart {
-          ScrollView {
-            NumericChartDashboardView(
-              dashboard: sceneStore.numericChartDashboard,
-              layout: .wide
-            )
-            .padding(1)
-          }
-          .frame(minHeight: 260, idealHeight: 420, maxHeight: 560)
-        }
-      }
+    switch AdaptiveWorkspacePresentation.resolve(
+      widthClass: resolvedWidthClass
+    ) {
+    case .compactTabs:
       PayloadCompactWorkspace(
+        topicState: topicState,
+        sceneStore: sceneStore,
+        inspectorStore: inspectorStore,
+        historyStore: historyStore,
+        publishStore: publishStore
+      )
+    case .wideSplit:
+      PayloadWideWorkspace(
         topicState: topicState,
         sceneStore: sceneStore,
         inspectorStore: inspectorStore,
@@ -291,29 +578,20 @@ private struct SelectedPayloadWorkspace: View {
       )
     }
   }
-}
 
-struct SelectedPayloadWorkspaceLayout: Equatable {
-  enum WideRegion: Equatable {
-    case topicExplorer
-    case payloadInspector
-    case publishComposer
-    case numericChart
-  }
-
-  let wideCandidateRegions: [WideRegion]
-
-  init(hasPinnedChart: Bool) {
-    wideCandidateRegions =
-      [
-        .topicExplorer,
-        .payloadInspector,
-        .publishComposer,
-      ] + (hasPinnedChart ? [.numericChart] : [])
-  }
-
-  var showsWideChart: Bool {
-    wideCandidateRegions.contains(.numericChart)
+  private var resolvedWidthClass: WorkspaceWidthClass {
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains(
+        "--ui-testing-connected"
+      ),
+        let rawValue = ProcessInfo.processInfo.environment[
+          "JOLLYSMQTT_UI_WIDTH_CLASS"
+        ]
+      {
+        return rawValue == "compact" ? .compact : .regular
+      }
+    #endif
+    return horizontalSizeClass == .compact ? .compact : .regular
   }
 }
 
@@ -325,73 +603,179 @@ private struct PayloadCompactWorkspace: View {
   @Bindable var publishStore: PublishStore
 
   var body: some View {
-    VStack(spacing: 12) {
-      Picker(
-        selection: Binding(
-          get: { inspectorStore.state.compactSection },
-          set: { inspectorStore.send(.setCompactSection($0)) }
+    TabView(
+      selection: Binding(
+        get: { sceneStore.destination },
+        set: { sceneStore.destination = $0 }
+      )
+    ) {
+      TopicExplorerView(
+        state: topicState,
+        sceneStore: sceneStore
+      )
+      .tabItem {
+        Label {
+          Text(
+            "Topics",
+            bundle: #bundle,
+            comment: "Compact connected-workspace topic destination."
+          )
+        } icon: {
+          Image(systemName: "list.bullet.indent")
+        }
+      }
+      .tag(WorkspaceDestination.topics)
+
+      PayloadInspectorPane(
+        store: inspectorStore,
+        historyStore: historyStore,
+        historyMaintenanceStore: sceneStore.historyMaintenance,
+        retainedDeletionStore: sceneStore.retainedDeletion,
+        numericChartDashboard: sceneStore.numericChartDashboard,
+        onPinNumericChart: sceneStore.pinNumericChart,
+        layout: .compact
+      )
+      .tabItem {
+        Label {
+          Text(
+            "Details",
+            bundle: #bundle,
+            comment: "Compact connected-workspace payload-details destination."
+          )
+        } icon: {
+          Image(systemName: "doc.text.magnifyingglass")
+        }
+      }
+      .tag(WorkspaceDestination.details)
+
+      PublishComposerView(store: publishStore)
+        .tabItem {
+          Label {
+            Text(
+              "Publish",
+              bundle: #bundle,
+              comment: "Compact connected-workspace publish destination."
+            )
+          } icon: {
+            Image(systemName: "paperplane")
+          }
+        }
+        .tag(WorkspaceDestination.publish)
+
+      ScrollView {
+        NumericChartDashboardView(
+          dashboard: sceneStore.numericChartDashboard,
+          layout: .compact
         )
-      ) {
+        .padding(1)
+      }
+      .tabItem {
+        Label {
+          Text(
+            "Charts",
+            bundle: #bundle,
+            comment: "Compact connected-workspace numeric-charts destination."
+          )
+        } icon: {
+          Image(systemName: "chart.xyaxis.line")
+        }
+      }
+      .tag(WorkspaceDestination.charts)
+    }
+    .accessibilityIdentifier("workspace.compact.tabs")
+  }
+}
+
+private struct PayloadWideWorkspace: View {
+  let topicState: TopicOutlineFeature.State
+  @Bindable var sceneStore: WorkspaceSceneStore
+  @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var historyStore: HistoryStore
+  @Bindable var publishStore: PublishStore
+
+  var body: some View {
+    NavigationSplitView {
+      TopicExplorerView(
+        state: topicState,
+        sceneStore: sceneStore
+      )
+      .navigationTitle(
         Text(
           "Topics",
           bundle: #bundle,
-          comment: "Compact connected-workspace topic destination."
+          comment: "Wide connected-workspace topic-column title."
         )
-        .tag(PayloadInspectorCompactSection.topics)
-        Text(
-          "Details",
-          bundle: #bundle,
-          comment: "Compact connected-workspace payload-details destination."
+      )
+      .modifier(TopicColumnWidth())
+    } detail: {
+      TabView(
+        selection: Binding(
+          get: {
+            sceneStore.destination == .topics
+              ? WorkspaceDestination.details
+              : sceneStore.destination
+          },
+          set: { sceneStore.destination = $0 }
         )
-        .tag(PayloadInspectorCompactSection.details)
-        Text(
-          "Chart",
-          bundle: #bundle,
-          comment: "Compact connected-workspace numeric-chart destination."
-        )
-        .tag(PayloadInspectorCompactSection.chart)
-        Text(
-          "Publish",
-          bundle: #bundle,
-          comment: "Compact connected-workspace publish destination."
-        )
-        .tag(PayloadInspectorCompactSection.publish)
-      } label: {
-        Text(
-          "Workspace Section",
-          bundle: #bundle,
-          comment: "Label for choosing Topics, Details, or Publish in compact layout."
-        )
-      }
-      .pickerStyle(.segmented)
-
-      switch inspectorStore.state.compactSection {
-      case .topics:
-        TopicExplorerView(
-          state: topicState,
-          sceneStore: sceneStore
-        )
-      case .details:
+      ) {
         PayloadInspectorPane(
           store: inspectorStore,
           historyStore: historyStore,
           historyMaintenanceStore: sceneStore.historyMaintenance,
+          retainedDeletionStore: sceneStore.retainedDeletion,
           numericChartDashboard: sceneStore.numericChartDashboard,
           onPinNumericChart: sceneStore.pinNumericChart,
-          layout: .compact
+          layout: .wide
         )
-      case .chart:
+        .tabItem {
+          Label {
+            Text(
+              "Details",
+              bundle: #bundle,
+              comment: "Wide connected-workspace payload-details destination."
+            )
+          } icon: {
+            Image(systemName: "doc.text.magnifyingglass")
+          }
+        }
+        .tag(WorkspaceDestination.details)
+
+        PublishComposerView(store: publishStore)
+          .tabItem {
+            Label {
+              Text(
+                "Publish",
+                bundle: #bundle,
+                comment: "Wide connected-workspace publish destination."
+              )
+            } icon: {
+              Image(systemName: "paperplane")
+            }
+          }
+          .tag(WorkspaceDestination.publish)
+
         ScrollView {
           NumericChartDashboardView(
             dashboard: sceneStore.numericChartDashboard,
-            layout: .compact
+            layout: .wide
           )
           .padding(1)
         }
-      case .publish:
-        PublishComposerView(store: publishStore)
+        .tabItem {
+          Label {
+            Text(
+              "Charts",
+              bundle: #bundle,
+              comment: "Wide connected-workspace numeric-charts destination."
+            )
+          } icon: {
+            Image(systemName: "chart.xyaxis.line")
+          }
+        }
+        .tag(WorkspaceDestination.charts)
       }
     }
+    .accessibilityIdentifier("workspace.wide.split")
   }
 }
 
@@ -451,6 +835,7 @@ private struct PublishTopicField: View {
       }
       .textFieldStyle(.roundedBorder)
       .autocorrectionDisabled()
+      .accessibilityIdentifier("publish.topic")
       #if os(iOS)
         .textInputAutocapitalization(.never)
       #endif
@@ -528,6 +913,7 @@ private struct PublishPayloadEditor: View {
           comment: "Accessible label for the MQTT publish payload editor."
         )
       )
+      .accessibilityIdentifier("publish.payload")
 
       if store.state.draft.inputMode == .json {
         Button {
@@ -620,6 +1006,7 @@ private struct PublishPrimaryAction: View {
     .buttonStyle(.borderedProminent)
     .keyboardShortcut(.return, modifiers: .command)
     .disabled(store.state.isPublishing)
+    .accessibilityIdentifier("publish.send")
     .accessibilityHint(
       Text(
         "Command-Return",
@@ -675,6 +1062,7 @@ private struct PayloadInspectorPane: View {
   @Bindable var store: PayloadInspectorStore
   @Bindable var historyStore: HistoryStore
   @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+  @Bindable var retainedDeletionStore: RetainedDeletionStore
   @Bindable var numericChartDashboard: NumericChartDashboardStore
   let onPinNumericChart: (NumericChartSeries) -> Void
   let layout: PayloadInspectorLayout
@@ -685,7 +1073,10 @@ private struct PayloadInspectorPane: View {
         ScrollView {
           VStack(alignment: .leading, spacing: 16) {
             PayloadMetadataHeader(message: inspection.message)
-            PayloadCopyControls(store: store)
+            PayloadPrimaryActions(
+              copyStore: store,
+              retainedDeletionStore: retainedDeletionStore
+            )
             NumericChartPinControls(
               inspection: inspection,
               selectedJSONPointer: store.state.selectedJSONPointer,
@@ -877,14 +1268,21 @@ private struct PayloadCopyControls: View {
   @Bindable var store: PayloadInspectorStore
 
   var body: some View {
-    ViewThatFits {
-      HStack(spacing: 8) {
-        controls
-      }
-      VStack(alignment: .leading, spacing: 8) {
-        controls
+    Menu {
+      controls
+    } label: {
+      Label {
+        Text(
+          "Copy",
+          bundle: #bundle,
+          comment: "Menu containing payload and topic copy commands."
+        )
+      } icon: {
+        Image(systemName: "doc.on.doc")
       }
     }
+    .menuStyle(.button)
+    .fixedSize()
   }
 
   @ViewBuilder
@@ -947,6 +1345,21 @@ private struct PayloadCopyControls: View {
   }
 }
 
+private struct PayloadPrimaryActions: View {
+  @Bindable var copyStore: PayloadInspectorStore
+  @Bindable var retainedDeletionStore: RetainedDeletionStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        PayloadCopyControls(store: copyStore)
+        RetainedDeletionActionButtons(store: retainedDeletionStore)
+      }
+      RetainedDeletionFeedback(store: retainedDeletionStore)
+    }
+  }
+}
+
 private struct PayloadCopyButton: View {
   let title: LocalizedStringResource
   let action: PayloadCopyAction
@@ -959,7 +1372,6 @@ private struct PayloadCopyButton: View {
     } label: {
       Text(title)
     }
-    .buttonStyle(.bordered)
     .disabled(!isEnabled)
   }
 }
@@ -1093,9 +1505,26 @@ private struct PayloadJSONNodeRow: View {
       }
       Spacer()
     }
-    .padding(.leading, CGFloat(min(node.depth, 12)) * 16)
+    .padding(.leading, CGFloat(min(node.depth, 12)) * indentation)
     .padding(.vertical, 4)
+    .frame(minHeight: minimumRowHeight)
     .contentShape(.rect)
+  }
+
+  private var indentation: CGFloat {
+    #if os(macOS)
+      12
+    #else
+      16
+    #endif
+  }
+
+  private var minimumRowHeight: CGFloat {
+    #if os(macOS)
+      24
+    #else
+      44
+    #endif
   }
 }
 
@@ -1433,7 +1862,7 @@ private struct TopicExplorerView: View {
   @Bindable var sceneStore: WorkspaceSceneStore
 
   var body: some View {
-    VStack(spacing: 8) {
+    VStack(spacing: explorerSpacing) {
       TopicOutlineControls(
         searchText: $sceneStore.topicSearchText,
         sortMode: $sceneStore.topicSortMode,
@@ -1444,6 +1873,7 @@ private struct TopicExplorerView: View {
         onFreeze: sceneStore.freezeTopicView,
         onJumpToLive: sceneStore.jumpTopicViewToLive
       )
+      .padding(explorerControlPadding)
       if state.rows.isEmpty {
         TopicOutlineEmptyState(isSearching: !state.searchText.isEmpty)
           .frame(maxHeight: .infinity)
@@ -1457,31 +1887,69 @@ private struct TopicExplorerView: View {
               }
             )
             .tag(row.id)
+            .modifier(TopicOutlineListRowStyle())
           }
         }
+        .modifier(TopicOutlineListStyle())
       }
-      RetainedDeletionControls(store: sceneStore.retainedDeletion)
     }
     .frame(minHeight: 320)
   }
+
+  private var explorerSpacing: CGFloat {
+    #if os(macOS)
+      0
+    #else
+      8
+    #endif
+  }
+
+  private var explorerControlPadding: CGFloat {
+    #if os(macOS)
+      8
+    #else
+      0
+    #endif
+  }
 }
 
-private struct RetainedDeletionControls: View {
+private struct TopicColumnWidth: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(macOS)
+      content.navigationSplitViewColumnWidth(min: 320, ideal: 480, max: 680)
+    #else
+      content.navigationSplitViewColumnWidth(min: 280, ideal: 360)
+    #endif
+  }
+}
+
+private struct TopicOutlineListStyle: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(macOS)
+      content.listStyle(.sidebar)
+    #else
+      content
+    #endif
+  }
+}
+
+private struct TopicOutlineListRowStyle: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(macOS)
+      content.listRowInsets(
+        EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4)
+      )
+    #else
+      content
+    #endif
+  }
+}
+
+private struct RetainedDeletionFeedback: View {
   @Bindable var store: RetainedDeletionStore
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      RetainedDeletionActionButtons(store: store)
-
-      Text(
-        "These actions attempt to clear broker-retained state. Locally observed topics are not the broker’s complete retained-message inventory.",
-        bundle: #bundle,
-        comment:
-          "Safety explanation that local retained deletion cannot claim a complete broker inventory."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
       if store.state.targetEnumerationEmpty {
         Text(
           "No non-stale locally known value-bearing topics are available in the selected scope.",
@@ -1674,66 +2142,73 @@ private struct RetainedDeletionActionButtons: View {
   @Bindable var store: RetainedDeletionStore
 
   var body: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: 8) {
-        singleButton
-        subtreeButton
+    Menu {
+      Button(role: .destructive) {
+        store.requestSingleDeletion()
+      } label: {
+        Label {
+          Text(
+            "Delete retained value",
+            bundle: #bundle,
+            comment:
+              "Destructive action that publishes one zero-byte retained MQTT message after confirmation."
+          )
+        } icon: {
+          Image(systemName: "pin.slash")
+        }
       }
-      VStack(alignment: .leading, spacing: 8) {
-        singleButton
-        subtreeButton
+      .disabled(
+        !store.state.canDeleteSingle
+          || store.state.operation?.isActive == true
+      )
+      .accessibilityHint(
+        Text(
+          "Requires confirmation, then attempts to clear this topic’s broker-retained value.",
+          bundle: #bundle,
+          comment:
+            "Accessible hint explaining the single retained-value deletion action."
+        )
+      )
+
+      Button(role: .destructive) {
+        store.requestSubtreeDeletion()
+      } label: {
+        Label {
+          Text(
+            "Delete retained values in subtree",
+            bundle: #bundle,
+            comment:
+              "Destructive action that targets locally known value topics in the selected subtree."
+          )
+        } icon: {
+          Image(systemName: "point.3.filled.connected.trianglepath.dotted")
+        }
+      }
+      .disabled(
+        !store.state.canDeleteSubtree
+          || store.state.operation?.isActive == true
+      )
+      .accessibilityHint(
+        Text(
+          "Enumerates the current local snapshot and asks you to confirm the exact topic count.",
+          bundle: #bundle,
+          comment:
+            "Accessible hint explaining recursive retained-value target enumeration."
+        )
+      )
+    } label: {
+      Label {
+        Text(
+          "Retained Values",
+          bundle: #bundle,
+          comment: "Menu containing destructive retained-value actions."
+        )
+      } icon: {
+        Image(systemName: "pin")
       }
     }
-  }
-
-  private var singleButton: some View {
-    Button(role: .destructive) {
-      store.requestSingleDeletion()
-    } label: {
-      Text(
-        "Delete retained value",
-        bundle: #bundle,
-        comment:
-          "Destructive action that publishes one zero-byte retained MQTT message after confirmation."
-      )
-    }
-    .disabled(
-      !store.state.canDeleteSingle
-        || store.state.operation?.isActive == true
-    )
-    .accessibilityHint(
-      Text(
-        "Requires confirmation, then attempts to clear this topic’s broker-retained value.",
-        bundle: #bundle,
-        comment:
-          "Accessible hint explaining the single retained-value deletion action."
-      )
-    )
-  }
-
-  private var subtreeButton: some View {
-    Button(role: .destructive) {
-      store.requestSubtreeDeletion()
-    } label: {
-      Text(
-        "Delete retained values in subtree",
-        bundle: #bundle,
-        comment:
-          "Destructive action that targets locally known value topics in the selected subtree."
-      )
-    }
-    .disabled(
-      !store.state.canDeleteSubtree
-        || store.state.operation?.isActive == true
-    )
-    .accessibilityHint(
-      Text(
-        "Enumerates the current local snapshot and asks you to confirm the exact topic count.",
-        bundle: #bundle,
-        comment:
-          "Accessible hint explaining recursive retained-value target enumeration."
-      )
-    )
+    .menuStyle(.button)
+    .fixedSize()
   }
 }
 
@@ -2091,7 +2566,7 @@ private struct TopicOutlineRow: View {
             systemName:
               row.isExpanded ? "chevron.down" : "chevron.right"
           )
-          .frame(width: 16)
+          .frame(width: disclosureSize, height: disclosureSize)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
@@ -2116,12 +2591,28 @@ private struct TopicOutlineRow: View {
           )
         )
       } else {
-        Color.clear.frame(width: 16)
+        Color.clear.frame(width: disclosureSize, height: disclosureSize)
           .accessibilityHidden(true)
       }
       TopicOutlineRowContent(row: row)
     }
-    .padding(.leading, CGFloat(min(row.depth, 12)) * 16)
+    .padding(.leading, CGFloat(min(row.depth, 12)) * indentation)
+  }
+
+  private var disclosureSize: CGFloat {
+    #if os(macOS)
+      20
+    #else
+      44
+    #endif
+  }
+
+  private var indentation: CGFloat {
+    #if os(macOS)
+      12
+    #else
+      16
+    #endif
   }
 }
 
@@ -2129,88 +2620,118 @@ private struct TopicOutlineRowContent: View {
   let row: TopicOutlineRowState
 
   var body: some View {
-    HStack(spacing: 8) {
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 4) {
-          if row.level.isEmpty {
-            Text(
-              "Empty level",
-              bundle: #bundle,
-              comment: "Topic segment label that distinguishes an exact empty MQTT path component."
-            )
-            .fontWeight(row.isSelected ? .semibold : .regular)
-          } else {
-            Text(verbatim: row.level)
-              .fontWeight(row.isSelected ? .semibold : .regular)
-          }
-          if row.hasValue && !row.isStale {
-            TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
-          }
-          if row.isStale {
-            Label {
-              Text(
-                "Stale",
-                bundle: #bundle,
-                comment:
-                  "Marks a cached MQTT topic that has not been observed in the current connection."
-              )
-            } icon: {
-              Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          }
-          if row.retained {
-            Image(systemName: "pin.fill")
-              .foregroundStyle(.secondary)
-              .accessibilityLabel(
-                Text(
-                  "Retained delivery",
-                  bundle: #bundle,
-                  comment: "Indicates that the latest MQTT delivery carried the retained flag."
-                )
-              )
-          }
-          if let qos = row.qos {
-            Text(
-              "QoS \(qos.rawValue)",
-              bundle: #bundle,
-              comment: "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          }
-        }
-        if let summary = row.payloadSummary, !summary.display.isEmpty {
-          HStack(spacing: 4) {
-            Text(verbatim: "=")
-            Text(verbatim: summary.display)
-            if summary.isTruncated {
-              Text(verbatim: "…")
-            }
-          }
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-        }
+    #if os(macOS)
+      HStack(spacing: 4) {
+        primaryLabel
+        summary
+        Spacer(minLength: 8)
+        descendantCounts
       }
-      Spacer()
-      if row.hasChildren {
+      .controlSize(.small)
+      .frame(minHeight: 22)
+      .contentShape(.rect)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(Text(verbatim: row.fullTopic))
+      .accessibilityValue(accessibilityValue)
+      .accessibilityAddTraits(row.isSelected ? .isSelected : [])
+    #else
+      HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+          primaryLabel
+          summary
+        }
+        Spacer()
+        descendantCounts
+      }
+      .contentShape(.rect)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(Text(verbatim: row.fullTopic))
+      .accessibilityValue(accessibilityValue)
+      .accessibilityAddTraits(row.isSelected ? .isSelected : [])
+    #endif
+  }
+
+  private var primaryLabel: some View {
+    HStack(spacing: 4) {
+      if row.level.isEmpty {
         Text(
-          "\(row.descendantValueTopicCount) topics, \(row.descendantMessageCount) messages",
+          "Empty level",
           bundle: #bundle,
-          comment:
-            "Topic branch descendant counters. The variables are descendant value-topic and message counts."
+          comment: "Topic segment label that distinguishes an exact empty MQTT path component."
+        )
+        .fontWeight(row.isSelected ? .semibold : .regular)
+      } else {
+        Text(verbatim: row.level)
+          .fontWeight(row.isSelected ? .semibold : .regular)
+      }
+      if row.hasValue && !row.isStale {
+        TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
+      }
+      if row.isStale {
+        Label {
+          Text(
+            "Stale",
+            bundle: #bundle,
+            comment:
+              "Marks a cached MQTT topic that has not been observed in the current connection."
+          )
+        } icon: {
+          Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      if row.retained {
+        Image(systemName: "pin.fill")
+          .foregroundStyle(.secondary)
+          .accessibilityLabel(
+            Text(
+              "Retained delivery",
+              bundle: #bundle,
+              comment: "Indicates that the latest MQTT delivery carried the retained flag."
+            )
+          )
+      }
+      if let qos = row.qos {
+        Text(
+          "QoS \(qos.rawValue)",
+          bundle: #bundle,
+          comment: "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
       }
     }
-    .contentShape(.rect)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(Text(verbatim: row.fullTopic))
-    .accessibilityValue(accessibilityValue)
-    .accessibilityAddTraits(row.isSelected ? .isSelected : [])
+  }
+
+  @ViewBuilder
+  private var summary: some View {
+    if let summary = row.payloadSummary, !summary.display.isEmpty {
+      HStack(spacing: 4) {
+        Text(verbatim: "=")
+        Text(verbatim: summary.display)
+        if summary.isTruncated {
+          Text(verbatim: "…")
+        }
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+    }
+  }
+
+  @ViewBuilder
+  private var descendantCounts: some View {
+    if row.hasChildren {
+      Text(
+        "\(row.descendantValueTopicCount) topics, \(row.descendantMessageCount) messages",
+        bundle: #bundle,
+        comment:
+          "Topic branch descendant counters. The variables are descendant value-topic and message counts."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
   }
 
   private var accessibilityValue: Text {
@@ -3513,23 +4034,37 @@ private struct BrokerActionButtons: View {
 
 private struct BrokerListEmptyState: View {
   var body: some View {
-    ContentUnavailableView {
-      Label {
+    VStack(spacing: 16) {
+      ContentUnavailableView {
+        Label {
+          Text(
+            "No Brokers",
+            bundle: #bundle,
+            comment: "Title of the initial empty broker-list screen."
+          )
+        } icon: {
+          Image(systemName: "network")
+        }
+      } description: {
         Text(
-          "No Brokers",
+          "Add a broker profile to get started.",
           bundle: #bundle,
-          comment: "Title of the initial empty broker-list screen."
+          comment: "Description on the initial empty broker-list screen."
         )
-      } icon: {
-        Image(systemName: "network")
       }
-    } description: {
+
       Text(
-        "Add a broker profile to get started.",
+        "Start with a narrow subscription when exploring a busy broker. Profiles may synchronize, but passwords and message history stay on this device.",
         bundle: #bundle,
-        comment: "Description on the initial empty broker-list screen."
+        comment: "Concise first-run onboarding guidance on the empty broker list."
       )
+      .font(.footnote)
+      .foregroundStyle(.secondary)
+      .multilineTextAlignment(.center)
+      .frame(maxWidth: 420)
     }
+    .padding()
+    .accessibilityIdentifier("onboarding.empty")
   }
 }
 

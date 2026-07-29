@@ -275,7 +275,8 @@ JollysMQTT's UI-test vocabulary and deterministic Mosquitto fixtures.
 - JollysMQTT is native SwiftUI, not Electron/React.
 - History is durable and queryable, not only an in-memory ring.
 - Secrets are Keychain records and never part of serialized profile objects.
-- Broker definitions sync through iCloud; workspace/history data remains local.
+- Broker definitions sync through encrypted records in the user's private
+  CloudKit database; workspace/history data remains local.
 - Multiple native windows have independent workspace state and can share one
   actor-owned broker feed.
 - Transport is mqtt-nio v3 over Apple Transport Services, not MQTT.js.

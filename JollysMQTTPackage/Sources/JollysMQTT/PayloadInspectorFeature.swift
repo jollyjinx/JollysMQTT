@@ -18,12 +18,7 @@ public enum PayloadInspectorJSONMode: Equatable, Sendable {
   case raw
 }
 
-public enum PayloadInspectorCompactSection: Equatable, Sendable {
-  case topics
-  case details
-  case chart
-  case publish
-}
+public typealias PayloadInspectorCompactSection = WorkspaceDestination
 
 public enum PayloadUnavailableReason: Equatable, Sendable {
   case noSelection

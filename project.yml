@@ -108,6 +108,21 @@ targets:
           JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT: Production
           JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: EncryptedBrokerProfiles
           JOLLYS_MQTT_PROFILE_SYNC_MODE: cloudKit
+  JollysMQTTUITests:
+    type: bundle.ui-testing
+    platform: auto
+    supportedDestinations:
+      - iOS
+      - macOS
+    sources:
+      - path: JollysMQTTUITests
+    dependencies:
+      - target: JollysMQTT
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: NO
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.JollysMQTTUITests
 
 schemes:
   JollysMQTT:
@@ -118,6 +133,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - JollysMQTTUITests
     profile:
       config: Release
     analyze:

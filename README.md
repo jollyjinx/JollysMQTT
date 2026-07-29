@@ -8,8 +8,14 @@ history, diffs, and numeric charts.
 The app will support multiple independent windows on macOS and iPadOS. A new
 window begins at the broker list; connecting turns that same window into a
 broker workspace. Window contents and graph configuration are restored across
-launches. Broker definitions synchronize through iCloud, while credentials
-remain in Keychain and message history remains local to each device.
+launches. Broker definitions synchronize through encrypted records in the
+user's private CloudKit database, while credentials remain device-only
+Keychain items and message history remains local to each device.
+
+Official App Store and Developer ID builds use the project's production
+CloudKit container. The source can be published independently; self-built
+variants remain fully usable with local-only profiles unless the builder
+configures their own CloudKit container and signing identity.
 
 As in JollysFastVNCSwiftUI, the Xcode application is intended to be a thin shell
 over a local Swift package. The package owns the MQTT transport adapter, domain

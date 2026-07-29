@@ -14,6 +14,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
   public var expandedTopics: [String]
   public var topicSearchText: String
   public var topicSortMode: BrokerTopicSortMode
+  public var destination: WorkspaceDestination
   public var numericChartDashboard: NumericChartDashboardConfiguration
   public var closedAt: Date?
 
@@ -25,6 +26,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     expandedTopics: [String] = [],
     topicSearchText: String = "",
     topicSortMode: BrokerTopicSortMode = .name,
+    destination: WorkspaceDestination = .topics,
     numericChart: NumericChartConfiguration? = nil,
     numericChartDashboard: NumericChartDashboardConfiguration? = nil,
     closedAt: Date? = nil
@@ -36,6 +38,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     self.expandedTopics = Array(Set(expandedTopics)).sorted()
     self.topicSearchText = topicSearchText
     self.topicSortMode = topicSortMode
+    self.destination = destination
     self.numericChartDashboard =
       numericChartDashboard
       ?? Self.legacyDashboard(
@@ -63,6 +66,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     case expandedTopics
     case topicSearchText
     case topicSortMode
+    case destination
     case numericChart
     case numericChartDashboard
     case closedAt
@@ -100,6 +104,11 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
         BrokerTopicSortMode.self,
         forKey: .topicSortMode
       ) ?? .name
+    destination =
+      try container.decodeIfPresent(
+        WorkspaceDestination.self,
+        forKey: .destination
+      ) ?? .topics
     if let dashboard = try container.decodeIfPresent(
       NumericChartDashboardConfiguration.self,
       forKey: .numericChartDashboard
@@ -129,6 +138,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     try container.encode(expandedTopics, forKey: .expandedTopics)
     try container.encode(topicSearchText, forKey: .topicSearchText)
     try container.encode(topicSortMode, forKey: .topicSortMode)
+    try container.encode(destination, forKey: .destination)
     try container.encode(
       numericChartDashboard,
       forKey: .numericChartDashboard

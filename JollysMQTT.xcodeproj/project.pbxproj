@@ -9,17 +9,32 @@
 /* Begin PBXBuildFile section */
 		018E8C7B193C445BD7C47D59 /* JollysMQTTApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB2842078DF258C24CCC117 /* JollysMQTTApp.swift */; };
 		1376B3DC08D3E68762790225 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2B12E1292D086A83C4169D68 /* Assets.xcassets */; };
+		5A47131A61F352B69E4E37D7 /* JollysMQTTUITestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F0423A39F1C3926E8E3021 /* JollysMQTTUITestFixture.swift */; };
 		8A7BF400DB1A2C63373943A2 /* JollysMQTT in Frameworks */ = {isa = PBXBuildFile; productRef = EADD6042AFBED24CD5B52755 /* JollysMQTT */; };
+		A27368DAFBAC8ABB81ED1192 /* AdaptiveWorkspaceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306CD6619583D1D87C35A39D /* AdaptiveWorkspaceUITests.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		804DF9E397A30F96057E89B0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FA13502D706137D5EB954D69 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B0040AACF3F262CC9A9B602C;
+			remoteInfo = JollysMQTT;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		02EBE8A26BFB9FB0FFCE9FF8 /* JollysMQTT.official.iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.official.iOS.entitlements; sourceTree = "<group>"; };
+		2027F40493CB49100C09F7CD /* JollysMQTT.official.macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.official.macOS.entitlements; sourceTree = "<group>"; };
+		26E575F41174BC545DA26A05 /* JollysMQTTUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JollysMQTTUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2B12E1292D086A83C4169D68 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		306CD6619583D1D87C35A39D /* AdaptiveWorkspaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveWorkspaceUITests.swift; sourceTree = "<group>"; };
 		39A4BC8D19F4A232D7D93C8B /* JollysMQTT.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JollysMQTT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		41F0423A39F1C3926E8E3021 /* JollysMQTTUITestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JollysMQTTUITestFixture.swift; sourceTree = "<group>"; };
 		52888C8543951D354558781F /* JollysMQTT.macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.macOS.entitlements; sourceTree = "<group>"; };
 		8CB2842078DF258C24CCC117 /* JollysMQTTApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JollysMQTTApp.swift; sourceTree = "<group>"; };
 		91CEEED0AF188E0C86C5A322 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		A10000000000000000000001 /* JollysMQTT.official.iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.official.iOS.entitlements; sourceTree = "<group>"; };
-		A10000000000000000000002 /* JollysMQTT.official.macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.official.macOS.entitlements; sourceTree = "<group>"; };
 		CF66477B4EF0FBDB87EB2444 /* JollysMQTTPackage */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JollysMQTTPackage; path = JollysMQTTPackage; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -35,10 +50,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		06A40C350F9A5F5741452E4C /* JollysMQTTUITests */ = {
+			isa = PBXGroup;
+			children = (
+				306CD6619583D1D87C35A39D /* AdaptiveWorkspaceUITests.swift */,
+			);
+			path = JollysMQTTUITests;
+			sourceTree = "<group>";
+		};
 		755A92F7F368CDD8B3E216DF /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				39A4BC8D19F4A232D7D93C8B /* JollysMQTT.app */,
+				26E575F41174BC545DA26A05 /* JollysMQTTUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -47,6 +71,7 @@
 			isa = PBXGroup;
 			children = (
 				E0FAADB54BA4476F4BCBE2FF /* JollysMQTTApp */,
+				06A40C350F9A5F5741452E4C /* JollysMQTTUITests */,
 				B1CE1FE7E1800556C3E636D8 /* Packages */,
 				755A92F7F368CDD8B3E216DF /* Products */,
 			);
@@ -66,9 +91,10 @@
 				2B12E1292D086A83C4169D68 /* Assets.xcassets */,
 				91CEEED0AF188E0C86C5A322 /* Info.plist */,
 				52888C8543951D354558781F /* JollysMQTT.macOS.entitlements */,
-				A10000000000000000000001 /* JollysMQTT.official.iOS.entitlements */,
-				A10000000000000000000002 /* JollysMQTT.official.macOS.entitlements */,
+				02EBE8A26BFB9FB0FFCE9FF8 /* JollysMQTT.official.iOS.entitlements */,
+				2027F40493CB49100C09F7CD /* JollysMQTT.official.macOS.entitlements */,
 				8CB2842078DF258C24CCC117 /* JollysMQTTApp.swift */,
+				41F0423A39F1C3926E8E3021 /* JollysMQTTUITestFixture.swift */,
 			);
 			path = JollysMQTTApp;
 			sourceTree = "<group>";
@@ -96,6 +122,24 @@
 			productReference = 39A4BC8D19F4A232D7D93C8B /* JollysMQTT.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B06483C61BBAF33C79210ECC /* JollysMQTTUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7B4024DF58401368BBCA92D2 /* Build configuration list for PBXNativeTarget "JollysMQTTUITests" */;
+			buildPhases = (
+				35AF7BFB3DEE95EC1BAAA62A /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5FDC1F3056FFCD1EF0D16950 /* PBXTargetDependency */,
+			);
+			name = JollysMQTTUITests;
+			packageProductDependencies = (
+			);
+			productName = JollysMQTTUITests;
+			productReference = 26E575F41174BC545DA26A05 /* JollysMQTTUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -105,6 +149,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					B06483C61BBAF33C79210ECC = {
+						TestTargetID = B0040AACF3F262CC9A9B602C;
+					};
 				};
 			};
 			buildConfigurationList = 722E237D3AC26065F2A4ED0E /* Build configuration list for PBXProject "JollysMQTT" */;
@@ -125,6 +172,7 @@
 			projectRoot = "";
 			targets = (
 				B0040AACF3F262CC9A9B602C /* JollysMQTT */,
+				B06483C61BBAF33C79210ECC /* JollysMQTTUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -146,83 +194,193 @@
 			buildActionMask = 2147483647;
 			files = (
 				018E8C7B193C445BD7C47D59 /* JollysMQTTApp.swift in Sources */,
+				5A47131A61F352B69E4E37D7 /* JollysMQTTUITestFixture.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		35AF7BFB3DEE95EC1BAAA62A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A27368DAFBAC8ABB81ED1192 /* AdaptiveWorkspaceUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		5FDC1F3056FFCD1EF0D16950 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B0040AACF3F262CC9A9B602C /* JollysMQTT */;
+			targetProxy = 804DF9E397A30F96057E89B0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
-		A10000000000000000000003 /* Official Development */ = {
+		08F575BF58D69F18765E1810 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
-				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
-				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.official.macOS.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
-				JOLLYS_MQTT_APS_ENVIRONMENT = development;
-				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.JollysMQTT;
-				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Development;
-				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
-				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		3649CA23A8DD5BE82DA0B1F5 /* Official Development */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTT;
-				PRODUCT_MODULE_NAME = JollysMQTTApp;
-				PRODUCT_NAME = JollysMQTT;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTTUITests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JollysMQTT;
 			};
 			name = "Official Development";
 		};
-		A10000000000000000000004 /* Official Release */ = {
+		3C6E7FFF8D694423FB6E9477 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
-				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
-				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.official.macOS.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
-				JOLLYS_MQTT_APS_ENVIRONMENT = production;
-				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.JollysMQTT;
-				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Production;
-				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
-				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTT;
-				PRODUCT_MODULE_NAME = JollysMQTTApp;
-				PRODUCT_NAME = JollysMQTT;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTTUITests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JollysMQTT;
+			};
+			name = Release;
+		};
+		54632CAA82375A56835AD621 /* Official Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = "Official Release";
 		};
-		A10000000000000000000005 /* Official Development */ = {
+		6DE1C69EC3A7A63373EF05BD /* Official Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -289,125 +447,6 @@
 			};
 			name = "Official Development";
 		};
-		A10000000000000000000006 /* Official Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGNING_ALLOWED = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
-			};
-			name = "Official Release";
-		};
-		08F575BF58D69F18765E1810 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Release;
-		};
 		79030C0A33E354ED70461FDC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -469,6 +508,120 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		89200A059F582B0C13FCB36D /* Official Development */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.official.macOS.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
+				JOLLYS_MQTT_APS_ENVIRONMENT = development;
+				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.JollysMQTT;
+				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Development;
+				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
+				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTT;
+				PRODUCT_MODULE_NAME = JollysMQTTApp;
+				PRODUCT_NAME = JollysMQTT;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Official Development";
+		};
+		9C84A029DA283B735DC90B45 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTTUITests;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JollysMQTT;
+			};
+			name = Debug;
+		};
+		C501352BA66693CCEDEF6C52 /* Official Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = JollysMQTTApp/JollysMQTT.official.iOS.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.official.macOS.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
+				JOLLYS_MQTT_APS_ENVIRONMENT = production;
+				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.JollysMQTT;
+				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Production;
+				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
+				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTT;
+				PRODUCT_MODULE_NAME = JollysMQTTApp;
+				PRODUCT_NAME = JollysMQTT;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = "Official Release";
+		};
+		C650C2D66193C72D371BE0D4 /* Official Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTTUITests;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JollysMQTT;
+			};
+			name = "Official Release";
 		};
 		F5FEA737C9DD01FFDF34F421 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -544,9 +697,9 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				79030C0A33E354ED70461FDC /* Debug */,
+				89200A059F582B0C13FCB36D /* Official Development */,
+				C501352BA66693CCEDEF6C52 /* Official Release */,
 				7A85426FA9D2344D172CAA53 /* Release */,
-				A10000000000000000000003 /* Official Development */,
-				A10000000000000000000004 /* Official Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -555,9 +708,20 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F5FEA737C9DD01FFDF34F421 /* Debug */,
+				6DE1C69EC3A7A63373EF05BD /* Official Development */,
+				54632CAA82375A56835AD621 /* Official Release */,
 				08F575BF58D69F18765E1810 /* Release */,
-				A10000000000000000000005 /* Official Development */,
-				A10000000000000000000006 /* Official Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7B4024DF58401368BBCA92D2 /* Build configuration list for PBXNativeTarget "JollysMQTTUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9C84A029DA283B735DC90B45 /* Debug */,
+				3649CA23A8DD5BE82DA0B1F5 /* Official Development */,
+				C650C2D66193C72D371BE0D4 /* Official Release */,
+				3C6E7FFF8D694423FB6E9477 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

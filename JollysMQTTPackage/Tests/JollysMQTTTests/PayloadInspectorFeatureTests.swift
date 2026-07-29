@@ -112,13 +112,13 @@ struct PayloadInspectorFeatureTests {
       presentation: .text(.init(text: "first"))
     )
     await waitUntil { !store.state.isInspecting }
-    store.send(.setCompactSection(.chart))
+    store.send(.setCompactSection(.charts))
 
     store.send(.selectionChanged(.current(second)))
     await inspector.waitForRequestCount(1)
 
     #expect(store.state.isInspecting)
-    #expect(store.state.compactSection == .chart)
+    #expect(store.state.compactSection == .charts)
     #expect(store.state.inspection?.message.id == first.id)
     #expect(
       store.state.inspection?.presentation

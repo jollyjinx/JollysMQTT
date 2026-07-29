@@ -9,3 +9,17 @@ public struct WorkspaceID: Codable, Hashable, Identifiable, Sendable {
     self.rawValue = rawValue
   }
 }
+
+public enum WorkspaceDestination:
+  String,
+  CaseIterable,
+  Codable,
+  Equatable,
+  Hashable,
+  Sendable
+{
+  case topics
+  case details
+  case publish
+  case charts
+}
