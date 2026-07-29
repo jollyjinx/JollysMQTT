@@ -197,9 +197,10 @@ private struct ConnectedWorkspaceView: View {
           )
         }
       }
-      TopicExplorerView(
-        state: topicState,
-        sceneStore: sceneStore
+      SelectedPayloadWorkspace(
+        topicState: topicState,
+        sceneStore: sceneStore,
+        inspectorStore: sceneStore.payloadInspector
       )
       if topicState.snapshot.historyIsHealthy == false {
         VStack(spacing: 8) {
@@ -231,6 +232,639 @@ private struct ConnectedWorkspaceView: View {
       }
     }
     .padding(20)
+  }
+}
+
+private struct SelectedPayloadWorkspace: View {
+  let topicState: TopicOutlineFeature.State
+  @Bindable var sceneStore: WorkspaceSceneStore
+  @Bindable var inspectorStore: PayloadInspectorStore
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .top, spacing: 16) {
+        TopicExplorerView(
+          state: topicState,
+          sceneStore: sceneStore
+        )
+        .frame(minWidth: 320)
+        Divider()
+        PayloadInspectorPane(
+          store: inspectorStore,
+          layout: .wide
+        )
+        .frame(minWidth: 360)
+      }
+      PayloadCompactWorkspace(
+        topicState: topicState,
+        sceneStore: sceneStore,
+        inspectorStore: inspectorStore
+      )
+    }
+  }
+}
+
+private struct PayloadCompactWorkspace: View {
+  let topicState: TopicOutlineFeature.State
+  @Bindable var sceneStore: WorkspaceSceneStore
+  @Bindable var inspectorStore: PayloadInspectorStore
+
+  var body: some View {
+    VStack(spacing: 12) {
+      Picker(
+        selection: Binding(
+          get: { inspectorStore.state.compactSection },
+          set: { inspectorStore.send(.setCompactSection($0)) }
+        )
+      ) {
+        Text(
+          "Topics",
+          bundle: #bundle,
+          comment: "Compact connected-workspace topic destination."
+        )
+        .tag(PayloadInspectorCompactSection.topics)
+        Text(
+          "Details",
+          bundle: #bundle,
+          comment: "Compact connected-workspace payload-details destination."
+        )
+        .tag(PayloadInspectorCompactSection.details)
+      } label: {
+        Text(
+          "Workspace Section",
+          bundle: #bundle,
+          comment: "Label for choosing Topics or Details in compact layout."
+        )
+      }
+      .pickerStyle(.segmented)
+
+      if inspectorStore.state.compactSection == .topics {
+        TopicExplorerView(
+          state: topicState,
+          sceneStore: sceneStore
+        )
+      } else {
+        PayloadInspectorPane(
+          store: inspectorStore,
+          layout: .compact
+        )
+      }
+    }
+  }
+}
+
+private struct PayloadInspectorPane: View {
+  @Bindable var store: PayloadInspectorStore
+  let layout: PayloadInspectorLayout
+
+  var body: some View {
+    Group {
+      if let inspection = store.state.inspection {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 16) {
+            PayloadMetadataHeader(message: inspection.message)
+            PayloadCopyControls(store: store)
+            PayloadPresentationView(
+              inspection: inspection,
+              jsonMode: store.state.jsonMode,
+              selectedJSONPointer:
+                store.state.selectedJSONPointer,
+              store: store
+            )
+            if let outcome = store.state.copyOutcome {
+              PayloadCopyOutcomeView(outcome: outcome)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(16)
+        }
+      } else if store.state.isInspecting {
+        ProgressView {
+          Text(
+            "Inspecting Payload",
+            bundle: #bundle,
+            comment: "Progress label while the selected MQTT payload is parsed."
+          )
+        }
+        .frame(maxWidth: .infinity, minHeight: 240)
+      } else {
+        PayloadUnavailableView(reason: store.state.unavailableReason)
+          .frame(maxWidth: .infinity, minHeight: 240)
+      }
+    }
+    .task(id: layout) {
+      store.send(.setLayout(layout))
+    }
+    .accessibilityElement(children: .contain)
+  }
+}
+
+private struct PayloadUnavailableView: View {
+  let reason: PayloadUnavailableReason?
+
+  var body: some View {
+    ContentUnavailableView {
+      Label {
+        switch reason {
+        case .stale:
+          Text(
+            "No Current Payload",
+            bundle: #bundle,
+            comment: "Inspector title for a stale cached topic."
+          )
+        case .noCurrentValue:
+          Text(
+            "Topic Has No Value",
+            bundle: #bundle,
+            comment: "Inspector title for a branch without a current payload."
+          )
+        case .noSelection, .none:
+          Text(
+            "Select a Topic",
+            bundle: #bundle,
+            comment: "Inspector title when no MQTT topic is selected."
+          )
+        }
+      } icon: {
+        Image(systemName: "doc.text.magnifyingglass")
+      }
+    } description: {
+      if reason == .stale {
+        Text(
+          "This cached topic has not been observed in the current connection. Its old payload is not shown as current.",
+          bundle: #bundle,
+          comment: "Explains why a stale cached MQTT payload is suppressed."
+        )
+      }
+    }
+  }
+}
+
+private struct PayloadMetadataHeader: View {
+  let message: PayloadMessage
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(verbatim: message.topicID.fullTopic)
+        .font(.headline)
+        .textSelection(.enabled)
+        .accessibilityLabel(
+          Text(
+            "Topic \(message.topicID.fullTopic)",
+            bundle: #bundle,
+            comment: "Accessible exact MQTT topic in the payload inspector."
+          )
+        )
+      ViewThatFits {
+        HStack(spacing: 12) {
+          metadataItems
+        }
+        VStack(alignment: .leading, spacing: 8) {
+          metadataItems
+        }
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+    .accessibilityElement(children: .contain)
+  }
+
+  @ViewBuilder
+  private var metadataItems: some View {
+    Label {
+      Text(
+        receivedDate,
+        format: .dateTime
+          .year().month().day()
+          .hour().minute().second()
+      )
+    } icon: {
+      Image(systemName: "clock")
+    }
+    .accessibilityLabel(
+      Text(
+        "Received locally \(receivedDate.formatted(date: .complete, time: .complete))",
+        bundle: #bundle,
+        comment: "Accessible local receive time for an MQTT payload."
+      )
+    )
+    Text(
+      "QoS \(message.qos.rawValue)",
+      bundle: #bundle,
+      comment: "MQTT quality-of-service metadata. The variable is 0, 1, or 2."
+    )
+    if message.retained {
+      Text(
+        "Retained delivery: Yes",
+        bundle: #bundle,
+        comment:
+          "Packet metadata saying the MQTT publish carried the retained-delivery flag; this does not claim current broker state."
+      )
+    } else {
+      Text(
+        "Retained delivery: No",
+        bundle: #bundle,
+        comment:
+          "Packet metadata saying the MQTT publish did not carry the retained-delivery flag; this does not claim current broker state."
+      )
+    }
+    Text(
+      message.direction == .received
+        ? LocalizedStringResource(
+          "Received",
+          bundle: #bundle,
+          comment: "Direction of an incoming MQTT publish."
+        )
+        : LocalizedStringResource(
+          "Published",
+          bundle: #bundle,
+          comment: "Direction of an outgoing MQTT publish."
+        )
+    )
+    Text(
+      "\(message.payloadByteCount) bytes",
+      bundle: #bundle,
+      comment: "Exact MQTT payload size in bytes."
+    )
+  }
+
+  private var receivedDate: Date {
+    Date(
+      timeIntervalSince1970:
+        Double(message.receivedAtMicroseconds) / 1_000_000
+    )
+  }
+}
+
+private struct PayloadCopyControls: View {
+  @Bindable var store: PayloadInspectorStore
+
+  var body: some View {
+    ViewThatFits {
+      HStack(spacing: 8) {
+        controls
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        controls
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var controls: some View {
+    PayloadCopyButton(
+      title: LocalizedStringResource(
+        "Copy Topic",
+        bundle: #bundle,
+        comment: "Copies the exact selected MQTT topic."
+      ),
+      action: .topic,
+      isEnabled: store.state.canCopy(.topic),
+      store: store
+    )
+    .keyboardShortcut("c", modifiers: [.command, .shift])
+    PayloadCopyButton(
+      title: LocalizedStringResource(
+        "Copy Raw Bytes",
+        bundle: #bundle,
+        comment: "Copies the exact selected MQTT payload bytes."
+      ),
+      action: .rawBytes,
+      isEnabled: store.state.canCopy(.rawBytes),
+      store: store
+    )
+    PayloadCopyButton(
+      title: LocalizedStringResource(
+        "Copy Display Text",
+        bundle: #bundle,
+        comment: "Copies the complete selected payload text."
+      ),
+      action: .displayText,
+      isEnabled: store.state.canCopy(.displayText),
+      store: store
+    )
+    if store.state.canCopy(.formattedJSON) {
+      PayloadCopyButton(
+        title: LocalizedStringResource(
+          "Copy Formatted JSON",
+          bundle: #bundle,
+          comment: "Copies the complete formatted JSON document."
+        ),
+        action: .formattedJSON,
+        isEnabled: true,
+        store: store
+      )
+    }
+    if store.state.canCopy(.selectedJSONValue) {
+      PayloadCopyButton(
+        title: LocalizedStringResource(
+          "Copy Selected JSON Value",
+          bundle: #bundle,
+          comment: "Copies the selected JSON value or subtree."
+        ),
+        action: .selectedJSONValue,
+        isEnabled: true,
+        store: store
+      )
+    }
+  }
+}
+
+private struct PayloadCopyButton: View {
+  let title: LocalizedStringResource
+  let action: PayloadCopyAction
+  let isEnabled: Bool
+  @Bindable var store: PayloadInspectorStore
+
+  var body: some View {
+    Button {
+      store.send(.copy(action))
+    } label: {
+      Text(title)
+    }
+    .buttonStyle(.bordered)
+    .disabled(!isEnabled)
+  }
+}
+
+private struct PayloadPresentationView: View {
+  let inspection: PayloadInspection
+  let jsonMode: PayloadInspectorJSONMode
+  let selectedJSONPointer: PayloadJSONPointer?
+  @Bindable var store: PayloadInspectorStore
+
+  var body: some View {
+    switch inspection.presentation {
+    case .json(let document):
+      PayloadJSONPresentationView(
+        document: document,
+        mode: jsonMode,
+        selectedPointer: selectedJSONPointer,
+        store: store
+      )
+    case .text(let text):
+      PayloadTextView(presentation: text)
+    case .bytes(let hex):
+      PayloadHexView(presentation: hex)
+    }
+  }
+}
+
+private struct PayloadJSONPresentationView: View {
+  let document: PayloadJSONDocument
+  let mode: PayloadInspectorJSONMode
+  let selectedPointer: PayloadJSONPointer?
+  @Bindable var store: PayloadInspectorStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Picker(
+        selection: Binding(
+          get: { mode },
+          set: { store.send(.setJSONMode($0)) }
+        )
+      ) {
+        Text(
+          "Structure",
+          bundle: #bundle,
+          comment: "JSON inspector structural presentation mode."
+        )
+        .tag(PayloadInspectorJSONMode.structure)
+        Text(
+          "Raw",
+          bundle: #bundle,
+          comment: "JSON inspector raw source presentation mode."
+        )
+        .tag(PayloadInspectorJSONMode.raw)
+      } label: {
+        Text(
+          "JSON Presentation",
+          bundle: #bundle,
+          comment: "Label for choosing structural or raw JSON presentation."
+        )
+      }
+      .pickerStyle(.segmented)
+
+      if mode == .structure {
+        LazyVStack(alignment: .leading, spacing: 4) {
+          ForEach(document.nodes) { node in
+            Button {
+              store.send(.selectJSONValue(node.id))
+            } label: {
+              PayloadJSONNodeRow(
+                node: node,
+                isSelected: node.id == selectedPointer
+              )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+              Text(
+                "JSON path \(node.pathPreview.isEmpty ? "root" : node.pathPreview)\(node.pathPreviewIsTruncated ? "…" : "")",
+                bundle: #bundle,
+                comment: "Accessible deterministic JSON path for a structural row."
+              )
+            )
+            .accessibilityValue(Text(verbatim: node.accessibilityValue))
+            .accessibilityAddTraits(
+              node.id == selectedPointer ? .isSelected : []
+            )
+          }
+        }
+      } else {
+        VStack(alignment: .leading, spacing: 8) {
+          if !document.rawTextIsOriginalUTF8 {
+            Text(
+              "Normalized text view of the original non-UTF-8 JSON bytes",
+              bundle: #bundle,
+              comment: "Clarifies that non-UTF-8 JSON is transcoded for its raw text view."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
+          Text(verbatim: document.rawText)
+            .font(.body.monospaced())
+            .textSelection(.enabled)
+        }
+      }
+    }
+  }
+}
+
+private struct PayloadJSONNodeRow: View {
+  let node: PayloadJSONNode
+  let isSelected: Bool
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(verbatim: node.label)
+        .fontWeight(isSelected ? .semibold : .regular)
+      if node.labelIsTruncated {
+        Text(verbatim: "…")
+          .accessibilityHidden(true)
+      }
+      if let displayValue = node.displayValue {
+        Text(verbatim: displayValue)
+          .foregroundStyle(.secondary)
+        if node.displayValueIsTruncated {
+          Text(verbatim: "…")
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
+      } else {
+        Text(verbatim: node.kind.containerSummary(count: node.childCount))
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+    }
+    .padding(.leading, CGFloat(min(node.depth, 12)) * 16)
+    .padding(.vertical, 4)
+    .contentShape(.rect)
+  }
+}
+
+private struct PayloadTextView: View {
+  let presentation: PayloadTextPresentation
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(verbatim: presentation.text)
+        .font(.body.monospaced())
+        .textSelection(.enabled)
+      if presentation.isPreviewTruncated {
+        Group {
+          if presentation.completeText != nil {
+            Text(
+              "Preview truncated. Copy Display Text copies the complete payload.",
+              bundle: #bundle,
+              comment: "Explains bounded text preview and complete copy semantics."
+            )
+          } else {
+            Text(
+              "Preview truncated at the bounded inspection limit. Use Copy Raw Bytes for the complete payload.",
+              bundle: #bundle,
+              comment:
+                "Explains that oversized selected text is preview-only and exact bytes remain copyable."
+            )
+          }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      if let notice = presentation.notice {
+        Text(notice.localizedDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+private struct PayloadHexView: View {
+  let presentation: PayloadHexPresentation
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(verbatim: presentation.text)
+        .font(.body.monospaced())
+        .textSelection(.enabled)
+      if presentation.isTruncated {
+        Text(
+          "Showing \(presentation.presentedByteCount) of \(presentation.totalByteCount) bytes. Copy Raw Bytes copies the complete payload.",
+          bundle: #bundle,
+          comment:
+            "Explains bounded hexadecimal output and complete raw-byte copy semantics."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+private struct PayloadCopyOutcomeView: View {
+  let outcome: PayloadCopyOutcome
+
+  var body: some View {
+    Label {
+      switch outcome {
+      case .succeeded:
+        Text(
+          "Copied",
+          bundle: #bundle,
+          comment: "Accessible confirmation after a payload copy action."
+        )
+      case .failed:
+        Text(
+          "Copy Failed",
+          bundle: #bundle,
+          comment: "Accessible failure after a payload copy action."
+        )
+      }
+    } icon: {
+      Image(
+        systemName:
+          outcome.isSuccess ? "checkmark.circle" : "exclamationmark.triangle"
+      )
+    }
+    .foregroundStyle(
+      outcome.isSuccess ? Color.secondary : Color.red
+    )
+    .accessibilityElement(children: .combine)
+  }
+}
+
+extension PayloadJSONNodeKind {
+  fileprivate func containerSummary(count: Int) -> String {
+    switch self {
+    case .object:
+      "{\(count)}"
+    case .array:
+      "[\(count)]"
+    case .string, .number, .boolean, .null:
+      ""
+    }
+  }
+}
+
+extension PayloadJSONNode {
+  fileprivate var accessibilityValue: String {
+    let value = displayValue ?? kind.containerSummary(count: childCount)
+    return displayValueIsTruncated ? value + "…" : value
+  }
+}
+
+extension PayloadInspectionNotice {
+  fileprivate var localizedDescription: LocalizedStringResource {
+    switch self {
+    case .jsonByteLimitExceeded(let limit):
+      LocalizedStringResource(
+        "JSON parsing was skipped because the payload exceeds the \(limit)-byte inspection limit.",
+        bundle: #bundle,
+        comment:
+          "Visible bounded-inspection notice. The variable is the JSON byte limit."
+      )
+    case .jsonDepthLimitExceeded(let limit):
+      LocalizedStringResource(
+        "JSON parsing was skipped because nesting exceeds the \(limit)-level inspection limit.",
+        bundle: #bundle,
+        comment:
+          "Visible bounded-inspection notice. The variable is the JSON nesting limit."
+      )
+    case .jsonNodeLimitExceeded(let limit):
+      LocalizedStringResource(
+        "JSON parsing was skipped because the document exceeds the \(limit)-node inspection limit.",
+        bundle: #bundle,
+        comment:
+          "Visible bounded-inspection notice. The variable is the JSON node limit."
+      )
+    }
+  }
+}
+
+extension PayloadCopyOutcome {
+  fileprivate var isSuccess: Bool {
+    if case .succeeded = self { return true }
+    return false
   }
 }
 

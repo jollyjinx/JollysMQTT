@@ -34,6 +34,7 @@ public enum TopicOutlineFeature {
     public fileprivate(set) var isFrozen: Bool
     public fileprivate(set) var pendingChangeCount: Int
     public fileprivate(set) var pendingChangeCountIsCapped: Bool
+    public fileprivate(set) var payloadSelection: PayloadTopicSelection
 
     fileprivate let pendingChangeLimit: Int
     fileprivate var newestSnapshot: BrokerTopicTreeSnapshot
@@ -67,6 +68,7 @@ public enum TopicOutlineFeature {
       self.isFrozen = false
       self.pendingChangeCount = 0
       self.pendingChangeCountIsCapped = false
+      self.payloadSelection = .none
     }
   }
 
@@ -254,6 +256,10 @@ public enum TopicOutlineFeature {
       }
     }
     state.rows = rows
+    state.payloadSelection = state.snapshot.payloadSelection(
+      brokerID: state.expectedBrokerID,
+      fullTopic: state.selectedTopic
+    )
   }
 
   private static func index(

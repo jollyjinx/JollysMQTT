@@ -12,6 +12,9 @@
         }
       }
     },
+    "%lld bytes" : {
+      "comment" : "Exact MQTT payload size in bytes."
+    },
     "%lld descendant topics, %llu descendant messages" : {
       "comment" : "Accessible branch-only MQTT topic metadata. Variables are descendant value-topic and message counts.",
       "localizations" : {
@@ -121,6 +124,27 @@
     "Connection overloaded" : {
       "comment" : "Broker connection phase shown after bounded intake overflows."
     },
+    "Copied" : {
+      "comment" : "Accessible confirmation after a payload copy action."
+    },
+    "Copy Display Text" : {
+      "comment" : "Copies the complete selected payload text."
+    },
+    "Copy Failed" : {
+      "comment" : "Accessible failure after a payload copy action."
+    },
+    "Copy Formatted JSON" : {
+      "comment" : "Copies the complete formatted JSON document."
+    },
+    "Copy Raw Bytes" : {
+      "comment" : "Copies the exact selected MQTT payload bytes."
+    },
+    "Copy Selected JSON Value" : {
+      "comment" : "Copies the selected JSON value or subtree."
+    },
+    "Copy Topic" : {
+      "comment" : "Copies the exact selected MQTT topic."
+    },
     "Delete" : {
       "comment" : "Context action that requests broker profile deletion."
     },
@@ -132,6 +156,9 @@
     },
     "Delete Profile and Password" : {
       "comment" : "Destructive action that deletes a broker profile and its device password."
+    },
+    "Details" : {
+      "comment" : "Compact connected-workspace payload-details destination."
     },
     "Disconnected" : {
       "comment" : "Broker connection phase shown while no connection work is active."
@@ -202,6 +229,32 @@
     "Initial delay: %lld seconds" : {
       "comment" : "Reconnect initial delay. The variable is a number of seconds."
     },
+    "Inspecting Payload" : {
+      "comment" : "Progress label while the selected MQTT payload is parsed."
+    },
+    "JSON Presentation" : {
+      "comment" : "Label for choosing structural or raw JSON presentation."
+    },
+    "JSON parsing was skipped because nesting exceeds the %lld-level inspection limit." : {
+      "comment" : "Visible bounded-inspection notice. The variable is the JSON nesting limit."
+    },
+    "JSON parsing was skipped because the document exceeds the %lld-node inspection limit." : {
+      "comment" : "Visible bounded-inspection notice. The variable is the JSON node limit."
+    },
+    "JSON parsing was skipped because the payload exceeds the %lld-byte inspection limit." : {
+      "comment" : "Visible bounded-inspection notice. The variable is the JSON byte limit."
+    },
+    "JSON path %@%@" : {
+      "comment" : "Accessible deterministic JSON path for a structural row.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "JSON path %1$@%2$@"
+          }
+        }
+      }
+    },
     "JollysMQTT" : {
       "comment" : "Application title shown in navigation chrome."
     },
@@ -266,8 +319,14 @@
     "No Brokers" : {
       "comment" : "Title of the initial empty broker-list screen."
     },
+    "No Current Payload" : {
+      "comment" : "Inspector title for a stale cached topic."
+    },
     "No Matching Topics" : {
       "comment" : "Empty topic explorer title when search has no matches."
+    },
+    "Normalized text view of the original non-UTF-8 JSON bytes" : {
+      "comment" : "Clarifies that non-UTF-8 JSON is transcoded for its raw text view."
     },
     "OK" : {
       "comment" : "Dismisses a credential operation error.\nDismisses a workspace state error."
@@ -308,8 +367,17 @@
     "Port" : {
       "comment" : "Label for the broker network port."
     },
+    "Preview truncated at the bounded inspection limit. Use Copy Raw Bytes for the complete payload." : {
+      "comment" : "Explains that oversized selected text is preview-only and exact bytes remain copyable."
+    },
+    "Preview truncated. Copy Display Text copies the complete payload." : {
+      "comment" : "Explains bounded text preview and complete copy semantics."
+    },
     "Profile changes could not be saved." : {
       "comment" : "Error shown when local profile persistence fails."
+    },
+    "Published" : {
+      "comment" : "Direction of an outgoing MQTT publish."
     },
     "QoS" : {
       "comment" : "Label for MQTT requested quality of service."
@@ -320,8 +388,17 @@
     "Random per Connection" : {
       "comment" : "Client ID mode that creates an ID for every clean connection."
     },
+    "Raw" : {
+      "comment" : "JSON inspector raw source presentation mode."
+    },
     "Ready to connect to %@." : {
       "comment" : "Placeholder connected state. The variable is a broker profile name."
+    },
+    "Received" : {
+      "comment" : "Direction of an incoming MQTT publish."
+    },
+    "Received locally %@" : {
+      "comment" : "Accessible local receive time for an MQTT payload."
     },
     "Recent Activity" : {
       "comment" : "Sorts topic siblings by latest subtree activity."
@@ -363,6 +440,12 @@
         }
       }
     },
+    "Retained delivery: No" : {
+      "comment" : "Packet metadata saying the MQTT publish did not carry the retained-delivery flag; this does not claim current broker state."
+    },
+    "Retained delivery: Yes" : {
+      "comment" : "Packet metadata saying the MQTT publish carried the retained-delivery flag; this does not claim current broker state."
+    },
     "Retry" : {
       "comment" : "Retries a broker connection after a failure or cancellation."
     },
@@ -384,11 +467,25 @@
     "Search Topics" : {
       "comment" : "Label for topic path and current-value search."
     },
+    "Select a Topic" : {
+      "comment" : "Inspector title when no MQTT topic is selected."
+    },
     "Selected topic: %@" : {
       "comment" : "Restored topic selection. The variable is an MQTT topic."
     },
     "Show Brokers" : {
       "comment" : "Returns a connected workspace to the broker list."
+    },
+    "Showing %lld of %lld bytes. Copy Raw Bytes copies the complete payload." : {
+      "comment" : "Explains bounded hexadecimal output and complete raw-byte copy semantics.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Showing %1$lld of %2$lld bytes. Copy Raw Bytes copies the complete payload."
+          }
+        }
+      }
     },
     "Sort Topics" : {
       "comment" : "Label for choosing the topic outline sort order."
@@ -409,6 +506,9 @@
           }
         }
       }
+    },
+    "Structure" : {
+      "comment" : "JSON inspector structural presentation mode."
     },
     "Subscribing" : {
       "comment" : "Broker connection phase shown while MQTT subscriptions start."
@@ -473,11 +573,23 @@
     "The updated fixed client ID is already in use by another connection to this broker. Choose a different client ID before reconnecting." : {
       "comment" : "Explains why updated broker settings cannot reconnect all windows."
     },
+    "This cached topic has not been observed in the current connection. Its old payload is not shown as current." : {
+      "comment" : "Explains why a stale cached MQTT payload is suppressed."
+    },
+    "Topic %@" : {
+      "comment" : "Accessible exact MQTT topic in the payload inspector."
+    },
     "Topic Filter" : {
       "comment" : "Label for an MQTT subscription topic filter."
     },
+    "Topic Has No Value" : {
+      "comment" : "Inspector title for a branch without a current payload."
+    },
     "Topic path or current value" : {
       "comment" : "Prompt for searching indexed live topics and current payload summaries."
+    },
+    "Topics" : {
+      "comment" : "Compact connected-workspace topic destination."
     },
     "Transport" : {
       "comment" : "Label for the broker transport picker."
@@ -493,6 +605,9 @@
     },
     "Waiting to reconnect" : {
       "comment" : "Broker connection phase shown during automatic backoff."
+    },
+    "Workspace Section" : {
+      "comment" : "Label for choosing Topics or Details in compact layout."
     },
     "Workspace State Unavailable" : {
       "comment" : "Title for workspace restoration or persistence failure."

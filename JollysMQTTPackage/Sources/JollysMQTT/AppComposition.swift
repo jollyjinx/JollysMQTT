@@ -261,6 +261,7 @@ public final class WorkspaceSceneStore {
   public let serverList: ServerListStore
   public let connection: ConnectionStore
   public let topics: TopicOutlineStore
+  public let payloadInspector: PayloadInspectorStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -285,6 +286,8 @@ public final class WorkspaceSceneStore {
     self.feed = feed
     self.connection = ConnectionStore(feed: feed)
     self.topics = TopicOutlineStore(feed: feed)
+    let payloadInspector = PayloadInspectorStore()
+    self.payloadInspector = payloadInspector
     self.serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
@@ -304,6 +307,11 @@ public final class WorkspaceSceneStore {
         await workspace.flush()
       }
     )
+    self.topics.onPayloadSelectionChange = { [weak payloadInspector] selection in
+      payloadInspector?.send(
+        .selectionChanged(selection)
+      )
+    }
   }
 
   public var selectedProfileID: UUID? {
@@ -512,6 +520,7 @@ public final class TopicOutlineStore {
   }
 
   private let feed: any BrokerFeedLeaseControlling
+  var onPayloadSelectionChange: (@MainActor @Sendable (PayloadTopicSelection) -> Void)?
 
   init(feed: any BrokerFeedLeaseControlling) {
     self.feed = feed
@@ -531,10 +540,12 @@ public final class TopicOutlineStore {
       sortMode: sortMode,
       expectedBrokerID: expectedBrokerID
     )
+    onPayloadSelectionChange?(state.payloadSelection)
   }
 
   func send(_ intent: TopicOutlineFeature.Intent) {
     TopicOutlineFeature.reduce(state: &state, intent: intent)
+    onPayloadSelectionChange?(state.payloadSelection)
   }
 
   func receive(_ snapshot: BrokerTopicTreeSnapshot) {
@@ -548,6 +559,7 @@ public final class TopicOutlineStore {
       state: &state,
       action: .snapshotReceived(snapshot)
     )
+    onPayloadSelectionChange?(state.payloadSelection)
   }
 
   func observe() async {
