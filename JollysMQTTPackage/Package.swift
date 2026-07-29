@@ -27,6 +27,10 @@ let package = Package(
       name: "JollysMQTTStorageProbe",
       targets: ["JollysMQTTStorageProbe"]
     ),
+    .executable(
+      name: "JollysMQTTPerformanceProbe",
+      targets: ["JollysMQTTPerformanceProbe"]
+    ),
   ],
   dependencies: [
     .package(
@@ -72,6 +76,11 @@ let package = Package(
     .executableTarget(
       name: "JollysMQTTStorageProbe",
       dependencies: ["JollysMQTTStorage"],
+      swiftSettings: strictSwiftSettings
+    ),
+    .executableTarget(
+      name: "JollysMQTTPerformanceProbe",
+      dependencies: ["JollysMQTT"],
       swiftSettings: strictSwiftSettings
     ),
     .testTarget(

@@ -376,7 +376,7 @@ struct SQLiteBrokerHistoryWriterTests {
     #expect(stored.isOpenEnded == false)
   }
 
-  @Test("The smallest valid prune batch still converges after a full ingestion batch")
+  @Test("Append maintenance is bounded and explicit maintenance converges")
   func tinyPruneBatchConverges() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appending(
@@ -410,6 +410,22 @@ struct SQLiteBrokerHistoryWriterTests {
       }
     )
 
+    let boundedPage = try await writer.page(
+      HistoryPageRequest(
+        historySourceID: "source-a",
+        topic: "busy",
+        limit: 128
+      )
+    )
+    #expect(boundedPage.messages.count == 127)
+    guard case .succeeded(let report) = await writer.maintenanceStatus() else {
+      Issue.record("Bounded append maintenance did not report success.")
+      return
+    }
+    #expect(report.deletedForTopicLimit == 1)
+    #expect(report.finalMessageCount == 127)
+
+    let converged = try await writer.applyRetention()
     let page = try await writer.page(
       HistoryPageRequest(
         historySourceID: "source-a",
@@ -418,12 +434,191 @@ struct SQLiteBrokerHistoryWriterTests {
       )
     )
     #expect(page.messages.map(\.payload) == [Data([128]), Data([127])])
-    guard case .succeeded(let report) = await writer.maintenanceStatus() else {
-      Issue.record("Maintenance did not report successful convergence.")
+    #expect(converged.deletedForTopicLimit == 125)
+    #expect(converged.finalMessageCount == 2)
+  }
+
+  @Test("Append maintenance never exceeds its live row quantum")
+  func appendMaintenanceHonorsLiveQuantum() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTBrokerHistoryWriterTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let policy = try HistoryRetentionPolicy(
+      topicMessageLimit: 1,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024,
+      messagePruneBatchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+    let writer = SQLiteBrokerHistoryWriter(
+      databaseURL: directory.appending(path: "history.sqlite3"),
+      retentionPolicy: policy
+    )
+    let epoch = ConnectionEpochID()
+
+    for range in [1...500, 501...1_000] {
+      try await writer.append(
+        range.map {
+          BrokerHistoryMessage(
+            historySourceID: "source-a",
+            connectionEpoch: epoch,
+            ordinal: UInt64($0),
+            topic: "busy",
+            payload: Data([UInt8($0 % 255)]),
+            receivedAtMicroseconds: Int64($0)
+          )
+        }
+      )
+    }
+
+    guard case .succeeded(let report) = await writer.maintenanceStatus()
+    else {
+      Issue.record("Bounded append maintenance did not report success.")
       return
     }
-    #expect(report.deletedForTopicLimit == 126)
-    #expect(report.finalMessageCount == 2)
+    #expect(report.deletedForTopicLimit == 500)
+    #expect(report.deletedForBrokerLimit <= 500)
+    #expect(report.finalMessageCount == 1)
+  }
+
+  @Test("Broker pruning continues below high water until it reaches target")
+  func brokerPruningContinuesToTarget() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTBrokerHistoryWriterTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    let databaseURL = directory.appending(path: "history.sqlite3")
+    let policy = try HistoryRetentionPolicy(
+      topicMessageLimit: 1_000_000,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024,
+      messagePruneBatchLimit: 100,
+      vacuumPageLimit: 8_192
+    )
+    var seedStore: SQLiteHistoryStore? = try await SQLiteHistoryStore.open(
+      databaseURL: databaseURL
+    )
+    var ordinal = 0
+    while try #require(await seedStore?.diagnostics()).totalSQLiteBytes
+      <= policy.brokerPruneHighWaterBytes + 512 * 1_024
+    {
+      let inputs = (0..<500).map { offset in
+        HistoryMessageInput(
+          historySourceID: "source-a",
+          connectionEpoch: UUID(),
+          connectionOrdinal: UInt64(ordinal + offset + 1),
+          topic: "seed/\(ordinal + offset)",
+          receivedAtMicroseconds: Int64(ordinal + offset),
+          payload: Data(repeating: 0xA5, count: 1_024)
+        )
+      }
+      _ = try await seedStore?.append(inputs)
+      ordinal += inputs.count
+    }
+    seedStore = nil
+
+    let writer = SQLiteBrokerHistoryWriter(
+      databaseURL: databaseURL,
+      retentionPolicy: policy
+    )
+    let epoch = ConnectionEpochID()
+    var crossedBelowHighWater: HistoryMaintenanceReport?
+    for appendOrdinal in 1...100 {
+      try await writer.append([
+        BrokerHistoryMessage(
+          historySourceID: "source-a",
+          connectionEpoch: epoch,
+          ordinal: UInt64(appendOrdinal),
+          topic: "live/\(appendOrdinal)",
+          payload: Data([0x01]),
+          receivedAtMicroseconds: Int64(appendOrdinal)
+        )
+      ])
+      guard case .succeeded(let report) = await writer.maintenanceStatus()
+      else {
+        Issue.record("Incremental maintenance did not report success.")
+        return
+      }
+      if report.finalSQLiteBytes <= policy.brokerPruneHighWaterBytes,
+        report.finalSQLiteBytes > policy.brokerPruneTargetBytes
+      {
+        crossedBelowHighWater = report
+        break
+      }
+    }
+    let crossing = try #require(crossedBelowHighWater)
+
+    try await writer.append([
+      BrokerHistoryMessage(
+        historySourceID: "source-a",
+        connectionEpoch: epoch,
+        ordinal: 101,
+        topic: "live/continuation",
+        payload: Data([0x02]),
+        receivedAtMicroseconds: 101
+      )
+    ])
+    guard case .succeeded(let continued) = await writer.maintenanceStatus()
+    else {
+      Issue.record("Continuation maintenance did not report success.")
+      return
+    }
+    #expect(continued.deletedForBrokerLimit > 0)
+    #expect(continued.finalSQLiteBytes < crossing.finalSQLiteBytes)
+  }
+
+  @Test("Shutdown fully converges retention left by bounded append work")
+  func shutdownConvergesRetention() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTBrokerHistoryWriterTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let policy = try HistoryRetentionPolicy(
+      topicMessageLimit: 2,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024,
+      messagePruneBatchLimit: 1,
+      vacuumPageLimit: 1
+    )
+    let writer = SQLiteBrokerHistoryWriter(
+      databaseURL: directory.appending(path: "history.sqlite3"),
+      retentionPolicy: policy
+    )
+    let epoch = ConnectionEpochID()
+    try await writer.append(
+      (1...128).map {
+        BrokerHistoryMessage(
+          historySourceID: "source-a",
+          connectionEpoch: epoch,
+          ordinal: UInt64($0),
+          topic: "busy",
+          payload: Data([$0]),
+          receivedAtMicroseconds: Int64($0)
+        )
+      }
+    )
+
+    try await writer.shutdown()
+
+    let page = try await writer.page(
+      HistoryPageRequest(
+        historySourceID: "source-a",
+        topic: "busy",
+        limit: 10
+      )
+    )
+    #expect(page.messages.map(\.payload) == [Data([128]), Data([127])])
   }
 
   @Test("A later invalid message prevents every row in the append batch from committing")

@@ -197,13 +197,26 @@ public enum PayloadInspectorFeature {
     switch intent {
     case .selectionChanged(let source):
       guard source != state.source else { return nil }
+      let preservesStableInspection =
+        if case .current(let message) = source,
+          let inspectedMessage = state.inspection?.message
+        {
+          inspectedMessage.topicID == message.topicID
+            && inspectedMessage.id.connectionEpoch
+              == message.id.connectionEpoch
+            && inspectedMessage.direction == message.direction
+        } else {
+          false
+        }
       state.requestID &+= 1
       state.source = source
-      state.inspection = nil
       state.isInspecting = false
-      state.selectedJSONPointer = nil
-      state.selectedJSONValueText = nil
-      state.jsonMode = .structure
+      if !preservesStableInspection {
+        state.inspection = nil
+        state.selectedJSONPointer = nil
+        state.selectedJSONValueText = nil
+        state.jsonMode = .structure
+      }
       state.copyOutcome = nil
       switch source {
       case .none:
@@ -215,7 +228,9 @@ public enum PayloadInspectorFeature {
       case .current(let message):
         state.unavailableReason = nil
         state.isInspecting = true
-        state.compactSection = .details
+        if !preservesStableInspection {
+          state.compactSection = .details
+        }
         return .inspect(requestID: state.requestID, message: message)
       }
       return nil

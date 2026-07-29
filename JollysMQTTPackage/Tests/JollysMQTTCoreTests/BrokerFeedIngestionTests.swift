@@ -449,7 +449,7 @@ struct BrokerFeedIngestionTests {
     #expect(parent.children.first?.isStale == false)
   }
 
-  @Test("A slow writer backpressures ingestion at one pending batch")
+  @Test("A slow writer backpressures only at the bounded history capacity")
   func historyHandoffIsBounded() async {
     let writer = SlowFirstHistoryWriter()
     let ingestion = BrokerFeedIngestion(
@@ -458,6 +458,7 @@ struct BrokerFeedIngestionTests {
       historyWriter: writer,
       policy: .init(
         historyBatchSize: 2,
+        historyQueueCapacity: 4,
         historyFlushIntervalSeconds: 60,
         maximumSnapshotRate: 10
       )
@@ -483,16 +484,70 @@ struct BrokerFeedIngestionTests {
         )
       }
     }
-    while await ingestion.metrics().pendingHistoryMessageCount < 2 {
+    while await ingestion.metrics().pendingHistoryMessageCount < 4 {
       await Task.yield()
     }
 
-    #expect(await ingestion.metrics().pendingHistoryMessageCount == 2)
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(await ingestion.metrics().pendingHistoryMessageCount == 4)
+    #expect(await ingestion.metrics().historyQueueHighWaterMark == 4)
+    #expect(
+      await ingestion.metrics().historyQueuePayloadHighWaterMark == 20
+    )
     await writer.finishFirstAppend()
     await firstBatch.value
     await followingMessages.value
     let snapshot = await ingestion.flush()
     #expect(snapshot.totalMessageCount == 100)
+  }
+
+  @Test("A snapshot counts an in-flight history batch as not yet durable")
+  func snapshotReportsInFlightHistory() async throws {
+    let writer = SlowFirstHistoryWriter()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: writer,
+      policy: .init(
+        historyBatchSize: 1,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 1_000_000
+      )
+    )
+    let firstEpoch = ConnectionEpochID()
+    let markerEpoch = ConnectionEpochID()
+    let snapshots = await ingestion.snapshots()
+    let observedMarker = Task {
+      for await snapshot in snapshots
+      where snapshot.connectionEpoch == markerEpoch {
+        return snapshot
+      }
+      return BrokerTopicTreeSnapshot.empty
+    }
+    let ingest = Task {
+      await ingestion.ingest(
+        .fixture(epoch: firstEpoch, ordinal: 1, topic: "in-flight")
+      )
+    }
+    await writer.waitUntilFirstAppendStarts()
+
+    await ingestion.beginConnectionEpoch(markerEpoch)
+    let snapshot = await observedMarker.value
+
+    #expect(snapshot.unpersistedMessageCount == 1)
+    #expect(snapshot.historyIsHealthy)
+    await writer.finishFirstAppend()
+    await ingest.value
+    await ingestion.shutdown()
+  }
+
+  @Test("The default history handoff holds exactly two batches")
+  func defaultHistoryHandoffCapacity() {
+    let policy = BrokerFeedIngestionPolicy(historyBatchSize: 37)
+
+    #expect(policy.historyQueueCapacity == 74)
   }
 
   @Test("History recovery durably closes the exact coverage gap before resuming")

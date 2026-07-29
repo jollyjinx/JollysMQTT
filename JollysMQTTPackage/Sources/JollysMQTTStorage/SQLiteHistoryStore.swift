@@ -727,6 +727,174 @@ public actor SQLiteHistoryStore {
     }
   }
 
+  /// Applies per-topic retention only to identities touched by a committed
+  /// append, avoiding a full-table window scan on every live batch.
+  public func prune(
+    keepingNewestPerTopic: Int,
+    batchLimit: Int,
+    topics: [HistoryTopicRetentionScope]
+  ) throws -> HistoryPruneResult {
+    guard keepingNewestPerTopic >= 0,
+      batchLimit > 0,
+      keepingNewestPerTopic <= Int(Int32.max),
+      batchLimit <= Int(Int32.max)
+    else {
+      throw HistoryStorageError.invalidRetention(
+        keepingNewest: keepingNewestPerTopic,
+        batchLimit: batchLimit
+      )
+    }
+    let uniqueTopics = Set(topics)
+    guard !uniqueTopics.isEmpty else {
+      return HistoryPruneResult(
+        deletedCount: 0,
+        remainingCount: Int(
+          try scalarInt64(
+            "SELECT COUNT(*) FROM messages",
+            operation: "count messages after scoped pruning"
+          )
+        )
+      )
+    }
+
+    var lookup: OpaquePointer? = try prepare(
+      """
+      SELECT id
+      FROM topics
+      WHERE history_source_id = ? AND topic = ?
+      """,
+      operation: "prepare scoped retention topic lookup"
+    )
+    defer { sqlite3_finalize(lookup) }
+    let activeLookup = lookup!
+    var topicIDs = Set<Int64>()
+    topicIDs.reserveCapacity(uniqueTopics.count)
+    for topic in uniqueTopics {
+      try reset(
+        activeLookup,
+        operation: "reset scoped retention topic lookup"
+      )
+      try bind(
+        topic.historySourceID,
+        to: 1,
+        in: activeLookup,
+        operation: "bind scoped retention history source"
+      )
+      try bind(
+        topic.topic,
+        to: 2,
+        in: activeLookup,
+        operation: "bind scoped retention topic"
+      )
+      let result = sqlite3_step(activeLookup)
+      if result == SQLITE_ROW {
+        topicIDs.insert(sqlite3_column_int64(activeLookup, 0))
+      } else if result != SQLITE_DONE {
+        throw sqliteError(
+          code: result,
+          operation: "look up scoped retention topic"
+        )
+      }
+    }
+    sqlite3_finalize(lookup)
+    lookup = nil
+    guard !topicIDs.isEmpty else {
+      return HistoryPruneResult(
+        deletedCount: 0,
+        remainingCount: Int(
+          try scalarInt64(
+            "SELECT COUNT(*) FROM messages",
+            operation: "count messages after scoped pruning"
+          )
+        )
+      )
+    }
+
+    let placeholders = Array(
+      repeating: "?",
+      count: topicIDs.count
+    ).joined(separator: ", ")
+    try execute("BEGIN IMMEDIATE", operation: "begin scoped pruning")
+    do {
+      var statement: OpaquePointer? = try prepare(
+        """
+        WITH ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY topic_id
+                    ORDER BY id DESC
+                ) AS newest_rank
+            FROM messages
+            WHERE topic_id IN (\(placeholders))
+        ),
+        doomed AS (
+            SELECT id
+            FROM ranked
+            WHERE newest_rank > ?
+            ORDER BY id ASC
+            LIMIT ?
+        )
+        DELETE FROM messages
+        WHERE id IN (SELECT id FROM doomed)
+        """,
+        operation: "prepare scoped incremental prune"
+      )
+      defer { sqlite3_finalize(statement) }
+      let activeStatement = statement!
+      for (offset, topicID) in topicIDs.enumerated() {
+        try check(
+          sqlite3_bind_int64(
+            activeStatement,
+            Int32(offset + 1),
+            topicID
+          ),
+          operation: "bind scoped retention topic ID"
+        )
+      }
+      let retentionIndex = Int32(topicIDs.count + 1)
+      try check(
+        sqlite3_bind_int64(
+          activeStatement,
+          retentionIndex,
+          Int64(keepingNewestPerTopic)
+        ),
+        operation: "bind scoped per-topic retention limit"
+      )
+      try check(
+        sqlite3_bind_int64(
+          activeStatement,
+          retentionIndex + 1,
+          Int64(batchLimit)
+        ),
+        operation: "bind scoped prune batch limit"
+      )
+      try expectDone(
+        sqlite3_step(activeStatement),
+        operation: "prune scoped history"
+      )
+      let deleted = Int(sqlite3_changes(database))
+      sqlite3_finalize(statement)
+      statement = nil
+      try execute("COMMIT", operation: "commit scoped pruning")
+      if deleted > 0 {
+        _ = try checkpoint(.truncate)
+      }
+      return HistoryPruneResult(
+        deletedCount: deleted,
+        remainingCount: Int(
+          try scalarInt64(
+            "SELECT COUNT(*) FROM messages",
+            operation: "count messages after scoped pruning"
+          )
+        )
+      )
+    } catch {
+      try? execute("ROLLBACK", operation: "rollback scoped pruning")
+      throw error
+    }
+  }
+
   public func prepareTopicHistoryClear(
     historySourceID: String,
     topic: String

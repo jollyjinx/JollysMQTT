@@ -1,0 +1,112 @@
+{
+  "baselineResidentBytes" : 11436032,
+  "chartCost" : {
+    "maximumMilliseconds" : 0.036375,
+    "medianMilliseconds" : 0.023875,
+    "p95Milliseconds" : 0.036375,
+    "sampleCount" : 10
+  },
+  "elapsedSeconds" : 599.943531375,
+  "environment" : {
+    "architecture" : "arm64",
+    "buildConfiguration" : "release",
+    "hardwareModel" : "Mac16,7",
+    "operatingSystem" : "Version 27.0 (Build 26A5388g)",
+    "xcodeVersion" : "Xcode 27.0; Build version 27A5228h"
+  },
+  "feedOwnedStateReleased" : true,
+  "fixture" : {
+    "durationSeconds" : 600,
+    "messagesPerMinute" : 100000,
+    "payloadBytes" : 256,
+    "payloadDistribution" : {
+      "binaryPercent" : 10,
+      "jsonPercent" : 40,
+      "scalarPercent" : 50
+    },
+    "topicCount" : 10000,
+    "topicDistribution" : {
+      "hotMessagePercent" : 80,
+      "hotTopicCount" : 1000,
+      "seed" : 319124755540
+    }
+  },
+  "freezeViewCost" : {
+    "maximumMilliseconds" : 49.067792,
+    "medianMilliseconds" : 45.245583,
+    "p95Milliseconds" : 49.067792,
+    "sampleCount" : 10
+  },
+  "generatedAtUTC" : "2026-07-29T13:21:24Z",
+  "historyDatabaseByteLimit" : 262144000,
+  "historyMessagesPerSecond" : 5798.828071007605,
+  "historyWrittenMessageCount" : 1000000,
+  "ingestMessagesPerSecond" : 1666.8235387222487,
+  "ingestedMessageCount" : 1000000,
+  "mainActorUpdateCount" : 4991,
+  "mainActorUpdatesPerSecond" : 8.319116281762744,
+  "memoryStabilized" : true,
+  "outlineUpdateCost" : {
+    "maximumMilliseconds" : 73.417333,
+    "medianMilliseconds" : 6.416334,
+    "p95Milliseconds" : 7.82575,
+    "sampleCount" : 4991
+  },
+  "peakObservedHistoryDatabaseBytes" : 157284168,
+  "peakResidentBytes" : 109199360,
+  "postStopResidentByteSamples" : [
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600,
+    94617600
+  ],
+  "queueDepths" : {
+    "history" : {
+      "baseline" : 0,
+      "highWaterMark" : 256,
+      "settled" : 0
+    },
+    "ingress" : {
+      "baseline" : 0,
+      "highWaterMark" : 232,
+      "settled" : 0
+    },
+    "publish" : {
+      "baseline" : 0,
+      "highWaterMark" : 32,
+      "settled" : 0
+    }
+  },
+  "scrollPreparationCost" : {
+    "maximumMilliseconds" : 0.059875,
+    "medianMilliseconds" : 0.04075,
+    "p95Milliseconds" : 0.059875,
+    "sampleCount" : 10
+  },
+  "searchCost" : {
+    "maximumMilliseconds" : 50.584959,
+    "medianMilliseconds" : 45.267667,
+    "p95Milliseconds" : 50.584959,
+    "sampleCount" : 10
+  },
+  "selectionCost" : {
+    "maximumMilliseconds" : 48.759833,
+    "medianMilliseconds" : 45.539875,
+    "p95Milliseconds" : 48.759833,
+    "sampleCount" : 10
+  },
+  "settledHistoryDatabaseBytes" : 146699384,
+  "settledResidentBytes" : 94617600,
+  "snapshotCost" : {
+    "maximumMilliseconds" : 7.637667,
+    "medianMilliseconds" : 7.152333,
+    "p95Milliseconds" : 7.637667,
+    "sampleCount" : 10
+  }
+}

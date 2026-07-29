@@ -1,6 +1,19 @@
 import Foundation
 import JollysMQTTCore
 
+public struct HistoryTopicRetentionScope:
+  Hashable,
+  Sendable
+{
+  public let historySourceID: String
+  public let topic: String
+
+  public init(historySourceID: String, topic: String) {
+    self.historySourceID = historySourceID
+    self.topic = topic
+  }
+}
+
 public struct HistoryMessageInput: Sendable, Equatable {
   public let historySourceID: String
   public let connectionEpoch: UUID?

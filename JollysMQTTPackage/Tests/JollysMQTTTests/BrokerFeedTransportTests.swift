@@ -156,6 +156,7 @@ struct BrokerFeedTransportTests {
     let first = BrokerPublishRequest.fixture(id: 1)
     let second = BrokerPublishRequest.fixture(id: 2)
     let firstResult = Task { await queue.submit(first) }
+    await waitForPendingOperationCount(1, in: queue)
     let secondResult = Task { await queue.submit(second) }
     await waitForPendingOperationCount(2, in: queue)
     var iterator = await queue.commands().makeAsyncIterator()

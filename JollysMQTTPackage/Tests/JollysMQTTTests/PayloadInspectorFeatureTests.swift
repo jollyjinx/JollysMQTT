@@ -80,6 +80,158 @@ struct PayloadInspectorFeatureTests {
     )
   }
 
+  @Test("A newer payload keeps stable same-topic content while inspection is pending")
+  func sameTopicInspectionKeepsStableContent() async {
+    let inspector = ControlledPayloadInspector()
+    let store = PayloadInspectorStore(
+      inspector: inspector,
+      clipboard: RecordingPayloadClipboard()
+    )
+    let topicID = BrokerTopicID(
+      brokerID: UUID(),
+      fullTopic: "devices/live"
+    )
+    let connectionEpoch = ConnectionEpochID()
+    let first = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("first".utf8),
+      connectionEpoch: connectionEpoch,
+      ordinal: 1
+    )
+    let second = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("second".utf8),
+      connectionEpoch: connectionEpoch,
+      ordinal: 2
+    )
+
+    store.send(.selectionChanged(.current(first)))
+    await inspector.waitForRequestCount(1)
+    await inspector.complete(
+      messageID: first.id,
+      presentation: .text(.init(text: "first"))
+    )
+    await waitUntil { !store.state.isInspecting }
+    store.send(.setCompactSection(.chart))
+
+    store.send(.selectionChanged(.current(second)))
+    await inspector.waitForRequestCount(1)
+
+    #expect(store.state.isInspecting)
+    #expect(store.state.compactSection == .chart)
+    #expect(store.state.inspection?.message.id == first.id)
+    #expect(
+      store.state.inspection?.presentation
+        == .text(.init(text: "first"))
+    )
+
+    await inspector.complete(
+      messageID: second.id,
+      presentation: .text(.init(text: "second"))
+    )
+    await waitUntil { !store.state.isInspecting }
+    #expect(store.state.inspection?.message.id == second.id)
+  }
+
+  @Test("A superseded same-topic result cannot replace stable or newest content")
+  func supersededSameTopicResultIsRejected() async {
+    let inspector = ControlledPayloadInspector()
+    let store = PayloadInspectorStore(
+      inspector: inspector,
+      clipboard: RecordingPayloadClipboard()
+    )
+    let topicID = BrokerTopicID(
+      brokerID: UUID(),
+      fullTopic: "devices/live"
+    )
+    let connectionEpoch = ConnectionEpochID()
+    let first = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("first".utf8),
+      connectionEpoch: connectionEpoch,
+      ordinal: 1
+    )
+    let second = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("second".utf8),
+      connectionEpoch: connectionEpoch,
+      ordinal: 2
+    )
+    let third = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("third".utf8),
+      connectionEpoch: connectionEpoch,
+      ordinal: 3
+    )
+
+    store.send(.selectionChanged(.current(first)))
+    await inspector.waitForRequestCount(1)
+    await inspector.complete(
+      messageID: first.id,
+      presentation: .text(.init(text: "first"))
+    )
+    await waitUntil { !store.state.isInspecting }
+
+    store.send(.selectionChanged(.current(second)))
+    await inspector.waitForRequestCount(1)
+    store.send(.selectionChanged(.current(third)))
+    await inspector.waitForRequestCount(2)
+
+    await inspector.complete(
+      messageID: second.id,
+      presentation: .text(.init(text: "second"))
+    )
+    await Task.yield()
+    #expect(store.state.isInspecting)
+    #expect(store.state.inspection?.message.id == first.id)
+
+    await inspector.complete(
+      messageID: third.id,
+      presentation: .text(.init(text: "third"))
+    )
+    await waitUntil { !store.state.isInspecting }
+    #expect(store.state.inspection?.message.id == third.id)
+  }
+
+  @Test("A different connection epoch clears prior inspected content")
+  func differentEpochClearsInspection() async {
+    let inspector = ControlledPayloadInspector()
+    let store = PayloadInspectorStore(
+      inspector: inspector,
+      clipboard: RecordingPayloadClipboard()
+    )
+    let topicID = BrokerTopicID(
+      brokerID: UUID(),
+      fullTopic: "devices/live"
+    )
+    let first = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("first".utf8),
+      connectionEpoch: ConnectionEpochID(),
+      ordinal: 1
+    )
+    let reconnect = PayloadMessage.testFixture(
+      topicID: topicID,
+      payload: Data("reconnect".utf8),
+      connectionEpoch: ConnectionEpochID(),
+      ordinal: 1
+    )
+
+    store.send(.selectionChanged(.current(first)))
+    await inspector.waitForRequestCount(1)
+    await inspector.complete(
+      messageID: first.id,
+      presentation: .text(.init(text: "first"))
+    )
+    await waitUntil { !store.state.isInspecting }
+
+    store.send(.selectionChanged(.current(reconnect)))
+    await inspector.waitForRequestCount(1)
+
+    #expect(store.state.isInspecting)
+    #expect(store.state.inspection == nil)
+  }
+
   @Test("Leaving current content cancels its selected-only parse")
   func selectionRemovalCancelsParse() async {
     let inspector = ControlledPayloadInspector()
@@ -326,6 +478,7 @@ extension PayloadMessage {
     topicID: BrokerTopicID? = nil,
     topic: String = "devices/value",
     payload: Data,
+    connectionEpoch: ConnectionEpochID = ConnectionEpochID(),
     ordinal: UInt64 = 1
   ) -> Self {
     let resolvedID =
@@ -333,7 +486,7 @@ extension PayloadMessage {
       ?? BrokerTopicID(brokerID: UUID(), fullTopic: topic)
     return Self(
       id: PayloadMessageID(
-        connectionEpoch: ConnectionEpochID(),
+        connectionEpoch: connectionEpoch,
         ordinal: ordinal,
         direction: .received
       ),

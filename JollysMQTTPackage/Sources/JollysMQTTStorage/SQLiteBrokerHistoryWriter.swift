@@ -6,12 +6,19 @@ public actor SQLiteBrokerHistoryWriter:
   BrokerHistoryReading,
   BrokerHistoryMaintaining
 {
+  // Append-time work must remain well below one 128-message interval at the
+  // 100,000 messages/minute release rate. Explicit maintenance and shutdown
+  // continue to use the full configured policy limits.
+  private static let appendMaintenanceMessageLimit = 500
+  private static let appendMaintenanceVacuumPageLimit = 256
+
   private let databaseURL: URL
   private let filePolicy: any HistoryFilePolicy
   private let retentionPolicyProvider: @Sendable () -> HistoryRetentionPolicy
   private let clearStepHandler: (@Sendable (HistoryClearContinuation) async throws -> Void)?
   private var store: SQLiteHistoryStore?
   private var currentMaintenanceStatus: HistoryMaintenanceStatus = .notRun
+  private var isPruningBrokerToTarget = false
   private var isOpening = false
   private var isClosing = false
   private var activeOperationCount = 0
@@ -58,22 +65,24 @@ public actor SQLiteBrokerHistoryWriter:
     guard !messages.isEmpty else { return }
     let policy = retentionPolicyProvider()
     let inputs = try validatedInputs(messages, policy: policy)
+    let affectedTopics = Set(
+      messages.map {
+        HistoryTopicRetentionScope(
+          historySourceID: $0.historySourceID,
+          topic: $0.topic
+        )
+      }
+    )
     try Task.checkCancellation()
     let store = try await acquireStore()
     do {
-      let before = try await store.diagnostics()
-      if before.totalSQLiteBytes > policy.brokerPruneHighWaterBytes {
-        _ = try await performMaintenance(
-          store: store,
-          policy: policy
-        )
-      }
       _ = try await store.append(inputs)
       do {
         currentMaintenanceStatus = .succeeded(
-          try await performMaintenance(
+          try await performAppendMaintenance(
             store: store,
-            policy: policy
+            policy: policy,
+            affectedTopics: Array(affectedTopics)
           )
         )
       } catch is CancellationError {
@@ -105,6 +114,7 @@ public actor SQLiteBrokerHistoryWriter:
         store: store,
         policy: retentionPolicyProvider()
       )
+      isPruningBrokerToTarget = false
       currentMaintenanceStatus = .succeeded(report)
       finishOperation()
       return report
@@ -267,6 +277,7 @@ public actor SQLiteBrokerHistoryWriter:
               policy: retentionPolicyProvider()
             )
           )
+          isPruningBrokerToTarget = false
         } catch is CancellationError {
           currentMaintenanceStatus = .cancelled
         } catch {
@@ -599,6 +610,56 @@ public actor SQLiteBrokerHistoryWriter:
     }
     return HistoryMaintenanceReport(
       deletedForTopicLimit: deletedForTopicLimit,
+      deletedForBrokerLimit: deletedForBrokerLimit,
+      deletedOrphanTopicCount: deletedOrphanTopics,
+      finalMessageCount: diagnostics.messageCount,
+      finalSQLiteBytes: diagnostics.totalSQLiteBytes
+    )
+  }
+
+  private func performAppendMaintenance(
+    store: SQLiteHistoryStore,
+    policy: HistoryRetentionPolicy,
+    affectedTopics: [HistoryTopicRetentionScope]
+  ) async throws -> HistoryMaintenanceReport {
+    try Task.checkCancellation()
+    let messageLimit = min(
+      policy.messagePruneBatchLimit,
+      Self.appendMaintenanceMessageLimit
+    )
+    let vacuumPageLimit = min(
+      policy.vacuumPageLimit,
+      Self.appendMaintenanceVacuumPageLimit
+    )
+    let topicStep = try await store.prune(
+      keepingNewestPerTopic: policy.topicMessageLimit,
+      batchLimit: messageLimit,
+      topics: affectedTopics
+    )
+    var diagnostics = try await store.diagnostics()
+    var deletedForBrokerLimit = 0
+    var deletedOrphanTopics = 0
+    if diagnostics.totalSQLiteBytes > policy.brokerPruneHighWaterBytes {
+      isPruningBrokerToTarget = true
+    }
+    if isPruningBrokerToTarget,
+      diagnostics.totalSQLiteBytes > policy.brokerPruneTargetBytes
+    {
+      try Task.checkCancellation()
+      let brokerStep = try await store.pruneToMaximumBytes(
+        policy.brokerPruneTargetBytes,
+        batchLimit: messageLimit,
+        vacuumPageLimit: vacuumPageLimit
+      )
+      deletedForBrokerLimit = brokerStep.deletedCount
+      deletedOrphanTopics = brokerStep.deletedTopicCount
+      diagnostics = try await store.diagnostics()
+    }
+    if diagnostics.totalSQLiteBytes <= policy.brokerPruneTargetBytes {
+      isPruningBrokerToTarget = false
+    }
+    return HistoryMaintenanceReport(
+      deletedForTopicLimit: topicStep.deletedCount,
       deletedForBrokerLimit: deletedForBrokerLimit,
       deletedOrphanTopicCount: deletedOrphanTopics,
       finalMessageCount: diagnostics.messageCount,

@@ -1,0 +1,103 @@
+{
+  "budgets" : [
+    {
+      "allowedRegressionPercent" : 10,
+      "direction" : "higherIsBetter",
+      "metric" : "ingestMessagesPerSecond",
+      "referenceValue" : 1666.8235387222487
+    },
+    {
+      "allowedRegressionPercent" : 10,
+      "direction" : "higherIsBetter",
+      "metric" : "historyMessagesPerSecond",
+      "referenceValue" : 5798.828071007605
+    },
+    {
+      "allowedRegressionPercent" : 5,
+      "direction" : "lowerIsBetter",
+      "metric" : "mainActorUpdatesPerSecond",
+      "referenceValue" : 8.319116281762744
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "snapshotP95Milliseconds",
+      "referenceValue" : 7.637667
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "outlineUpdateP95Milliseconds",
+      "referenceValue" : 7.82575
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "searchP95Milliseconds",
+      "referenceValue" : 50.584959
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "selectionP95Milliseconds",
+      "referenceValue" : 48.759833
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "freezeViewP95Milliseconds",
+      "referenceValue" : 49.067792
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "scrollPreparationP95Milliseconds",
+      "referenceValue" : 0.059875
+    },
+    {
+      "allowedRegressionPercent" : 20,
+      "direction" : "lowerIsBetter",
+      "metric" : "chartP95Milliseconds",
+      "referenceValue" : 0.036375
+    },
+    {
+      "allowedRegressionPercent" : 15,
+      "direction" : "lowerIsBetter",
+      "metric" : "peakResidentByteDelta",
+      "referenceValue" : 97763328
+    },
+    {
+      "allowedRegressionPercent" : 15,
+      "direction" : "lowerIsBetter",
+      "metric" : "settledResidentByteDelta",
+      "referenceValue" : 83181568
+    }
+  ],
+  "environment" : {
+    "architecture" : "arm64",
+    "buildConfiguration" : "release",
+    "hardwareModel" : "Mac16,7",
+    "operatingSystem" : "Version 27.0 (Build 26A5388g)",
+    "xcodeVersion" : "Xcode 27.0; Build version 27A5228h"
+  },
+  "fixture" : {
+    "durationSeconds" : 600,
+    "messagesPerMinute" : 100000,
+    "payloadBytes" : 256,
+    "payloadDistribution" : {
+      "binaryPercent" : 10,
+      "jsonPercent" : 40,
+      "scalarPercent" : 50
+    },
+    "topicCount" : 10000,
+    "topicDistribution" : {
+      "hotMessagePercent" : 80,
+      "hotTopicCount" : 1000,
+      "seed" : 319124755540
+    }
+  },
+  "reviewReference" : "jnxprivate/JollysMQTT#23",
+  "reviewedAtUTC" : "2026-07-29T13:21:24Z",
+  "reviewedBy" : "Codex ticket-23 implementation",
+  "revision" : 1
+}

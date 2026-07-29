@@ -477,6 +477,71 @@ struct SQLiteHistoryStoreTests {
     #expect(sizes.totalSQLiteBytes == 41)
   }
 
+  @Test("Scoped retention prunes only the requested source and topic")
+  func scopedTopicRetentionIsolation() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    _ = try await store.append(
+      ["source-a", "source-b"].flatMap { source in
+        (1...3).map { ordinal in
+          HistoryMessageInput(
+            historySourceID: source,
+            topic: "shared-name",
+            receivedAtMicroseconds: Int64(ordinal),
+            payload: Data([UInt8(ordinal)])
+          )
+        }
+      }
+    )
+
+    let empty = try await store.prune(
+      keepingNewestPerTopic: 1,
+      batchLimit: 10,
+      topics: []
+    )
+    #expect(empty.deletedCount == 0)
+    #expect(empty.remainingCount == 6)
+
+    let scope = HistoryTopicRetentionScope(
+      historySourceID: "source-a",
+      topic: "shared-name"
+    )
+    let scoped = try await store.prune(
+      keepingNewestPerTopic: 1,
+      batchLimit: 10,
+      topics: [scope, scope]
+    )
+    let pruned = try await store.newestMessages(
+      historySourceID: "source-a",
+      topic: "shared-name",
+      limit: 10
+    )
+    let untouched = try await store.newestMessages(
+      historySourceID: "source-b",
+      topic: "shared-name",
+      limit: 10
+    )
+
+    #expect(scoped.deletedCount == 2)
+    #expect(scoped.remainingCount == 4)
+    #expect(pruned.map(\.payload) == [Data([3])])
+    #expect(
+      untouched.map(\.payload) == [
+        Data([3]), Data([2]), Data([1]),
+      ])
+  }
+
   @Test("Bounded broker-size pruning reclaims pages incrementally")
   func brokerSizePruning() async throws {
     let directory = FileManager.default.temporaryDirectory

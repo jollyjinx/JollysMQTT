@@ -387,21 +387,32 @@ public struct BrokerTopicTreeSnapshot: Equatable, Sendable {
 
 public struct BrokerFeedIngestionPolicy: Equatable, Sendable {
   public let historyBatchSize: Int
+  public let historyQueueCapacity: Int
   public let historyFlushIntervalSeconds: Double
   public let maximumSnapshotRate: Double
   public let maximumPayloadSummaryCharacters: Int
 
   public init(
     historyBatchSize: Int = 128,
+    historyQueueCapacity: Int? = nil,
     historyFlushIntervalSeconds: Double = 0.25,
     maximumSnapshotRate: Double = 10,
     maximumPayloadSummaryCharacters: Int = 256
   ) {
     precondition(historyBatchSize > 0)
+    let (minimumHistoryQueueCapacity, overflow) =
+      historyBatchSize.multipliedReportingOverflow(by: 2)
+    precondition(!overflow)
+    let effectiveHistoryQueueCapacity =
+      historyQueueCapacity ?? minimumHistoryQueueCapacity
+    precondition(
+      effectiveHistoryQueueCapacity >= minimumHistoryQueueCapacity
+    )
     precondition(historyFlushIntervalSeconds >= 0)
     precondition(maximumSnapshotRate > 0)
     precondition(maximumPayloadSummaryCharacters > 0)
     self.historyBatchSize = historyBatchSize
+    self.historyQueueCapacity = effectiveHistoryQueueCapacity
     self.historyFlushIntervalSeconds = historyFlushIntervalSeconds
     self.maximumSnapshotRate = maximumSnapshotRate
     self.maximumPayloadSummaryCharacters = maximumPayloadSummaryCharacters
@@ -413,6 +424,9 @@ public struct BrokerFeedIngestionMetrics: Equatable, Sendable {
   public let topicNodeCount: Int
   public let retainedPayloadByteCount: Int
   public let pendingHistoryMessageCount: Int
+  public let pendingHistoryPayloadByteCount: Int64
+  public let historyQueueHighWaterMark: Int
+  public let historyQueuePayloadHighWaterMark: Int64
   public let isShutdown: Bool
 }
 
@@ -455,7 +469,13 @@ public actor BrokerFeedIngestion {
   private var historyWriter: (any BrokerHistoryWriting)?
   private var pendingHistory: [BrokerHistoryMessage] = []
   private var pendingHistoryPayloadBytes = 0
+  private var historyInFlightMessageCount = 0
+  private var historyInFlightPayloadBytes = 0
+  private var historyQueueHighWaterMark = 0
+  private var historyQueuePayloadHighWaterMark: Int64 = 0
+  private var historyCapacityWaiters: [CheckedContinuation<Void, Never>] = []
   private var historyFlushTask: Task<Void, Never>?
+  private var historyDrainTask: Task<Void, Never>?
   private var historyFlushWaiters: [CheckedContinuation<Void, Never>] = []
   private var presentationTask: Task<Void, Never>?
   private var revision: UInt64 = 0
@@ -565,10 +585,15 @@ public actor BrokerFeedIngestion {
         completedAtMicroseconds: completedAtMicroseconds
       )
     )
+    await forceFlushHistory()
   }
 
   private func recordHistory(_ message: BrokerHistoryMessage) async {
     await waitForHistoryRecoveryIfNeeded()
+    await waitForHistoryCapacityIfNeeded(
+      addingPayloadBytes: message.payload.count
+    )
+    guard !isShutdownRequested else { return }
     if historyIsHealthy {
       let retentionPolicy = retentionPolicyProvider()
       if !pendingHistory.isEmpty,
@@ -589,6 +614,14 @@ public actor BrokerFeedIngestion {
       }
       pendingHistory.append(message)
       pendingHistoryPayloadBytes += message.payload.count
+      historyQueueHighWaterMark = max(
+        historyQueueHighWaterMark,
+        outstandingHistoryMessageCount
+      )
+      historyQueuePayloadHighWaterMark = max(
+        historyQueuePayloadHighWaterMark,
+        outstandingHistoryPayloadByteCount
+      )
     } else {
       addMissingHistoryMessage(message)
     }
@@ -601,7 +634,7 @@ public actor BrokerFeedIngestion {
     {
       historyFlushTask?.cancel()
       historyFlushTask = nil
-      await flushFullHistoryBatch()
+      scheduleHistoryDrain()
     } else {
       scheduleHistoryFlush()
     }
@@ -642,9 +675,12 @@ public actor BrokerFeedIngestion {
     self.historyWriter = nil
     pendingHistory.removeAll(keepingCapacity: false)
     pendingHistoryPayloadBytes = 0
+    historyInFlightMessageCount = 0
+    historyInFlightPayloadBytes = 0
     clearTopicTree()
     continuation.finish()
     releaseHistoryFlush()
+    resumeHistoryCapacityWaiters()
     isShutdownComplete = true
     let waiters = shutdownWaiters
     shutdownWaiters.removeAll()
@@ -659,6 +695,7 @@ public actor BrokerFeedIngestion {
   ) async -> Bool {
     await acquireHistoryFlush()
     defer { releaseHistoryFlush() }
+    await drainHistory(force: true)
     guard !historyIsHealthy, !isRecoveringHistory,
       !isShutdownRequested, !pendingHistoryGaps.isEmpty, let historyWriter
     else {
@@ -710,6 +747,7 @@ public actor BrokerFeedIngestion {
   ) async -> Bool {
     await acquireHistoryFlush()
     defer { releaseHistoryFlush() }
+    await drainHistory(force: true)
     guard !isShutdownRequested, minimumMissingMessageCount > 0,
       let historyWriter
     else {
@@ -757,9 +795,79 @@ public actor BrokerFeedIngestion {
       snapshotRevision: revision,
       topicNodeCount: nodeCount,
       retainedPayloadByteCount: payloadBytes,
-      pendingHistoryMessageCount: pendingHistory.count,
+      pendingHistoryMessageCount: outstandingHistoryMessageCount,
+      pendingHistoryPayloadByteCount: outstandingHistoryPayloadByteCount,
+      historyQueueHighWaterMark: historyQueueHighWaterMark,
+      historyQueuePayloadHighWaterMark:
+        historyQueuePayloadHighWaterMark,
       isShutdown: isShutdownComplete
     )
+  }
+
+  private var outstandingHistoryMessageCount: Int {
+    pendingHistory.count + historyInFlightMessageCount
+  }
+
+  private var outstandingHistoryPayloadByteCount: Int64 {
+    Int64(pendingHistoryPayloadBytes) + Int64(historyInFlightPayloadBytes)
+  }
+
+  private func waitForHistoryCapacityIfNeeded(
+    addingPayloadBytes: Int
+  ) async {
+    while historyIsHealthy,
+      !isShutdownRequested,
+      historyCapacityWouldBeExceeded(
+        addingPayloadBytes: addingPayloadBytes
+      )
+    {
+      await withCheckedContinuation { continuation in
+        historyCapacityWaiters.append(continuation)
+      }
+    }
+  }
+
+  private func historyCapacityWouldBeExceeded(
+    addingPayloadBytes: Int
+  ) -> Bool {
+    if outstandingHistoryMessageCount >= policy.historyQueueCapacity {
+      return true
+    }
+    let maximumPayloadBytes =
+      retentionPolicyProvider().maximumAppendPayloadBytes * 2
+    let additionalPayloadBytes = Int64(addingPayloadBytes)
+    return outstandingHistoryPayloadByteCount > maximumPayloadBytes
+      || additionalPayloadBytes
+        > maximumPayloadBytes - outstandingHistoryPayloadByteCount
+  }
+
+  private func resumeHistoryCapacityWaiters() {
+    let waiters = historyCapacityWaiters
+    historyCapacityWaiters.removeAll(keepingCapacity: true)
+    for waiter in waiters {
+      waiter.resume()
+    }
+  }
+
+  private func scheduleHistoryDrain() {
+    guard !isShutdownRequested, historyDrainTask == nil else { return }
+    historyDrainTask = Task { [weak self] in
+      await self?.runScheduledHistoryDrain()
+    }
+  }
+
+  private func runScheduledHistoryDrain() async {
+    await flushFullHistoryBatch()
+    historyDrainTask = nil
+    guard !isShutdownRequested, historyIsHealthy else { return }
+    if pendingHistory.count >= effectiveHistoryBatchSize
+      || pendingHistoryPayloadBytes
+        >= retentionPolicyProvider().maximumAppendPayloadBytes
+    {
+      scheduleHistoryDrain()
+    } else if !pendingHistory.isEmpty {
+      scheduleHistoryFlush()
+    }
   }
 
   private func insert(_ message: BrokerInboundMessage) {
@@ -922,8 +1030,14 @@ public actor BrokerFeedIngestion {
       let batch = Array(pendingHistory.prefix(count))
       pendingHistory.removeFirst(count)
       pendingHistoryPayloadBytes -= batchPayloadBytes
+      precondition(historyInFlightMessageCount == 0)
+      precondition(historyInFlightPayloadBytes == 0)
+      historyInFlightMessageCount = batch.count
+      historyInFlightPayloadBytes = batchPayloadBytes
       do {
         try await historyWriter?.append(batch)
+        historyInFlightMessageCount = 0
+        historyInFlightPayloadBytes = 0
       } catch {
         historyIsHealthy = false
         unpersistedMessageCount += batch.count + pendingHistory.count
@@ -943,7 +1057,10 @@ public actor BrokerFeedIngestion {
         }
         pendingHistory.removeAll(keepingCapacity: false)
         pendingHistoryPayloadBytes = 0
+        historyInFlightMessageCount = 0
+        historyInFlightPayloadBytes = 0
       }
+      resumeHistoryCapacityWaiters()
       forceNextBatch = force
     }
 
@@ -989,7 +1106,7 @@ public actor BrokerFeedIngestion {
       valueTopicCount: valueTopicCount,
       historyIsHealthy: historyIsHealthy,
       unpersistedMessageCount:
-        unpersistedMessageCount + pendingHistory.count,
+        unpersistedMessageCount + outstandingHistoryMessageCount,
       historySourceID: historySourceID,
       connectionEpoch: connectionEpoch,
       activeHistoryGap: primaryPendingHistoryGap

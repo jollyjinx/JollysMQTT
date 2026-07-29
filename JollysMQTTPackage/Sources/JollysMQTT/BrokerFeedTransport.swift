@@ -16,10 +16,12 @@ private struct BrokerFeedLocalOverload: Error, Sendable {
 
 actor BrokerFeedPublishCommandQueue {
   private let connectionEpoch: ConnectionEpochID
+  private let capacity: Int
   private let stream: AsyncStream<BrokerFeedPublishCommand>
   private let continuation: AsyncStream<BrokerFeedPublishCommand>.Continuation
   private var completions: [PublishOperationID: CheckedContinuation<BrokerPublishResult, Never>] =
     [:]
+  private var highWaterMark = 0
   private var isClosed = false
 
   init(
@@ -28,6 +30,7 @@ actor BrokerFeedPublishCommandQueue {
   ) {
     precondition(capacity > 0)
     self.connectionEpoch = connectionEpoch
+    self.capacity = capacity
     (stream, continuation) = AsyncStream.makeStream(
       of: BrokerFeedPublishCommand.self,
       bufferingPolicy: .bufferingOldest(capacity)
@@ -54,7 +57,7 @@ actor BrokerFeedPublishCommandQueue {
       completions[request.operationID] = completion
       switch continuation.yield(BrokerFeedPublishCommand(request: request)) {
       case .enqueued:
-        break
+        highWaterMark = max(highWaterMark, completions.count)
       case .dropped:
         resolve(
           operationID: request.operationID,
@@ -104,12 +107,28 @@ actor BrokerFeedPublishCommandQueue {
     completions.count
   }
 
+  func performanceMetrics() -> BrokerFeedPublishQueuePerformanceMetrics {
+    BrokerFeedPublishQueuePerformanceMetrics(
+      capacity: capacity,
+      pendingOperationCount: completions.count,
+      highWaterMark: highWaterMark,
+      isClosed: isClosed
+    )
+  }
+
   private func resolve(
     operationID: PublishOperationID,
     with result: BrokerPublishResult
   ) {
     completions.removeValue(forKey: operationID)?.resume(returning: result)
   }
+}
+
+struct BrokerFeedPublishQueuePerformanceMetrics: Equatable, Sendable {
+  let capacity: Int
+  let pendingOperationCount: Int
+  let highWaterMark: Int
+  let isClosed: Bool
 }
 
 actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
