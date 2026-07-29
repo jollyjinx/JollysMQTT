@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import JollysMQTTCore
@@ -859,6 +860,187 @@ struct BrokerFeedIngestionTests {
     #expect(await writer.shutdownCount == 1)
     #expect(await writer.shutdownOverlappedAppend == false)
     #expect(await writer.events.last == "shutdown")
+  }
+
+  @Test("History append call boundaries are bounded by payload bytes as well as count")
+  func historyBatchPayloadBytesAreBounded() async throws {
+    let writer = RecordingHistoryWriter()
+    let retention = try HistoryRetentionPolicy(
+      topicMessageLimit: 1_000,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024 * 1_024,
+      messagePruneBatchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source-a",
+      historyWriter: writer,
+      policy: BrokerFeedIngestionPolicy(
+        historyBatchSize: 128,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      ),
+      retentionPolicy: retention
+    )
+    let epoch = ConnectionEpochID()
+    let payload = Data(repeating: 0xA5, count: 1_024 * 1_024)
+
+    for ordinal in 1...3 {
+      await ingestion.ingest(
+        .fixture(
+          epoch: epoch,
+          ordinal: UInt64(ordinal),
+          topic: "large",
+          payload: payload
+        )
+      )
+    }
+    _ = await ingestion.flush()
+
+    #expect(await writer.ordinals == [[1], [2], [3]])
+    #expect(
+      await writer.messages.allSatisfy {
+        $0.payload.count <= retention.maximumAppendPayloadBytes
+      }
+    )
+  }
+
+  @Test("A boundary flush failure covers the message that triggered it")
+  func boundaryFlushFailureCoversTriggeringMessage() async throws {
+    let writer = RecoveringHistoryWriter()
+    let retention = try HistoryRetentionPolicy(
+      topicMessageLimit: 1_000,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024 * 1_024,
+      messagePruneBatchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source-a",
+      historyWriter: writer,
+      policy: BrokerFeedIngestionPolicy(
+        historyBatchSize: 128,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      ),
+      retentionPolicy: retention
+    )
+    let epoch = ConnectionEpochID()
+    let payload = Data(repeating: 0xA5, count: 1_024 * 1_024)
+
+    await ingestion.ingest(
+      .fixture(
+        epoch: epoch,
+        ordinal: 1,
+        topic: "large",
+        payload: payload,
+        receivedAt: 10
+      )
+    )
+    await ingestion.ingest(
+      .fixture(
+        epoch: epoch,
+        ordinal: 2,
+        topic: "large",
+        payload: payload,
+        receivedAt: 20
+      )
+    )
+
+    let degraded = await ingestion.flush()
+    #expect(degraded.unpersistedMessageCount == 2)
+    #expect(degraded.activeHistoryGap?.minimumMissingMessageCount == 2)
+    #expect(await writer.appendedOrdinals.isEmpty)
+
+    #expect(
+      await ingestion.retryHistoryPersistence(
+        recoveredAtMicroseconds: 30
+      )
+    )
+    let gap = try #require(await writer.coverageGaps.first)
+    #expect(gap.startedAtMicroseconds == 10)
+    #expect(gap.endedAtMicroseconds == 30)
+    #expect(gap.minimumMissingMessageCount == 2)
+  }
+
+  @Test("Live retention changes re-split pending messages before handoff")
+  func liveRetentionChangeResplitsPendingMessages() async throws {
+    let writer = RecordingHistoryWriter()
+    let larger = try HistoryRetentionPolicy(
+      topicMessageLimit: 1_000,
+      brokerByteLimit: 64 * 1_024 * 1_024,
+      payloadByteLimit: 1_024 * 1_024,
+      messagePruneBatchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+    let smaller = try HistoryRetentionPolicy(
+      topicMessageLimit: 1_000,
+      brokerByteLimit: 16 * 1_024 * 1_024,
+      payloadByteLimit: 1_024 * 1_024,
+      messagePruneBatchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+    let policies = Mutex(larger)
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source-a",
+      historyWriter: writer,
+      policy: BrokerFeedIngestionPolicy(
+        historyBatchSize: 4_096,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      ),
+      retentionPolicyProvider: {
+        policies.withLock { $0 }
+      }
+    )
+    let epoch = ConnectionEpochID()
+    let payload = Data(repeating: 0xA5, count: 1_024 * 1_024)
+    for ordinal in 1...4 {
+      await ingestion.ingest(
+        .fixture(
+          epoch: epoch,
+          ordinal: UInt64(ordinal),
+          topic: "large",
+          payload: payload
+        )
+      )
+    }
+    policies.withLock { $0 = smaller }
+
+    _ = await ingestion.flush()
+
+    #expect(await writer.ordinals == [[1], [2], [3], [4]])
+  }
+
+  @Test("History handoff never exceeds the writer message count contract")
+  func historyBatchCountMatchesWriterContract() async {
+    let writer = RecordingHistoryWriter()
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source-a",
+      historyWriter: writer,
+      policy: BrokerFeedIngestionPolicy(
+        historyBatchSize: 4_096,
+        historyFlushIntervalSeconds: 60,
+        maximumSnapshotRate: 10
+      )
+    )
+    let epoch = ConnectionEpochID()
+    for ordinal in 1...1_001 {
+      await ingestion.ingest(
+        .fixture(
+          epoch: epoch,
+          ordinal: UInt64(ordinal),
+          topic: "events"
+        )
+      )
+    }
+    _ = await ingestion.flush()
+
+    #expect(await writer.ordinals.map(\.count) == [500, 500, 1])
   }
 }
 

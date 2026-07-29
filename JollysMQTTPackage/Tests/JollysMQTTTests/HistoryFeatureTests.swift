@@ -69,6 +69,84 @@ struct HistoryFeatureTests {
     #expect(comparisonRequest.baseline.id == .durable(1))
   }
 
+  @Test("Metadata-only rows cannot be copied or used as a diff baseline")
+  func metadataOnlyRowsRemainNonPayloadHistory() {
+    let brokerID = UUID()
+    let epoch = ConnectionEpochID()
+    let current = payloadMessage(
+      brokerID: brokerID,
+      epoch: epoch,
+      ordinal: 3,
+      payload: Data("current".utf8)
+    )
+    let omitted = StoredHistoryMessage(
+      durableOrder: 2,
+      historySourceID: "source-a",
+      connectionEpoch: epoch.rawValue,
+      connectionOrdinal: 2,
+      operationID: nil,
+      direction: .received,
+      topic: "devices/pump",
+      qos: .atLeastOnce,
+      retained: false,
+      receivedAtMicroseconds: 20,
+      payload: Data(),
+      payloadStorage: .omittedByRetentionLimit(
+        originalByteCount: 2_000_000
+      )
+    )
+    var state = HistoryFeature.State(pageSize: 20)
+    guard
+      case .loadPage(let requestID, let request) = HistoryFeature.reduce(
+        state: &state,
+        intent: .contextChanged(
+          HistoryContext(
+            brokerID: brokerID,
+            historySourceID: "source-a",
+            current: current
+          )
+        )
+      )
+    else {
+      Issue.record("Expected initial page load")
+      return
+    }
+    _ = HistoryFeature.reduce(
+      state: &state,
+      action: .pageLoaded(
+        requestID: requestID,
+        request: request,
+        page: HistoryPage(
+          messages: [
+            omitted,
+            storedMessage(
+              durableOrder: 1,
+              epoch: epoch,
+              ordinal: 1,
+              payload: Data("available".utf8)
+            ),
+          ],
+          nextCursor: nil
+        )
+      )
+    )
+
+    #expect(state.effectiveBaselineID == .durable(1))
+    #expect(
+      HistoryFeature.reduce(
+        state: &state,
+        intent: .toggleBaseline(omitted.durableOrder)
+      ) == nil
+    )
+    #expect(state.selectedBaselineID == nil)
+    #expect(
+      HistoryFeature.reduce(
+        state: &state,
+        intent: .copy(omitted.durableOrder)
+      ) == nil
+    )
+  }
+
   @Test("Selecting a row overrides the baseline and selecting it again clears")
   func baselineSelectionToggle() {
     let brokerID = UUID()

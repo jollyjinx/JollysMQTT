@@ -256,6 +256,7 @@ private struct SelectedPayloadWorkspace: View {
         PayloadInspectorPane(
           store: inspectorStore,
           historyStore: historyStore,
+          historyMaintenanceStore: sceneStore.historyMaintenance,
           layout: .wide
         )
         .frame(minWidth: 360)
@@ -326,6 +327,7 @@ private struct PayloadCompactWorkspace: View {
         PayloadInspectorPane(
           store: inspectorStore,
           historyStore: historyStore,
+          historyMaintenanceStore: sceneStore.historyMaintenance,
           layout: .compact
         )
       case .publish:
@@ -614,6 +616,7 @@ private struct PublishStatusView: View {
 private struct PayloadInspectorPane: View {
   @Bindable var store: PayloadInspectorStore
   @Bindable var historyStore: HistoryStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
   let layout: PayloadInspectorLayout
 
   var body: some View {
@@ -634,7 +637,10 @@ private struct PayloadInspectorPane: View {
               PayloadCopyOutcomeView(outcome: outcome)
             }
             Divider()
-            HistoryBrowserView(store: historyStore)
+            HistoryBrowserView(
+              store: historyStore,
+              maintenanceStore: historyMaintenanceStore
+            )
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(16)
@@ -2487,7 +2493,8 @@ struct ServerListView: View {
           sceneStore.selectedProfileID.flatMap {
             store.state.credentialStatuses[$0]?.availability
           },
-        store: store
+        store: store,
+        historyMaintenanceStore: sceneStore.historyMaintenance
       )
     }
     .navigationTitle(
@@ -2507,6 +2514,16 @@ struct ServerListView: View {
         CredentialPromptView(prompt: prompt, store: store)
       }
     }
+    .sheet(
+      isPresented: Binding(
+        get: { sceneStore.historyMaintenance.state.isPresented },
+        set: {
+          sceneStore.historyMaintenance.send(.setPresented($0))
+        }
+      )
+    ) {
+      HistoryMaintenanceView(store: sceneStore.historyMaintenance)
+    }
     .confirmationDialog(
       Text(
         "Delete Broker?",
@@ -2517,18 +2534,39 @@ struct ServerListView: View {
       titleVisibility: .visible
     ) {
       Button(role: .destructive) {
-        guard let profileID = store.state.pendingDeletionProfileID else { return }
-        Task { await store.send(.deleteProfileAndCredential(profileID)) }
+        Task {
+          await store.send(.confirmDeleteProfileAndHistoryAndCredential)
+        }
+      } label: {
+        Text(
+          "Delete Profile, History, and Password",
+          bundle: #bundle,
+          comment:
+            "Destructive action that deletes a broker profile, local history, and device password."
+        )
+      }
+      Button(role: .destructive) {
+        Task { await store.send(.confirmDeleteProfileAndHistory) }
+      } label: {
+        Text(
+          "Delete Profile and History",
+          bundle: #bundle,
+          comment:
+            "Destructive action that deletes a broker profile and local history while keeping its device password."
+        )
+      }
+      Button(role: .destructive) {
+        Task { await store.send(.confirmDeleteProfileAndCredential) }
       } label: {
         Text(
           "Delete Profile and Password",
           bundle: #bundle,
-          comment: "Destructive action that deletes a broker profile and its device password."
+          comment:
+            "Destructive action that deletes a broker profile and its device password while keeping local history."
         )
       }
       Button(role: .destructive) {
-        guard let profileID = store.state.pendingDeletionProfileID else { return }
-        Task { await store.send(.deleteProfile(profileID)) }
+        Task { await store.send(.confirmDeleteProfile) }
       } label: {
         Text(
           "Delete Profile Only",
@@ -2547,9 +2585,59 @@ struct ServerListView: View {
       }
     } message: {
       Text(
-        "Choose whether to keep or delete the password stored on this device for “\(store.pendingDeletionName)”.",
+        "Choose independently whether to delete local history and the device password for “\(store.pendingDeletionName)”. Per-broker retention settings are always attempted after the profile deletion commits.",
         bundle: #bundle,
-        comment: "Deletion warning. The variable is the broker profile name."
+        comment:
+          "Deletion warning describing independent history/password choices and the post-commit retention-settings cleanup attempt. The variable is the broker profile name."
+      )
+    }
+    .alert(
+      Text(
+        store.state.deletionOutcome?.succeeded == true
+          ? LocalizedStringResource(
+            "Broker Deleted",
+            bundle: #bundle,
+            comment: "Title for a completed broker deletion."
+          )
+          : LocalizedStringResource(
+            "Broker Deletion Incomplete",
+            bundle: #bundle,
+            comment: "Title for a partial cross-resource broker deletion."
+          )
+      ),
+      isPresented: $store.deletionOutcomePresented
+    ) {
+      if let outcome = store.state.deletionOutcome,
+        outcome.profile == .removed,
+        !outcome.succeeded
+      {
+        Button {
+          Task { await store.send(.retryDeletionCleanup) }
+        } label: {
+          Text(
+            "Retry Remaining Cleanup",
+            bundle: #bundle,
+            comment:
+              "Retries failed optional resource cleanup after profile deletion committed."
+          )
+        }
+      }
+      Button {
+      } label: {
+        Text(
+          "OK",
+          bundle: #bundle,
+          comment: "Dismisses a broker deletion outcome."
+        )
+      }
+    } message: {
+      Text(
+        store.state.deletionOutcome?.localizedSummary
+          ?? LocalizedStringResource(
+            "Broker deletion did not complete.",
+            bundle: #bundle,
+            comment: "Fallback broker deletion outcome alert message."
+          )
       )
     }
     .alert(
@@ -2570,6 +2658,76 @@ struct ServerListView: View {
       }
     } message: {
       CredentialErrorMessage(error: store.state.credentialError)
+    }
+  }
+}
+
+extension BrokerDeletionOutcome {
+  fileprivate var localizedSummary: LocalizedStringResource {
+    if succeeded {
+      return LocalizedStringResource(
+        "The profile and selected local resources were removed.",
+        bundle: #bundle,
+        comment: "Successful broker deletion outcome."
+      )
+    }
+    if secureHistoryCleanupPending, failures.isEmpty {
+      return LocalizedStringResource(
+        "The profile and selected resources were removed, but secure history file cleanup is still pending. Retry the remaining cleanup.",
+        bundle: #bundle,
+        comment:
+          "Broker deletion with pending retryable secure SQLite cleanup."
+      )
+    }
+    if failures.count > 1 {
+      return LocalizedStringResource(
+        "The profile was deleted, but multiple selected cleanup steps remain. Retry the remaining cleanup.",
+        bundle: #bundle,
+        comment:
+          "Reports simultaneous independent post-profile cleanup failures."
+      )
+    }
+    switch failure {
+    case .history:
+      return history == .partiallyRemoved
+        ? LocalizedStringResource(
+          "The profile was deleted and some history was removed, but history clearing did not complete. Retry the original clear continuation.",
+          bundle: #bundle,
+          comment:
+            "Partial history removal remains after committed profile deletion."
+        )
+        : LocalizedStringResource(
+          "The profile was deleted, but history could not be removed. Retry the remaining cleanup.",
+          bundle: #bundle,
+          comment: "History cleanup failure after committed profile deletion."
+        )
+    case .credential:
+      return LocalizedStringResource(
+        "The profile was deleted, but the device password could not be removed. Retry the remaining cleanup.",
+        bundle: #bundle,
+        comment:
+          "Credential cleanup failure after profile deletion already committed."
+      )
+    case .retentionSettings:
+      return LocalizedStringResource(
+        "The profile was deleted, but its retention settings could not be removed. Retry the remaining cleanup.",
+        bundle: #bundle,
+        comment:
+          "Retention settings cleanup failure after profile deletion committed."
+      )
+    case .profile:
+      return LocalizedStringResource(
+        "The profile deletion could not be saved. The profile remains, and no selected history, password, or retention settings were touched.",
+        bundle: #bundle,
+        comment:
+          "Profile persistence failure before any optional local resource cleanup."
+      )
+    case nil:
+      return LocalizedStringResource(
+        "Broker deletion did not complete.",
+        bundle: #bundle,
+        comment: "Fallback incomplete broker deletion outcome."
+      )
     }
   }
 }
@@ -2686,6 +2844,7 @@ private struct BrokerRowActions: View {
         comment: "Context action that edits a broker profile."
       )
     }
+    .disabled(store.state.isProfileMutationBlocked)
     Button {
       Task {
         await store.send(.duplicateProfile(profileID, newID: UUID()))
@@ -2697,6 +2856,7 @@ private struct BrokerRowActions: View {
         comment: "Context action that duplicates a broker profile."
       )
     }
+    .disabled(store.state.isProfileMutationBlocked)
     Button(role: .destructive) {
       store.sendImmediately(.requestDeleteProfile(profileID))
     } label: {
@@ -2706,6 +2866,7 @@ private struct BrokerRowActions: View {
         comment: "Context action that requests broker profile deletion."
       )
     }
+    .disabled(store.state.isProfileDeletionBusy)
   }
 }
 
@@ -2713,6 +2874,7 @@ private struct BrokerListDetail: View {
   let profile: BrokerProfile?
   let credentialAvailability: CredentialAvailability?
   let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
     VStack(spacing: 20) {
@@ -2730,7 +2892,11 @@ private struct BrokerListDetail: View {
         } else {
           BrokerCredentialAvailability(availability: credentialAvailability)
         }
-        BrokerDetailActions(profileID: profile.id, store: store)
+        BrokerDetailActions(
+          profileID: profile.id,
+          store: store,
+          historyMaintenanceStore: historyMaintenanceStore
+        )
       } else {
         BrokerListEmptyState()
       }
@@ -2932,14 +3098,23 @@ private struct CredentialErrorMessage: View {
 private struct BrokerDetailActions: View {
   let profileID: BrokerProfile.ID
   let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
     ViewThatFits {
       HStack {
-        BrokerActionButtons(profileID: profileID, store: store)
+        BrokerActionButtons(
+          profileID: profileID,
+          store: store,
+          historyMaintenanceStore: historyMaintenanceStore
+        )
       }
       VStack {
-        BrokerActionButtons(profileID: profileID, store: store)
+        BrokerActionButtons(
+          profileID: profileID,
+          store: store,
+          historyMaintenanceStore: historyMaintenanceStore
+        )
       }
     }
   }
@@ -2948,6 +3123,7 @@ private struct BrokerDetailActions: View {
 private struct BrokerActionButtons: View {
   let profileID: BrokerProfile.ID
   let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
     Button {
@@ -2972,6 +3148,18 @@ private struct BrokerActionButtons: View {
         "Edit",
         bundle: #bundle,
         comment: "Action that edits the selected broker profile."
+      )
+    }
+    .disabled(store.state.isProfileMutationBlocked)
+
+    Button {
+      historyMaintenanceStore.send(.setPresented(true))
+    } label: {
+      Text(
+        "Local History",
+        bundle: #bundle,
+        comment:
+          "Opens per-broker local retention and history clearing while disconnected."
       )
     }
   }

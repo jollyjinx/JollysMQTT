@@ -267,6 +267,60 @@ struct WorkspaceFeatureTests {
     #expect(restoredSecond.selectedProfileID == secondProfile.id)
   }
 
+  @Test("Committed profile deletion synchronizes scene selection and maintenance context")
+  @MainActor
+  func profileDeletionSynchronizesSceneContext() async {
+    let first = workspaceRankedProfile(name: "First", rank: 1)
+    let second = workspaceRankedProfile(name: "Second", rank: 2)
+    let successfulRepository = SceneProfileRepository(
+      profiles: [first, second]
+    )
+    let successfulScene = JollysMQTTAppDependencies(
+      profileRepository: successfulRepository,
+      workspaceRepository: RecordingWorkspaceRepository()
+    ).makeSceneStore(id: WorkspaceID())
+    await successfulScene.start()
+    successfulScene.selectedProfileID = first.id
+    #expect(
+      successfulScene.historyMaintenance.state.context?.brokerID == first.id
+    )
+
+    successfulScene.serverList.sendImmediately(
+      .requestDeleteProfile(first.id)
+    )
+    await successfulScene.serverList.send(.confirmDeleteProfile)
+
+    #expect(successfulScene.selectedProfileID == second.id)
+    #expect(
+      successfulScene.workspace.state.record.selectedProfileID == second.id
+    )
+    #expect(
+      successfulScene.historyMaintenance.state.context?.brokerID == second.id
+    )
+
+    let failingRepository = SceneProfileRepository(
+      profiles: [first, second],
+      failWrites: true
+    )
+    let failingScene = JollysMQTTAppDependencies(
+      profileRepository: failingRepository,
+      workspaceRepository: RecordingWorkspaceRepository()
+    ).makeSceneStore(id: WorkspaceID())
+    await failingScene.start()
+    failingScene.selectedProfileID = first.id
+
+    failingScene.serverList.sendImmediately(
+      .requestDeleteProfile(first.id)
+    )
+    await failingScene.serverList.send(.confirmDeleteProfile)
+
+    #expect(failingScene.serverList.state.deletionOutcome?.profile == .failed)
+    #expect(failingScene.selectedProfileID == first.id)
+    #expect(
+      failingScene.historyMaintenance.state.context?.brokerID == first.id
+    )
+  }
+
   @Test("Rapid presentation changes persist in intent order")
   @MainActor
   func presentationWritesRemainOrdered() async {
@@ -410,6 +464,28 @@ private actor RecordingWorkspaceRepository: WorkspaceRepositoryProtocol {
   func closedIDs() -> [WorkspaceID] { closed }
 }
 
+private actor SceneProfileRepository: ProfileRepositoryProtocol {
+  private var profiles: [RankedBrokerProfile]
+  private let failWrites: Bool
+
+  init(
+    profiles: [RankedBrokerProfile],
+    failWrites: Bool = false
+  ) {
+    self.profiles = profiles
+    self.failWrites = failWrites
+  }
+
+  func load() -> [RankedBrokerProfile] { profiles }
+
+  func replaceAll(_ profiles: [RankedBrokerProfile]) throws {
+    if failWrites {
+      throw ProfileRepositoryFailure()
+    }
+    self.profiles = profiles
+  }
+}
+
 private actor RecordingWorkspaceReleaser: WorkspaceLeaseReleasing {
   private var ids: [WorkspaceID] = []
 
@@ -483,4 +559,28 @@ private actor FutureWorkspaceRepository: WorkspaceRepositoryProtocol {
   func markClosed(id: WorkspaceID) {}
   func pruneClosed() {}
   func saveCount() -> Int { saves }
+}
+
+private func workspaceRankedProfile(
+  name: String,
+  rank: Int64
+) -> RankedBrokerProfile {
+  RankedBrokerProfile(
+    profile: BrokerProfile(
+      id: UUID(),
+      name: name,
+      host: "\(name.lowercased()).example",
+      port: 1_883,
+      transport: .tcp,
+      username: nil,
+      clientIDPolicy: .stableGenerated,
+      cleanSession: true,
+      keepAliveSeconds: 60,
+      reconnectPolicy: .standard,
+      subscriptions: [
+        SubscriptionDefinition(filter: "#", qos: .atMostOnce)
+      ]
+    ),
+    reorderRank: rank
+  )
 }

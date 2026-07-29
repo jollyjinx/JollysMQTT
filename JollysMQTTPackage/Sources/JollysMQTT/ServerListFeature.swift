@@ -109,6 +109,100 @@ public enum CredentialEffectFailure: Error, Equatable, Sendable {
   case unavailable
 }
 
+public struct BrokerDeletionOptions: Equatable, Sendable {
+  public let deleteHistory: Bool
+  public let deleteCredential: Bool
+
+  public init(deleteHistory: Bool, deleteCredential: Bool) {
+    self.deleteHistory = deleteHistory
+    self.deleteCredential = deleteCredential
+  }
+}
+
+public enum BrokerDeletionResourceStatus: Equatable, Sendable {
+  case kept
+  case removed
+  case partiallyRemoved
+  case failed
+}
+
+public enum BrokerDeletionFailureResource: Equatable, Hashable, Sendable {
+  case history
+  case credential
+  case retentionSettings
+  case profile
+}
+
+public struct BrokerDeletionOutcome: Equatable, Sendable {
+  public let profileID: UUID
+  public let options: BrokerDeletionOptions
+  public let history: BrokerDeletionResourceStatus
+  public let credential: BrokerDeletionResourceStatus
+  public let retentionSettings: BrokerDeletionResourceStatus
+  public let profile: BrokerDeletionResourceStatus
+  public let failures: [BrokerDeletionFailureResource]
+  public let secureHistoryCleanupPending: Bool
+  public let historyContinuation: HistoryClearContinuation?
+
+  public var succeeded: Bool {
+    profile == .removed && !needsRetry
+  }
+
+  public var needsRetry: Bool {
+    !failures.isEmpty || secureHistoryCleanupPending
+  }
+
+  public var failure: BrokerDeletionFailureResource? {
+    failures.first
+  }
+
+  public init(
+    profileID: UUID,
+    options: BrokerDeletionOptions,
+    history: BrokerDeletionResourceStatus,
+    credential: BrokerDeletionResourceStatus,
+    retentionSettings: BrokerDeletionResourceStatus,
+    profile: BrokerDeletionResourceStatus,
+    failure: BrokerDeletionFailureResource?,
+    secureHistoryCleanupPending: Bool,
+    historyContinuation: HistoryClearContinuation? = nil
+  ) {
+    self.init(
+      profileID: profileID,
+      options: options,
+      history: history,
+      credential: credential,
+      retentionSettings: retentionSettings,
+      profile: profile,
+      failures: failure.map { [$0] } ?? [],
+      secureHistoryCleanupPending: secureHistoryCleanupPending,
+      historyContinuation: historyContinuation
+    )
+  }
+
+  public init(
+    profileID: UUID,
+    options: BrokerDeletionOptions,
+    history: BrokerDeletionResourceStatus,
+    credential: BrokerDeletionResourceStatus,
+    retentionSettings: BrokerDeletionResourceStatus,
+    profile: BrokerDeletionResourceStatus,
+    failures: [BrokerDeletionFailureResource],
+    secureHistoryCleanupPending: Bool,
+    historyContinuation: HistoryClearContinuation? = nil
+  ) {
+    self.profileID = profileID
+    self.options = options
+    self.history = history
+    self.credential = credential
+    self.retentionSettings = retentionSettings
+    self.profile = profile
+    self.failures = failures
+    self.secureHistoryCleanupPending = secureHistoryCleanupPending
+    self.historyContinuation = historyContinuation
+  }
+}
+
 public enum ServerListFeature {
   public struct State: Equatable, Sendable {
     public var profiles: [RankedBrokerProfile]
@@ -119,13 +213,24 @@ public enum ServerListFeature {
     public var persistenceError: Bool
     public var hasUnpersistedChanges: Bool
     public var pendingDeletionProfileID: BrokerProfile.ID?
+    public var deletionOutcome: BrokerDeletionOutcome?
     public var credentialStatuses: [BrokerProfile.ID: CredentialStatus]
     public var credentialPrompt: CredentialPromptState?
     public var credentialError: CredentialPresentationError?
     public var connectReady: ConnectReadyState?
     var pendingConnectRequest: PendingCredentialRequest?
     var pendingCredentialDeletionRequest: PendingCredentialRequest?
+    var pendingProfileDeletionRequest: PendingCredentialRequest?
+    var isProfileDeletionCommitPending: Bool
     var nextCredentialRequestID: UInt64
+
+    public var isProfileDeletionBusy: Bool {
+      pendingProfileDeletionRequest != nil
+    }
+
+    public var isProfileMutationBlocked: Bool {
+      isProfileDeletionCommitPending
+    }
 
     public init(
       profiles: [RankedBrokerProfile] = [],
@@ -136,6 +241,7 @@ public enum ServerListFeature {
       persistenceError: Bool = false,
       hasUnpersistedChanges: Bool = false,
       pendingDeletionProfileID: BrokerProfile.ID? = nil,
+      deletionOutcome: BrokerDeletionOutcome? = nil,
       credentialStatuses: [BrokerProfile.ID: CredentialStatus] = [:],
       credentialPrompt: CredentialPromptState? = nil,
       credentialError: CredentialPresentationError? = nil,
@@ -149,12 +255,15 @@ public enum ServerListFeature {
       self.persistenceError = persistenceError
       self.hasUnpersistedChanges = hasUnpersistedChanges
       self.pendingDeletionProfileID = pendingDeletionProfileID
+      self.deletionOutcome = deletionOutcome
       self.credentialStatuses = credentialStatuses
       self.credentialPrompt = credentialPrompt
       self.credentialError = credentialError
       self.connectReady = connectReady
       self.pendingConnectRequest = nil
       self.pendingCredentialDeletionRequest = nil
+      self.pendingProfileDeletionRequest = nil
+      self.isProfileDeletionCommitPending = false
       self.nextCredentialRequestID = 0
     }
   }
@@ -169,6 +278,8 @@ public enum ServerListFeature {
     case cancelDeleteProfile
     case confirmDeleteProfile
     case confirmDeleteProfileAndCredential
+    case confirmDeleteProfileAndHistory
+    case confirmDeleteProfileAndHistoryAndCredential
     case deleteProfile(BrokerProfile.ID)
     case deleteProfileAndCredential(BrokerProfile.ID)
     case moveProfile(BrokerProfile.ID, before: BrokerProfile.ID?)
@@ -192,6 +303,8 @@ public enum ServerListFeature {
     case submitCredential(TransientCredential)
     case cancelCredentialPrompt
     case dismissCredentialError
+    case dismissDeletionOutcome
+    case retryDeletionCleanup
     case consumeConnectReady(requestID: UInt64)
   }
 
@@ -213,6 +326,12 @@ public enum ServerListFeature {
       requestID: UInt64,
       Result<CredentialStatus, CredentialEffectFailure>
     )
+    case profileDeletionFinished(
+      profileID: UUID,
+      requestID: UInt64,
+      profiles: [RankedBrokerProfile],
+      BrokerDeletionOutcome
+    )
   }
 
   public enum Effect: Equatable, Sendable {
@@ -225,6 +344,16 @@ public enum ServerListFeature {
       TransientCredential
     )
     case deleteCredential(profileID: BrokerProfile.ID, requestID: UInt64)
+    case deleteProfileResources(
+      profileID: BrokerProfile.ID,
+      requestID: UInt64,
+      options: BrokerDeletionOptions,
+      profiles: [RankedBrokerProfile]
+    )
+    case retryProfileResourceCleanup(
+      requestID: UInt64,
+      BrokerDeletionOutcome
+    )
   }
 
   public static func reduce(state: inout State, intent: Intent) -> Effect? {
@@ -237,18 +366,21 @@ public enum ServerListFeature {
       state.selectedProfileID = id
 
     case .createProfile(let id):
+      guard !state.isProfileMutationBlocked else { return nil }
       state.editor = ProfileEditorState(
         profile: .new(id: id),
         mode: .create
       )
 
     case .editProfile(let id):
+      guard !state.isProfileMutationBlocked else { return nil }
       guard let profile = state.profiles.first(where: { $0.id == id })?.profile else {
         return nil
       }
       state.editor = ProfileEditorState(profile: profile, mode: .edit)
 
     case .duplicateProfile(let id, let newID):
+      guard !state.isProfileMutationBlocked else { return nil }
       guard let source = state.profiles.first(where: { $0.id == id })?.profile else {
         return nil
       }
@@ -274,6 +406,7 @@ public enum ServerListFeature {
       state.editor = ProfileEditorState(profile: copy, mode: .create)
 
     case .requestDeleteProfile(let id):
+      guard !state.isProfileDeletionBusy else { return nil }
       state.pendingDeletionProfileID = id
 
     case .cancelDeleteProfile:
@@ -281,21 +414,59 @@ public enum ServerListFeature {
 
     case .confirmDeleteProfile:
       guard let id = state.pendingDeletionProfileID else { return nil }
-      state.pendingDeletionProfileID = nil
-      return deleteProfile(id, from: &state)
+      return beginProfileResourceDeletion(
+        id,
+        options: BrokerDeletionOptions(
+          deleteHistory: false,
+          deleteCredential: false
+        ),
+        in: &state
+      )
 
     case .confirmDeleteProfileAndCredential:
       guard let id = state.pendingDeletionProfileID else { return nil }
-      return beginProfileAndCredentialDeletion(id, in: &state)
+      return beginProfileResourceDeletion(
+        id,
+        options: BrokerDeletionOptions(
+          deleteHistory: false,
+          deleteCredential: true
+        ),
+        in: &state
+      )
+
+    case .confirmDeleteProfileAndHistory:
+      guard let id = state.pendingDeletionProfileID else { return nil }
+      return beginProfileResourceDeletion(
+        id,
+        options: BrokerDeletionOptions(
+          deleteHistory: true,
+          deleteCredential: false
+        ),
+        in: &state
+      )
+
+    case .confirmDeleteProfileAndHistoryAndCredential:
+      guard let id = state.pendingDeletionProfileID else { return nil }
+      return beginProfileResourceDeletion(
+        id,
+        options: BrokerDeletionOptions(
+          deleteHistory: true,
+          deleteCredential: true
+        ),
+        in: &state
+      )
 
     case .deleteProfile(let id):
+      guard !state.isProfileMutationBlocked else { return nil }
       return deleteProfile(id, from: &state)
 
     case .deleteProfileAndCredential(let id):
+      guard !state.isProfileMutationBlocked else { return nil }
       guard state.profiles.contains(where: { $0.id == id }) else { return nil }
       return beginProfileAndCredentialDeletion(id, in: &state)
 
     case .moveProfile(let id, let beforeID):
+      guard !state.isProfileMutationBlocked else { return nil }
       guard let sourceIndex = state.profiles.firstIndex(where: { $0.id == id }) else {
         return nil
       }
@@ -374,6 +545,7 @@ public enum ServerListFeature {
       state.editor = nil
 
     case .saveEditor:
+      guard !state.isProfileMutationBlocked else { return nil }
       guard var editor = state.editor else { return nil }
       let profile = editor.profile
       let issues = profile.validationIssues
@@ -452,6 +624,27 @@ public enum ServerListFeature {
 
     case .dismissCredentialError:
       state.credentialError = nil
+
+    case .dismissDeletionOutcome:
+      state.deletionOutcome = nil
+
+    case .retryDeletionCleanup:
+      guard let outcome = state.deletionOutcome,
+        outcome.profile == .removed,
+        !outcome.succeeded,
+        state.pendingProfileDeletionRequest == nil
+      else { return nil }
+      let requestID = nextCredentialRequestID(in: &state)
+      state.pendingProfileDeletionRequest = PendingCredentialRequest(
+        profileID: outcome.profileID,
+        requestID: requestID
+      )
+      state.isProfileDeletionCommitPending = false
+      state.deletionOutcome = nil
+      return .retryProfileResourceCleanup(
+        requestID: requestID,
+        outcome
+      )
 
     case .consumeConnectReady(let requestID):
       guard state.connectReady?.requestID == requestID else { return nil }
@@ -576,6 +769,34 @@ public enum ServerListFeature {
       else { return nil }
       state.pendingCredentialDeletionRequest = nil
       state.credentialError = presentationError(for: failure)
+
+    case .profileDeletionFinished(
+      let profileID,
+      let requestID,
+      let profiles,
+      let outcome
+    ):
+      guard
+        state.pendingProfileDeletionRequest
+          == PendingCredentialRequest(
+            profileID: profileID,
+            requestID: requestID
+          )
+      else { return nil }
+      state.pendingProfileDeletionRequest = nil
+      state.isProfileDeletionCommitPending = false
+      state.deletionOutcome = outcome
+      guard outcome.profile == .removed else { return nil }
+      state.profiles = profiles
+      if state.selectedProfileID == profileID {
+        state.selectedProfileID = profiles.first?.id
+      }
+      state.credentialStatuses[profileID] = nil
+      if state.connectReady?.profile.id == profileID {
+        state.connectReady = nil
+      }
+      state.hasUnpersistedChanges = false
+      state.persistenceError = false
     }
     return nil
   }
@@ -655,6 +876,31 @@ public enum ServerListFeature {
     )
     return .deleteCredential(profileID: id, requestID: requestID)
   }
+
+  private static func beginProfileResourceDeletion(
+    _ id: BrokerProfile.ID,
+    options: BrokerDeletionOptions,
+    in state: inout State
+  ) -> Effect? {
+    guard state.pendingProfileDeletionRequest == nil else { return nil }
+    state.pendingDeletionProfileID = nil
+    state.deletionOutcome = nil
+    let requestID = nextCredentialRequestID(in: &state)
+    state.pendingProfileDeletionRequest = PendingCredentialRequest(
+      profileID: id,
+      requestID: requestID
+    )
+    state.isProfileDeletionCommitPending = true
+    let remaining = normalizedRanks(
+      state.profiles.filter { $0.id != id }
+    )
+    return .deleteProfileResources(
+      profileID: id,
+      requestID: requestID,
+      options: options,
+      profiles: remaining
+    )
+  }
 }
 
 struct PendingCredentialRequest: Equatable, Sendable {
@@ -690,10 +936,14 @@ public final class ServerListStore {
   }
 
   public private(set) var state: ServerListFeature.State
+  @ObservationIgnored
+  public var onProfileDeletionOutcome: ((BrokerDeletionOutcome) -> Void)?
 
   private let repository: any ProfileRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
   private let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
+  private let historyMaintenanceProvider: BrokerHistoryMaintenanceProvider
+  private let historyRetentionSettings: any HistoryRetentionSettingsRepositoryProtocol
   private var persistenceTail: Task<Result<Void, ProfileRepositoryFailure>, Never>?
   private var pendingPersistenceCount = 0
 
@@ -703,13 +953,19 @@ public final class ServerListStore {
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     brokerFeedGenerationCoordinator:
       any BrokerFeedGenerationCoordinating =
-      NoopBrokerFeedGenerationCoordinator()
+      NoopBrokerFeedGenerationCoordinator(),
+    historyMaintenanceProvider: BrokerHistoryMaintenanceProvider = .empty,
+    historyRetentionSettings:
+      any HistoryRetentionSettingsRepositoryProtocol =
+      MemoryHistoryRetentionSettingsRepository()
   ) {
     self.state = initialState
     self.repository = repository
     self.credentialRepository = credentialRepository
     self.brokerFeedGenerationCoordinator =
       brokerFeedGenerationCoordinator
+    self.historyMaintenanceProvider = historyMaintenanceProvider
+    self.historyRetentionSettings = historyRetentionSettings
   }
 
   public func send(_ intent: ServerListFeature.Intent) async {
@@ -845,7 +1101,235 @@ public final class ServerListStore {
       ) {
         await execute(followUp)
       }
+
+    case .deleteProfileResources(
+      let profileID,
+      let requestID,
+      let options,
+      let profiles
+    ):
+      // Commit the recoverable profile mutation first. Optional resource
+      // deletion is irreversible and must never precede this boundary.
+      if let previousPersistence = persistenceTail {
+        _ = await previousPersistence.value
+      }
+      do {
+        try await repository.replaceAll(profiles)
+        await brokerFeedGenerationCoordinator.profilesDidChange(
+          profiles.map(\.profile)
+        )
+      } catch {
+        finishProfileDeletion(
+          profileID: profileID,
+          requestID: requestID,
+          profiles: profiles,
+          outcome: BrokerDeletionOutcome(
+            profileID: profileID,
+            options: options,
+            history: .kept,
+            credential: .kept,
+            retentionSettings: .kept,
+            profile: .failed,
+            failure: .profile,
+            secureHistoryCleanupPending: false
+          )
+        )
+        return
+      }
+
+      var history: BrokerDeletionResourceStatus =
+        options.deleteHistory ? .failed : .kept
+      var credential: BrokerDeletionResourceStatus =
+        options.deleteCredential ? .failed : .kept
+      var settingsStatus: BrokerDeletionResourceStatus = .failed
+      var secureCleanupPending = false
+      var historyContinuation: HistoryClearContinuation?
+
+      if options.deleteHistory {
+        do {
+          let outcome = try await historyMaintenanceProvider.repository(
+            for: profileID
+          ).clearBrokerHistory()
+          if outcome.isComplete {
+            history = .removed
+            secureCleanupPending =
+              outcome.summary.secureCleanupStatus == .pending
+          } else {
+            history = .partiallyRemoved
+            historyContinuation = outcome.continuation
+          }
+        } catch {
+          history = .failed
+        }
+      }
+
+      if options.deleteCredential {
+        do {
+          let status = try await credentialRepository.delete(
+            for: profileID
+          )
+          credential = .removed
+          await brokerFeedGenerationCoordinator.credentialRevisionDidChange(
+            profileID: profileID,
+            revision: status.revision
+          )
+        } catch {
+          credential = .failed
+        }
+      }
+
+      do {
+        try await historyRetentionSettings.removePolicy(
+          for: profileID
+        )
+        settingsStatus = .removed
+      } catch {
+        settingsStatus = .failed
+      }
+
+      var failures: [BrokerDeletionFailureResource] = []
+      if history == .failed || history == .partiallyRemoved {
+        failures.append(.history)
+      }
+      if credential == .failed {
+        failures.append(.credential)
+      }
+      if settingsStatus == .failed {
+        failures.append(.retentionSettings)
+      }
+      finishProfileDeletion(
+        profileID: profileID,
+        requestID: requestID,
+        profiles: profiles,
+        outcome: BrokerDeletionOutcome(
+          profileID: profileID,
+          options: options,
+          history: history,
+          credential: credential,
+          retentionSettings: settingsStatus,
+          profile: .removed,
+          failures: failures,
+          secureHistoryCleanupPending: secureCleanupPending,
+          historyContinuation: historyContinuation
+        )
+      )
+
+    case .retryProfileResourceCleanup(let requestID, let previous):
+      let profileID = previous.profileID
+      var history = previous.history
+      var credential = previous.credential
+      var settingsStatus = previous.retentionSettings
+      var secureCleanupPending = previous.secureHistoryCleanupPending
+      var historyContinuation = previous.historyContinuation
+
+      if previous.options.deleteHistory,
+        history == .failed || history == .partiallyRemoved
+      {
+        do {
+          let repository = historyMaintenanceProvider.repository(
+            for: profileID
+          )
+          let outcome =
+            if let continuation = previous.historyContinuation {
+              try await repository.resumeHistoryClear(continuation)
+            } else {
+              try await repository.clearBrokerHistory()
+            }
+          history = outcome.isComplete ? .removed : .partiallyRemoved
+          secureCleanupPending =
+            outcome.summary.secureCleanupStatus == .pending
+          historyContinuation = outcome.continuation
+        } catch {
+          history = .failed
+        }
+      } else if history == .removed, secureCleanupPending {
+        do {
+          try await historyMaintenanceProvider.repository(
+            for: profileID
+          ).retrySecureCleanup()
+          secureCleanupPending = false
+          historyContinuation = nil
+        } catch {
+          secureCleanupPending = true
+        }
+      }
+
+      if previous.options.deleteCredential, credential == .failed {
+        do {
+          let status = try await credentialRepository.delete(
+            for: profileID
+          )
+          credential = .removed
+          await brokerFeedGenerationCoordinator.credentialRevisionDidChange(
+            profileID: profileID,
+            revision: status.revision
+          )
+        } catch {
+          credential = .failed
+        }
+      }
+
+      if settingsStatus == .failed {
+        do {
+          try await historyRetentionSettings.removePolicy(for: profileID)
+          settingsStatus = .removed
+        } catch {
+          settingsStatus = .failed
+        }
+      }
+
+      var failures: [BrokerDeletionFailureResource] = []
+      if history == .failed || history == .partiallyRemoved {
+        failures.append(.history)
+      }
+      if credential == .failed {
+        failures.append(.credential)
+      }
+      if settingsStatus == .failed {
+        failures.append(.retentionSettings)
+      }
+      finishProfileDeletion(
+        profileID: profileID,
+        requestID: requestID,
+        profiles: state.profiles,
+        outcome: BrokerDeletionOutcome(
+          profileID: profileID,
+          options: previous.options,
+          history: history,
+          credential: credential,
+          retentionSettings: settingsStatus,
+          profile: .removed,
+          failures: failures,
+          secureHistoryCleanupPending: secureCleanupPending,
+          historyContinuation: historyContinuation
+        )
+      )
     }
+  }
+
+  private func finishProfileDeletion(
+    profileID: UUID,
+    requestID: UInt64,
+    profiles: [RankedBrokerProfile],
+    outcome: BrokerDeletionOutcome
+  ) {
+    guard
+      state.pendingProfileDeletionRequest
+        == PendingCredentialRequest(
+          profileID: profileID,
+          requestID: requestID
+        )
+    else { return }
+    _ = ServerListFeature.reduce(
+      state: &state,
+      action: .profileDeletionFinished(
+        profileID: profileID,
+        requestID: requestID,
+        profiles: profiles,
+        outcome
+      )
+    )
+    onProfileDeletionOutcome?(outcome)
   }
 
   private func credentialFailure(for error: any Error) -> CredentialEffectFailure {
@@ -1031,6 +1515,15 @@ public final class ServerListStore {
     set {
       if !newValue {
         sendImmediately(.dismissCredentialError)
+      }
+    }
+  }
+
+  public var deletionOutcomePresented: Bool {
+    get { state.deletionOutcome != nil }
+    set {
+      if !newValue {
+        sendImmediately(.dismissDeletionOutcome)
       }
     }
   }

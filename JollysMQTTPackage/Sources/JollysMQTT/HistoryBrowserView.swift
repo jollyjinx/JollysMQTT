@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HistoryBrowserView: View {
   @Bindable var store: HistoryStore
+  @Bindable var maintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -22,7 +23,10 @@ struct HistoryBrowserView: View {
         )
         .foregroundStyle(.secondary)
       } else {
-        HistoryPageControls(store: store)
+        HistoryPageControls(
+          store: store,
+          maintenanceStore: maintenanceStore
+        )
         HistoryPageContent(store: store)
         if let comparison = store.state.comparison {
           PayloadComparisonView(comparison: comparison)
@@ -31,11 +35,20 @@ struct HistoryBrowserView: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .contain)
+    .sheet(
+      isPresented: Binding(
+        get: { maintenanceStore.state.isPresented },
+        set: { maintenanceStore.send(.setPresented($0)) }
+      )
+    ) {
+      HistoryMaintenanceView(store: maintenanceStore)
+    }
   }
 }
 
 private struct HistoryPageControls: View {
   @Bindable var store: HistoryStore
+  @Bindable var maintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
     HStack(spacing: 8) {
@@ -80,8 +93,521 @@ private struct HistoryPageControls: View {
             )
           )
       }
+
+      Spacer()
+
+      Button {
+        maintenanceStore.send(.setPresented(true))
+      } label: {
+        Label {
+          Text(
+            "History Settings",
+            bundle: #bundle,
+            comment:
+              "Opens local retention settings and destructive history controls."
+          )
+        } icon: {
+          Image(systemName: "externaldrive.badge.gearshape")
+        }
+      }
     }
     .buttonStyle(.bordered)
+  }
+}
+
+struct HistoryMaintenanceView: View {
+  @Bindable var store: HistoryMaintenanceStore
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        if let context = store.state.context {
+          Section {
+            LabeledContent(
+              String(
+                localized: "Broker",
+                bundle: #bundle,
+                comment: "Label for the broker affected by history settings."
+              ),
+              value: context.brokerName
+            )
+            if let topic = context.topic {
+              LabeledContent(
+                String(
+                  localized: "Topic",
+                  bundle: #bundle,
+                  comment: "Label for the topic affected by a topic-history clear."
+                ),
+                value: topic
+              )
+            }
+          }
+          HistoryRetentionFields(store: store)
+          HistoryDestructiveControls(store: store)
+          if let notice = store.state.notice {
+            HistoryMaintenanceNoticeView(notice: notice, store: store)
+          }
+        }
+      }
+      .formStyle(.grouped)
+      .navigationTitle(
+        Text(
+          "Local History",
+          bundle: #bundle,
+          comment: "Title for local MQTT history settings."
+        )
+      )
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button {
+            store.send(.setPresented(false))
+          } label: {
+            Text(
+              "Done",
+              bundle: #bundle,
+              comment: "Closes local history settings."
+            )
+          }
+        }
+      }
+      .confirmationDialog(
+        confirmationTitle,
+        isPresented: Binding(
+          get: { store.state.confirmation != nil },
+          set: {
+            if !$0 { store.send(.cancelClear) }
+          }
+        ),
+        titleVisibility: .visible
+      ) {
+        Button(role: .destructive) {
+          store.send(.confirmClear)
+        } label: {
+          Text(
+            "Clear Confirmed Scope",
+            bundle: #bundle,
+            comment:
+              "Confirms destructive clearing of the exact topic or broker history scope."
+          )
+        }
+        Button(role: .cancel) {
+          store.send(.cancelClear)
+        } label: {
+          Text(
+            "Cancel",
+            bundle: #bundle,
+            comment: "Cancels a destructive local history clear."
+          )
+        }
+      } message: {
+        Text(confirmationMessage)
+      }
+    }
+    #if os(macOS)
+      .frame(minWidth: 480, minHeight: 560)
+    #endif
+  }
+
+  private var confirmationTitle: LocalizedStringResource {
+    store.state.confirmation == .topic
+      ? LocalizedStringResource(
+        "Clear Topic History?",
+        bundle: #bundle,
+        comment: "Confirmation title for exact topic history removal."
+      )
+      : LocalizedStringResource(
+        "Clear Broker History?",
+        bundle: #bundle,
+        comment: "Confirmation title for all local broker history removal."
+      )
+  }
+
+  private var confirmationMessage: LocalizedStringResource {
+    guard let context = store.state.context else {
+      return LocalizedStringResource(
+        "No history scope is selected.",
+        bundle: #bundle,
+        comment: "Fallback history-clear confirmation message."
+      )
+    }
+    if store.state.confirmation == .topic {
+      guard let topic = context.topic else {
+        return LocalizedStringResource(
+          "No topic history scope is selected.",
+          bundle: #bundle,
+          comment: "Fallback topic-history confirmation message."
+        )
+      }
+      return LocalizedStringResource(
+        "Delete durable history for topic “\(topic)” from broker “\(context.brokerName)”? The live topic index and graph remain unchanged.",
+        bundle: #bundle,
+        comment:
+          "Explains the exact topic-history clear scope and that live state is unaffected."
+      )
+    }
+    return LocalizedStringResource(
+      "Delete all durable message history and coverage records for broker “\(context.brokerName)”? The live topic index and graph remain unchanged.",
+      bundle: #bundle,
+      comment:
+        "Explains the exact broker-history clear scope and that live state is unaffected."
+    )
+  }
+}
+
+private struct HistoryRetentionFields: View {
+  @Bindable var store: HistoryMaintenanceStore
+
+  var body: some View {
+    Section {
+      TextField(
+        value: intBinding(
+          get: { store.state.draft.topicMessageLimit },
+          intent: HistoryMaintenanceFeature.Intent.setTopicMessageLimit
+        ),
+        format: .number
+      ) {
+        Text(
+          "Messages per topic (1–1,000,000)",
+          bundle: #bundle,
+          comment: "Validated per-topic history message count field."
+        )
+      }
+      TextField(
+        value: int64Binding(
+          get: { store.state.draft.brokerByteLimit },
+          intent: HistoryMaintenanceFeature.Intent.setBrokerByteLimit
+        ),
+        format: .number
+      ) {
+        Text(
+          "Maximum broker allocation in bytes (16 MiB–4 TiB)",
+          bundle: #bundle,
+          comment: "Validated maximum broker history allocation field."
+        )
+      }
+      TextField(
+        value: intBinding(
+          get: { store.state.draft.payloadByteLimit },
+          intent: HistoryMaintenanceFeature.Intent.setPayloadByteLimit
+        ),
+        format: .number
+      ) {
+        Text(
+          "Maximum stored payload in bytes (1–67,108,864)",
+          bundle: #bundle,
+          comment: "Validated maximum stored history payload field."
+        )
+      }
+      TextField(
+        value: intBinding(
+          get: { store.state.draft.messagePruneBatchLimit },
+          intent: HistoryMaintenanceFeature.Intent.setMessagePruneBatchLimit
+        ),
+        format: .number
+      ) {
+        Text(
+          "Rows per pruning transaction (1–5,000)",
+          bundle: #bundle,
+          comment: "Validated incremental history prune batch field."
+        )
+      }
+      TextField(
+        value: intBinding(
+          get: { store.state.draft.vacuumPageLimit },
+          intent: HistoryMaintenanceFeature.Intent.setVacuumPageLimit
+        ),
+        format: .number
+      ) {
+        Text(
+          "Pages reclaimed per cleanup step (1–8,192)",
+          bundle: #bundle,
+          comment: "Validated incremental history vacuum page field."
+        )
+      }
+      Text(
+        "Broker allocation is a ceiling. Pruning begins near 60% and targets 50% so sustained traffic converges without one long transaction.",
+        bundle: #bundle,
+        comment:
+          "Explains broker history allocation high-water and target behavior."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      if store.state.validationError != nil {
+        Text(
+          "These retention values are outside the supported bounds or the payload limit exceeds one tenth of the broker allocation.",
+          bundle: #bundle,
+          comment: "Validation error for local history retention settings."
+        )
+        .foregroundStyle(.red)
+      }
+      if store.state.externalPolicyChanged {
+        Text(
+          "Another window changed this broker’s retention policy. Your unsaved draft is preserved; review it before saving.",
+          bundle: #bundle,
+          comment:
+            "Warns that another scene changed retention while this sheet has a dirty draft."
+        )
+        .foregroundStyle(.orange)
+      }
+      Button {
+        store.send(.save)
+      } label: {
+        Text(
+          "Save and Apply Retention",
+          bundle: #bundle,
+          comment: "Saves local retention settings and runs bounded pruning."
+        )
+      }
+      .disabled(store.state.isWorking)
+    } header: {
+      Text(
+        "Retention",
+        bundle: #bundle,
+        comment: "Heading for local history retention fields."
+      )
+    }
+  }
+
+  private func intBinding(
+    get: @escaping @MainActor @Sendable () -> Int,
+    intent:
+      @escaping @Sendable (Int) -> HistoryMaintenanceFeature.Intent
+  ) -> Binding<Int> {
+    Binding(get: get, set: { store.send(intent($0)) })
+  }
+
+  private func int64Binding(
+    get: @escaping @MainActor @Sendable () -> Int64,
+    intent:
+      @escaping @Sendable (Int64) -> HistoryMaintenanceFeature.Intent
+  ) -> Binding<Int64> {
+    Binding(get: get, set: { store.send(intent($0)) })
+  }
+}
+
+private struct HistoryDestructiveControls: View {
+  @Bindable var store: HistoryMaintenanceStore
+
+  var body: some View {
+    Section {
+      if store.state.context?.historySourceID != nil,
+        store.state.context?.topic != nil
+      {
+        Button(role: .destructive) {
+          store.send(.requestClear(.topic))
+        } label: {
+          Text(
+            "Clear Topic History",
+            bundle: #bundle,
+            comment: "Requests exact selected-topic history removal."
+          )
+        }
+      }
+      Button(role: .destructive) {
+        store.send(.requestClear(.broker))
+      } label: {
+        Text(
+          "Clear Broker History",
+          bundle: #bundle,
+          comment: "Requests all local history removal for one broker."
+        )
+      }
+    } header: {
+      Text(
+        "Destructive Actions",
+        bundle: #bundle,
+        comment: "Heading for local history deletion controls."
+      )
+    } footer: {
+      Text(
+        "Clearing durable history never clears the live topic index, current values, or graphs.",
+        bundle: #bundle,
+        comment: "Clarifies that history deletion does not mutate live state."
+      )
+    }
+    .disabled(store.state.isWorking)
+  }
+}
+
+extension HistoryMaintenanceNotice {
+  fileprivate var severity: HistoryMaintenanceNoticeSeverity {
+    switch self {
+    case .settings(.failed), .clearFailed, .secureCleanupFailed:
+      .error
+    case .settings(.appliedFileProtectionPending),
+      .settings(.committedMaintenanceFailed):
+      .warning
+    case .clear(let outcome)
+    where outcome.continuation != nil
+      || outcome.summary.secureCleanupStatus == .pending:
+      .warning
+    case .settings(.applied), .clear, .secureCleanupCompleted:
+      .success
+    }
+  }
+
+  fileprivate var label: LocalizedStringResource {
+    switch self {
+    case .settings(.applied):
+      LocalizedStringResource(
+        "Retention settings were saved and bounded pruning completed.",
+        bundle: #bundle,
+        comment: "Successful retention settings outcome."
+      )
+    case .settings(.appliedFileProtectionPending):
+      LocalizedStringResource(
+        "Retention settings were saved and applied, but file protection could not be refreshed.",
+        bundle: #bundle,
+        comment:
+          "Settings committed but platform file-protection metadata failed."
+      )
+    case .settings(
+      .committedMaintenanceFailed(let fileProtectionPending)
+    ):
+      fileProtectionPending
+        ? LocalizedStringResource(
+          "Settings were saved, but pruning and file-protection refresh need retrying.",
+          bundle: #bundle,
+          comment:
+            "Settings committed while both pruning and file protection failed."
+        )
+        : LocalizedStringResource(
+          "Settings were saved, but bounded pruning could not complete.",
+          bundle: #bundle,
+          comment: "Settings committed but applying retention failed."
+        )
+    case .settings(.failed):
+      LocalizedStringResource(
+        "Retention settings were not saved. Existing settings remain active.",
+        bundle: #bundle,
+        comment: "Retention settings failed before commit."
+      )
+    case .clear(let outcome) where outcome.continuation != nil:
+      outcome.interruptedLabel
+    case .clear(let outcome)
+    where outcome.summary.secureCleanupStatus == .pending:
+      LocalizedStringResource(
+        "History rows were cleared, but the secure WAL and free-page cleanup is pending.",
+        bundle: #bundle,
+        comment: "Logical clear succeeded while secure cleanup remains pending."
+      )
+    case .clear(let outcome):
+      LocalizedStringResource(
+        "Cleared \(outcome.summary.deletedMessageCount) messages, \(outcome.summary.deletedTopicCount) topic records, and \(outcome.summary.deletedCoverageGapCount) coverage records.",
+        bundle: #bundle,
+        comment: "Completed local history clear counts."
+      )
+    case .clearFailed:
+      LocalizedStringResource(
+        "History was not cleared. No committed partial progress was reported.",
+        bundle: #bundle,
+        comment: "History clear failed before any reported committed progress."
+      )
+    case .secureCleanupCompleted:
+      LocalizedStringResource(
+        "Secure history cleanup completed.",
+        bundle: #bundle,
+        comment: "Successful retry of local history secure cleanup."
+      )
+    case .secureCleanupFailed:
+      LocalizedStringResource(
+        "Secure cleanup is still pending. Close other history readers and retry.",
+        bundle: #bundle,
+        comment: "Secure local history cleanup retry failed."
+      )
+    }
+  }
+}
+
+extension HistoryClearOutcome {
+  fileprivate var interruptedLabel: LocalizedStringResource {
+    switch continuation {
+    case .topic(let scope, _):
+      LocalizedStringResource(
+        "Clearing topic “\(scope.topic)” was interrupted after deleting \(summary.deletedMessageCount) messages. Resume uses its original confirmation cutoff.",
+        bundle: #bundle,
+        comment:
+          "Partial topic clear outcome naming the original topic and safe cutoff."
+      )
+    case .broker:
+      LocalizedStringResource(
+        "Broker history clearing was interrupted after deleting \(summary.deletedMessageCount) messages. Resume uses its original confirmation cutoff.",
+        bundle: #bundle,
+        comment:
+          "Partial broker clear outcome retaining the original safe cutoff."
+      )
+    case nil:
+      LocalizedStringResource(
+        "History clearing completed.",
+        bundle: #bundle,
+        comment: "Fallback completed history-clear label."
+      )
+    }
+  }
+}
+
+private struct HistoryMaintenanceNoticeView: View {
+  let notice: HistoryMaintenanceNotice
+  @Bindable var store: HistoryMaintenanceStore
+
+  var body: some View {
+    Section {
+      Label {
+        Text(notice.label)
+      } icon: {
+        Image(systemName: notice.severity.systemImage)
+      }
+      .foregroundStyle(notice.severity.color)
+      if case .clear(let outcome) = notice,
+        outcome.continuation != nil
+      {
+        Button {
+          store.send(.resumeClear)
+        } label: {
+          Text(
+            "Resume Clear",
+            bundle: #bundle,
+            comment:
+              "Resumes an interrupted clear using its original confirmation cutoff."
+          )
+        }
+      }
+      if case .clear(let outcome) = notice,
+        outcome.summary.secureCleanupStatus == .pending
+      {
+        Button {
+          store.send(.retrySecureCleanup)
+        } label: {
+          Text(
+            "Retry Secure Cleanup",
+            bundle: #bundle,
+            comment: "Retries WAL checkpoint and free-page cleanup."
+          )
+        }
+      }
+    }
+  }
+}
+
+private enum HistoryMaintenanceNoticeSeverity {
+  case success
+  case warning
+  case error
+
+  var systemImage: String {
+    switch self {
+    case .success: "checkmark.circle"
+    case .warning: "exclamationmark.triangle"
+    case .error: "xmark.octagon"
+    }
+  }
+
+  var color: Color {
+    switch self {
+    case .success: .secondary
+    case .warning: .orange
+    case .error: .red
+    }
   }
 }
 
@@ -146,68 +672,16 @@ private struct HistoryRowView: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 8) {
-      Button(action: onSelect) {
-        VStack(alignment: .leading, spacing: 6) {
-          HStack(alignment: .firstTextBaseline) {
-            Text(
-              verbatim: row.receivedDate.formatted(
-                date: .numeric,
-                time: .standard
-              )
-            )
-            .fontWeight(isSelected ? .semibold : .regular)
-            Spacer()
-            Text(
-              "Payload size: \(row.message.payload.count) bytes",
-              bundle: #bundle,
-              comment: "Exact payload size for one durable history row."
-            )
+      Group {
+        if row.message.hasStoredPayload {
+          Button(action: onSelect) {
+            metadata
           }
-          Text(
-            "Unix time: \(row.message.receivedAtMicroseconds) µs",
-            bundle: #bundle,
-            comment:
-              "Exact local receive timestamp in microseconds for one durable MQTT history row."
-          )
-          if let elapsed = row.elapsedToNewerMicroseconds {
-            Text(
-              "\(elapsed) µs before the next newer value",
-              bundle: #bundle,
-              comment:
-                "Exact elapsed microseconds from this row to its next newer MQTT value."
-            )
-          }
-          HStack(spacing: 10) {
-            Text(
-              "History QoS \(row.message.qos.rawValue)",
-              bundle: #bundle,
-              comment: "MQTT quality of service in a durable history row."
-            )
-            Text(row.directionLabel)
-            Text(
-              row.message.retained
-                ? LocalizedStringResource(
-                  "History retained delivery: Yes",
-                  bundle: #bundle,
-                  comment:
-                    "History metadata saying an MQTT publish carried the retained-delivery flag."
-                )
-                : LocalizedStringResource(
-                  "History retained delivery: No",
-                  bundle: #bundle,
-                  comment:
-                    "History metadata saying an MQTT publish did not carry the retained-delivery flag."
-                )
-            )
-          }
+          .buttonStyle(.plain)
+        } else {
+          metadata
         }
-        .font(.caption)
-        .foregroundStyle(.primary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .contentShape(.rect)
       }
-      .buttonStyle(.plain)
       .background(
         isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
         in: RoundedRectangle(cornerRadius: 8)
@@ -219,21 +693,7 @@ private struct HistoryRowView: View {
           )
       }
       .accessibilityLabel(Text(row.accessibilityLabel))
-      .accessibilityValue(
-        Text(
-          isSelected
-            ? LocalizedStringResource(
-              "Selected comparison baseline",
-              bundle: #bundle,
-              comment: "Accessibility value for the selected history baseline."
-            )
-            : LocalizedStringResource(
-              "Available comparison baseline",
-              bundle: #bundle,
-              comment: "Accessibility value for an unselected history baseline."
-            )
-        )
-      )
+      .accessibilityValue(Text(row.accessibilityValue(isSelected: isSelected)))
       .accessibilityAddTraits(isSelected ? .isSelected : [])
 
       Button(action: onCopy) {
@@ -249,6 +709,7 @@ private struct HistoryRowView: View {
         .labelStyle(.iconOnly)
       }
       .buttonStyle(.bordered)
+      .disabled(!row.message.hasStoredPayload)
       .accessibilityLabel(
         Text(
           "Copy history payload raw bytes",
@@ -257,6 +718,82 @@ private struct HistoryRowView: View {
         )
       )
     }
+  }
+
+  private var metadata: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(
+          verbatim: row.receivedDate.formatted(
+            date: .numeric,
+            time: .standard
+          )
+        )
+        .fontWeight(isSelected ? .semibold : .regular)
+        Spacer()
+        Text(
+          "Payload size: \(row.message.originalPayloadByteCount) bytes",
+          bundle: #bundle,
+          comment:
+            "Original MQTT payload size for one durable history row, including metadata-only rows."
+        )
+      }
+      if !row.message.hasStoredPayload {
+        Label {
+          Text(
+            "Payload bytes omitted by the local history size limit",
+            bundle: #bundle,
+            comment:
+              "Explains that a durable history row kept metadata but omitted an oversized payload."
+          )
+        } icon: {
+          Image(systemName: "externaldrive.badge.exclamationmark")
+        }
+        .foregroundStyle(.secondary)
+      }
+      Text(
+        "Unix time: \(row.message.receivedAtMicroseconds) µs",
+        bundle: #bundle,
+        comment:
+          "Exact local receive timestamp in microseconds for one durable MQTT history row."
+      )
+      if let elapsed = row.elapsedToNewerMicroseconds {
+        Text(
+          "\(elapsed) µs before the next newer value",
+          bundle: #bundle,
+          comment:
+            "Exact elapsed microseconds from this row to its next newer MQTT value."
+        )
+      }
+      HStack(spacing: 10) {
+        Text(
+          "History QoS \(row.message.qos.rawValue)",
+          bundle: #bundle,
+          comment: "MQTT quality of service in a durable history row."
+        )
+        Text(row.directionLabel)
+        Text(
+          row.message.retained
+            ? LocalizedStringResource(
+              "History retained delivery: Yes",
+              bundle: #bundle,
+              comment:
+                "History metadata saying an MQTT publish carried the retained-delivery flag."
+            )
+            : LocalizedStringResource(
+              "History retained delivery: No",
+              bundle: #bundle,
+              comment:
+                "History metadata saying an MQTT publish did not carry the retained-delivery flag."
+            )
+        )
+      }
+    }
+    .font(.caption)
+    .foregroundStyle(.primary)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(10)
+    .contentShape(.rect)
   }
 }
 
@@ -554,12 +1091,60 @@ extension HistoryRow {
   }
 
   fileprivate var accessibilityLabel: LocalizedStringResource {
-    LocalizedStringResource(
-      "\(directionLabel), Unix time \(message.receivedAtMicroseconds) microseconds, QoS \(message.qos.rawValue), \(message.retained ? "retained delivery" : "not retained"), \(message.payload.count) bytes",
+    let retainedLabel =
+      message.retained
+      ? LocalizedStringResource(
+        "Retained delivery",
+        bundle: #bundle,
+        comment: "Accessible retained-delivery history metadata."
+      )
+      : LocalizedStringResource(
+        "Not retained",
+        bundle: #bundle,
+        comment: "Accessible non-retained history metadata."
+      )
+    let availabilityLabel =
+      message.hasStoredPayload
+      ? LocalizedStringResource(
+        "Payload available",
+        bundle: #bundle,
+        comment: "Accessible history payload availability."
+      )
+      : LocalizedStringResource(
+        "Payload omitted by history limit",
+        bundle: #bundle,
+        comment: "Accessible history payload omission reason."
+      )
+    return LocalizedStringResource(
+      "\(directionLabel), Unix time \(message.receivedAtMicroseconds) microseconds, QoS \(message.qos.rawValue), \(retainedLabel), \(message.originalPayloadByteCount) bytes, \(availabilityLabel)",
       bundle: #bundle,
       comment:
-        "Complete accessible metadata for one durable MQTT payload history row."
+        "Complete accessible metadata for one durable MQTT payload history row, including whether payload bytes are available."
     )
+  }
+
+  fileprivate func accessibilityValue(
+    isSelected: Bool
+  ) -> LocalizedStringResource {
+    guard message.hasStoredPayload else {
+      return LocalizedStringResource(
+        "Payload unavailable for comparison",
+        bundle: #bundle,
+        comment:
+          "Accessibility value for a metadata-only history row that cannot be used as a comparison baseline."
+      )
+    }
+    return isSelected
+      ? LocalizedStringResource(
+        "Selected comparison baseline",
+        bundle: #bundle,
+        comment: "Accessibility value for the selected history baseline."
+      )
+      : LocalizedStringResource(
+        "Available comparison baseline",
+        bundle: #bundle,
+        comment: "Accessibility value for an unselected history baseline."
+      )
   }
 }
 

@@ -145,8 +145,24 @@ struct ServerListFeatureTests {
 
     _ = ServerListFeature.reduce(state: &state, intent: .requestDeleteProfile(second.id))
     let deletion = ServerListFeature.reduce(state: &state, intent: .confirmDeleteProfile)
-    #expect(state.profiles.map(\.id) == [first.id])
-    #expect(deletion == .persistProfiles(state.profiles))
+    #expect(state.profiles.map(\.id) == [second.id, first.id])
+    #expect(
+      deletion
+        == .deleteProfileResources(
+          profileID: second.id,
+          requestID: 1,
+          options: BrokerDeletionOptions(
+            deleteHistory: false,
+            deleteCredential: false
+          ),
+          profiles: [
+            RankedBrokerProfile(
+              profile: first.profile,
+              reorderRank: 1_024
+            )
+          ]
+        )
+    )
 
     state.profiles = [
       RankedBrokerProfile(
@@ -439,12 +455,263 @@ struct ServerListFeatureTests {
     #expect(await credentials.operations() == [.delete(deleteProfile.id)])
   }
 
-  @Test("A failed credential deletion never deletes the saved profile")
+  @Test("History and credential deletion choices are independent and settings always leave")
+  @MainActor
+  func fourWayProfileDeletion() async throws {
+    let profiles = (0..<4).map {
+      uniqueRankedProfile(name: "Broker \($0)", rank: Int64($0 + 1))
+    }
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .success(CredentialStatus(availability: .missing, revision: 1)),
+        .success(CredentialStatus(availability: .missing, revision: 1)),
+      ]
+    )
+    let historyRecorder = DeletionHistoryRecorder()
+    let settings = MemoryHistoryRetentionSettingsRepository()
+    let customPolicy = try HistoryRetentionPolicy(
+      topicMessageLimit: 42,
+      brokerByteLimit: 64 * 1_024 * 1_024,
+      payloadByteLimit: 1_024,
+      messagePruneBatchLimit: 10,
+      vacuumPageLimit: 10
+    )
+    for profile in profiles {
+      settings.save(customPolicy, for: profile.id)
+    }
+    let store = ServerListStore(
+      initialState: .init(profiles: profiles),
+      repository: MemoryProfileRepository(profiles: profiles),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider {
+        brokerID in
+        RecordingDeletionHistoryMaintenance(
+          brokerID: brokerID,
+          recorder: historyRecorder
+        )
+      },
+      historyRetentionSettings: settings
+    )
+
+    store.sendImmediately(.requestDeleteProfile(profiles[0].id))
+    await store.send(.confirmDeleteProfile)
+    store.sendImmediately(.requestDeleteProfile(profiles[1].id))
+    await store.send(.confirmDeleteProfileAndHistory)
+    store.sendImmediately(.requestDeleteProfile(profiles[2].id))
+    await store.send(.confirmDeleteProfileAndCredential)
+    store.sendImmediately(.requestDeleteProfile(profiles[3].id))
+    await store.send(.confirmDeleteProfileAndHistoryAndCredential)
+
+    #expect(store.state.profiles.isEmpty)
+    #expect(
+      await historyRecorder.brokerIDs
+        == [profiles[1].id, profiles[3].id]
+    )
+    #expect(
+      await credentials.operations()
+        == [.delete(profiles[2].id), .delete(profiles[3].id)]
+    )
+    for profile in profiles {
+      #expect(settings.policy(for: profile.id) == .default)
+    }
+  }
+
+  @Test("A second deletion cannot replace an active deletion request")
+  func overlappingDeletionConfirmationIsRejected() throws {
+    let first = uniqueRankedProfile(name: "First", rank: 1)
+    let second = uniqueRankedProfile(name: "Second", rank: 2)
+    var state = ServerListFeature.State(
+      profiles: [first, second],
+      selectedProfileID: first.id
+    )
+
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .requestDeleteProfile(first.id)
+    )
+    let firstEffect = try #require(
+      ServerListFeature.reduce(
+        state: &state,
+        intent: .confirmDeleteProfile
+      )
+    )
+    let firstRequest = try #require(state.pendingProfileDeletionRequest)
+
+    #expect(state.isProfileDeletionBusy)
+    #expect(state.isProfileMutationBlocked)
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .requestDeleteProfile(second.id)
+    )
+    let secondEffect = ServerListFeature.reduce(
+      state: &state,
+      intent: .confirmDeleteProfileAndHistory
+    )
+
+    #expect(state.pendingDeletionProfileID == nil)
+    #expect(state.pendingProfileDeletionRequest == firstRequest)
+    #expect(secondEffect == nil)
+    guard case .deleteProfileResources(let profileID, _, _, _) = firstEffect
+    else {
+      Issue.record("Expected the first profile-resource deletion effect.")
+      return
+    }
+    #expect(profileID == first.id)
+  }
+
+  @Test("Profile deletion waits for prior persistence and blocks later mutation")
+  @MainActor
+  func deletionSerializesProfileWrites() async throws {
+    let first = uniqueRankedProfile(name: "First", rank: 1)
+    let second = uniqueRankedProfile(name: "Second", rank: 2)
+    let repository = OrderedGatedProfileRepository(
+      profiles: [first, second],
+      heldWriteNumbers: [1, 2]
+    )
+    let store = ServerListStore(
+      initialState: .init(
+        profiles: [first, second],
+        selectedProfileID: second.id
+      ),
+      repository: repository
+    )
+
+    let priorMutation = Task {
+      await store.send(.moveProfile(second.id, before: first.id))
+    }
+    await repository.waitForWrite(1)
+    #expect(store.state.profiles.map(\.id) == [second.id, first.id])
+
+    store.sendImmediately(.requestDeleteProfile(second.id))
+    let deletion = Task {
+      await store.send(.confirmDeleteProfile)
+    }
+    while !store.state.isProfileDeletionCommitPending {
+      await Task.yield()
+    }
+
+    await store.send(.moveProfile(first.id, before: second.id))
+    store.sendImmediately(.requestDeleteProfile(first.id))
+    await store.send(.confirmDeleteProfileAndHistory)
+
+    #expect(store.state.profiles.map(\.id) == [second.id, first.id])
+    #expect(store.state.pendingDeletionProfileID == nil)
+    #expect(await repository.writeCount == 1)
+
+    await repository.releaseWrite(1)
+    await repository.waitForWrite(2)
+    #expect(await repository.write(2).map(\.id) == [first.id])
+
+    await repository.releaseWrite(2)
+    await priorMutation.value
+    await deletion.value
+
+    #expect(store.state.profiles.map(\.id) == [first.id])
+    #expect(await repository.persistedProfiles.map(\.id) == [first.id])
+  }
+
+  @Test("Partial history cleanup is explicit and other selected cleanup still runs")
+  @MainActor
+  func partialHistoryDeletionStopsProfileDeletion() async {
+    let profile = uniqueRankedProfile(name: "Partial", rank: 1)
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .success(CredentialStatus(availability: .missing, revision: 1))
+      ]
+    )
+    let settings = MemoryHistoryRetentionSettingsRepository()
+    let resumeRecorder = DeletionResumeRecorder()
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: MemoryProfileRepository(profiles: [profile]),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider { _ in
+        PartialDeletionHistoryMaintenance(recorder: resumeRecorder)
+      },
+      historyRetentionSettings: settings
+    )
+
+    store.sendImmediately(.requestDeleteProfile(profile.id))
+    await store.send(.confirmDeleteProfileAndHistoryAndCredential)
+
+    #expect(store.state.profiles.isEmpty)
+    #expect(store.state.deletionOutcome?.history == .partiallyRemoved)
+    #expect(store.state.deletionOutcome?.failure == .history)
+    #expect(await credentials.operations() == [.delete(profile.id)])
+    #expect(settings.policy(for: profile.id) == .default)
+
+    await store.send(.retryDeletionCleanup)
+    #expect(store.state.deletionOutcome?.succeeded == true)
+    #expect(await resumeRecorder.resumeCount == 1)
+  }
+
+  @Test("Independent history and credential failures are both retained")
+  @MainActor
+  func simultaneousPostProfileCleanupFailures() async {
+    let profile = uniqueRankedProfile(name: "Two Failures", rank: 1)
+    let credentials = ScriptedCredentialRepository(
+      deletes: [.failure(.denied)]
+    )
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: MemoryProfileRepository(profiles: [profile]),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider { _ in
+        FailingDeletionHistoryMaintenance()
+      }
+    )
+
+    store.sendImmediately(.requestDeleteProfile(profile.id))
+    await store.send(.confirmDeleteProfileAndHistoryAndCredential)
+
+    #expect(store.state.profiles.isEmpty)
+    #expect(store.state.deletionOutcome?.history == .failed)
+    #expect(store.state.deletionOutcome?.credential == .failed)
+    #expect(store.state.deletionOutcome?.retentionSettings == .removed)
+    #expect(
+      store.state.deletionOutcome?.failures == [.history, .credential]
+    )
+  }
+
+  @Test("Pending secure history cleanup remains retryable after deletion")
+  @MainActor
+  func retryPendingSecureHistoryCleanup() async {
+    let profile = uniqueRankedProfile(name: "Secure Cleanup", rank: 1)
+    let recorder = SecureCleanupRetryRecorder()
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: MemoryProfileRepository(profiles: [profile]),
+      credentialRepository: ScriptedCredentialRepository(),
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider { _ in
+        PendingSecureCleanupHistoryMaintenance(recorder: recorder)
+      }
+    )
+
+    store.sendImmediately(.requestDeleteProfile(profile.id))
+    await store.send(.confirmDeleteProfileAndHistory)
+
+    #expect(store.state.profiles.isEmpty)
+    #expect(store.state.deletionOutcome?.history == .removed)
+    #expect(store.state.deletionOutcome?.secureHistoryCleanupPending == true)
+    #expect(store.state.deletionOutcome?.needsRetry == true)
+
+    await store.send(.retryDeletionCleanup)
+
+    #expect(store.state.deletionOutcome?.succeeded == true)
+    #expect(await recorder.retryCount == 1)
+  }
+
+  @Test("A post-profile credential failure is reported as partial cleanup")
   @MainActor
   func failedCredentialDeletionPreservesProfile() async {
     let profile = rankedProfile(name: "Preserved", rank: 10)
     let profileRepository = MemoryProfileRepository(profiles: [profile])
-    let credentials = ScriptedCredentialRepository(deletes: [.failure(.denied)])
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .failure(.denied),
+        .success(CredentialStatus(availability: .missing, revision: 2)),
+      ]
+    )
     let store = ServerListStore(
       initialState: .init(profiles: [profile]),
       repository: profileRepository,
@@ -454,9 +721,60 @@ struct ServerListFeatureTests {
     store.sendImmediately(.requestDeleteProfile(profile.id))
     await store.send(.confirmDeleteProfileAndCredential)
 
+    #expect(store.state.profiles.isEmpty)
+    #expect(await profileRepository.persistedProfiles().isEmpty)
+    #expect(store.state.deletionOutcome?.failure == .credential)
+    #expect(store.state.deletionOutcome?.credential == .failed)
+
+    await store.send(.retryDeletionCleanup)
+    #expect(store.state.deletionOutcome?.succeeded == true)
+    #expect(
+      await credentials.operations()
+        == [.delete(profile.id), .delete(profile.id)]
+    )
+  }
+
+  @Test("Profile persistence failure leaves optional resources untouched")
+  @MainActor
+  func profileFailurePrecedesIrreversibleCleanup() async throws {
+    let profile = uniqueRankedProfile(name: "Safe Failure", rank: 1)
+    let credentials = ScriptedCredentialRepository(
+      deletes: [
+        .success(CredentialStatus(availability: .missing, revision: 1))
+      ]
+    )
+    let historyRecorder = DeletionHistoryRecorder()
+    let settings = MemoryHistoryRetentionSettingsRepository()
+    let customPolicy = try HistoryRetentionPolicy(
+      topicMessageLimit: 42,
+      brokerByteLimit: 64 * 1_024 * 1_024,
+      payloadByteLimit: 1_024,
+      messagePruneBatchLimit: 10,
+      vacuumPageLimit: 10
+    )
+    settings.save(customPolicy, for: profile.id)
+    let store = ServerListStore(
+      initialState: .init(profiles: [profile]),
+      repository: FailingProfileRepository(),
+      credentialRepository: credentials,
+      historyMaintenanceProvider: BrokerHistoryMaintenanceProvider {
+        brokerID in
+        RecordingDeletionHistoryMaintenance(
+          brokerID: brokerID,
+          recorder: historyRecorder
+        )
+      },
+      historyRetentionSettings: settings
+    )
+
+    store.sendImmediately(.requestDeleteProfile(profile.id))
+    await store.send(.confirmDeleteProfileAndHistoryAndCredential)
+
     #expect(store.state.profiles == [profile])
-    #expect(await profileRepository.persistedProfiles() == [profile])
-    #expect(store.state.credentialError == .denied)
+    #expect(store.state.deletionOutcome?.failure == .profile)
+    #expect(await historyRecorder.brokerIDs.isEmpty)
+    #expect(await credentials.operations().isEmpty)
+    #expect(settings.policy(for: profile.id) == customPolicy)
   }
 
   @Test("A profile without a username connects anonymously without Keychain access")
@@ -596,6 +914,57 @@ private struct FailingProfileRepository: ProfileRepositoryProtocol {
   func load() async throws -> [RankedBrokerProfile] { [] }
   func replaceAll(_ profiles: [RankedBrokerProfile]) async throws {
     throw ProfileRepositoryFailure()
+  }
+}
+
+private actor OrderedGatedProfileRepository: ProfileRepositoryProtocol {
+  private var profiles: [RankedBrokerProfile]
+  private let heldWriteNumbers: Set<Int>
+  private var writes: [[RankedBrokerProfile]] = []
+  private var writeWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+  private var releaseContinuations: [Int: CheckedContinuation<Void, Never>] = [:]
+
+  init(
+    profiles: [RankedBrokerProfile],
+    heldWriteNumbers: Set<Int>
+  ) {
+    self.profiles = profiles
+    self.heldWriteNumbers = heldWriteNumbers
+  }
+
+  func load() -> [RankedBrokerProfile] { profiles }
+
+  func replaceAll(_ profiles: [RankedBrokerProfile]) async {
+    let writeNumber = writes.count + 1
+    writes.append(profiles)
+    let waiters = writeWaiters.removeValue(forKey: writeNumber) ?? []
+    for waiter in waiters {
+      waiter.resume()
+    }
+    if heldWriteNumbers.contains(writeNumber) {
+      await withCheckedContinuation { continuation in
+        releaseContinuations[writeNumber] = continuation
+      }
+    }
+    self.profiles = profiles
+  }
+
+  var writeCount: Int { writes.count }
+  var persistedProfiles: [RankedBrokerProfile] { profiles }
+
+  func write(_ number: Int) -> [RankedBrokerProfile] {
+    writes[number - 1]
+  }
+
+  func waitForWrite(_ number: Int) async {
+    guard writes.count < number else { return }
+    await withCheckedContinuation { continuation in
+      writeWaiters[number, default: []].append(continuation)
+    }
+  }
+
+  func releaseWrite(_ number: Int) {
+    releaseContinuations.removeValue(forKey: number)?.resume()
   }
 }
 
@@ -856,6 +1225,220 @@ private actor CancellingAfterCommitCredentialRepository:
   }
 }
 
+private actor DeletionHistoryRecorder {
+  private(set) var brokerIDs: [UUID] = []
+
+  func record(_ brokerID: UUID) {
+    brokerIDs.append(brokerID)
+  }
+}
+
+private actor RecordingDeletionHistoryMaintenance:
+  BrokerHistoryMaintaining
+{
+  let brokerID: UUID
+  let recorder: DeletionHistoryRecorder
+
+  init(brokerID: UUID, recorder: DeletionHistoryRecorder) {
+    self.brokerID = brokerID
+    self.recorder = recorder
+  }
+
+  func retentionPolicy() -> HistoryRetentionPolicy { .default }
+  func maintenanceStatus() -> HistoryMaintenanceStatus { .notRun }
+  func applyRetention() -> HistoryMaintenanceReport {
+    HistoryMaintenanceReport(
+      deletedForTopicLimit: 0,
+      deletedForBrokerLimit: 0,
+      deletedOrphanTopicCount: 0,
+      finalMessageCount: 0,
+      finalSQLiteBytes: 0
+    )
+  }
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) -> HistoryClearOutcome {
+    completedClear
+  }
+  func clearBrokerHistory() async -> HistoryClearOutcome {
+    await recorder.record(brokerID)
+    return completedClear
+  }
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) -> HistoryClearOutcome {
+    completedClear
+  }
+  func retrySecureCleanup() {}
+
+  private var completedClear: HistoryClearOutcome {
+    HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 0,
+        deletedTopicCount: 0,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .completed
+      )
+    )
+  }
+}
+
+private actor PartialDeletionHistoryMaintenance:
+  BrokerHistoryMaintaining
+{
+  let recorder: DeletionResumeRecorder
+
+  init(recorder: DeletionResumeRecorder) {
+    self.recorder = recorder
+  }
+
+  func retentionPolicy() -> HistoryRetentionPolicy { .default }
+  func maintenanceStatus() -> HistoryMaintenanceStatus { .notRun }
+  func applyRetention() -> HistoryMaintenanceReport {
+    HistoryMaintenanceReport(
+      deletedForTopicLimit: 0,
+      deletedForBrokerLimit: 0,
+      deletedOrphanTopicCount: 0,
+      finalMessageCount: 0,
+      finalSQLiteBytes: 0
+    )
+  }
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) -> HistoryClearOutcome {
+    partial
+  }
+  func clearBrokerHistory() -> HistoryClearOutcome { partial }
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) async -> HistoryClearOutcome {
+    await recorder.recordResume()
+    return HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 2,
+        deletedTopicCount: 1,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .completed
+      )
+    )
+  }
+  func retrySecureCleanup() {}
+
+  private var partial: HistoryClearOutcome {
+    let summary = HistoryClearSummary(
+      deletedMessageCount: 1,
+      deletedTopicCount: 0,
+      deletedCoverageGapCount: 0,
+      secureCleanupStatus: .notRequired
+    )
+    return HistoryClearOutcome(
+      summary: summary,
+      continuation: .broker(
+        scope: HistoryBrokerClearScope(
+          throughMessageOrder: 2,
+          throughTopicOrder: 1,
+          throughCoverageGapOrder: 0
+        ),
+        accumulated: summary
+      ),
+      interruption: .storageFailure
+    )
+  }
+}
+
+private actor FailingDeletionHistoryMaintenance:
+  BrokerHistoryMaintaining
+{
+  func retentionPolicy() -> HistoryRetentionPolicy { .default }
+  func maintenanceStatus() -> HistoryMaintenanceStatus { .notRun }
+  func applyRetention() throws -> HistoryMaintenanceReport {
+    throw ProfileRepositoryFailure()
+  }
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) throws -> HistoryClearOutcome {
+    throw ProfileRepositoryFailure()
+  }
+  func clearBrokerHistory() throws -> HistoryClearOutcome {
+    throw ProfileRepositoryFailure()
+  }
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) throws -> HistoryClearOutcome {
+    throw ProfileRepositoryFailure()
+  }
+  func retrySecureCleanup() throws {
+    throw ProfileRepositoryFailure()
+  }
+}
+
+private actor PendingSecureCleanupHistoryMaintenance:
+  BrokerHistoryMaintaining
+{
+  let recorder: SecureCleanupRetryRecorder
+
+  init(recorder: SecureCleanupRetryRecorder) {
+    self.recorder = recorder
+  }
+
+  func retentionPolicy() -> HistoryRetentionPolicy { .default }
+  func maintenanceStatus() -> HistoryMaintenanceStatus { .notRun }
+  func applyRetention() -> HistoryMaintenanceReport {
+    HistoryMaintenanceReport(
+      deletedForTopicLimit: 0,
+      deletedForBrokerLimit: 0,
+      deletedOrphanTopicCount: 0,
+      finalMessageCount: 0,
+      finalSQLiteBytes: 0
+    )
+  }
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) -> HistoryClearOutcome {
+    pending
+  }
+  func clearBrokerHistory() -> HistoryClearOutcome { pending }
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) -> HistoryClearOutcome {
+    pending
+  }
+  func retrySecureCleanup() async {
+    await recorder.recordRetry()
+  }
+
+  private var pending: HistoryClearOutcome {
+    HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 2,
+        deletedTopicCount: 1,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .pending
+      )
+    )
+  }
+}
+
+private actor DeletionResumeRecorder {
+  private(set) var resumeCount = 0
+
+  func recordResume() {
+    resumeCount += 1
+  }
+}
+
+private actor SecureCleanupRetryRecorder {
+  private(set) var retryCount = 0
+
+  func recordRetry() {
+    retryCount += 1
+  }
+}
+
 private struct MockAuthentication: Equatable, Sendable {
   let hasPassword: Bool
 }
@@ -908,6 +1491,30 @@ private func rankedProfile(
       port: 1_883,
       transport: .tcp,
       username: username,
+      clientIDPolicy: .stableGenerated,
+      cleanSession: true,
+      keepAliveSeconds: 60,
+      reconnectPolicy: .standard,
+      subscriptions: [
+        SubscriptionDefinition(filter: "site/#", qos: .atMostOnce)
+      ]
+    ),
+    reorderRank: rank
+  )
+}
+
+private func uniqueRankedProfile(
+  name: String,
+  rank: Int64
+) -> RankedBrokerProfile {
+  RankedBrokerProfile(
+    profile: BrokerProfile(
+      id: UUID(),
+      name: name,
+      host: "broker.example",
+      port: 1_883,
+      transport: .tcp,
+      username: nil,
       clientIDPolicy: .stableGenerated,
       cleanSession: true,
       keepAliveSeconds: 60,

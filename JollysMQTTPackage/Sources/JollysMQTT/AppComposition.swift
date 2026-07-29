@@ -178,10 +178,29 @@ public struct JollysMQTTAppDependencies: Sendable {
       path: "history",
       directoryHint: .isDirectory
     )
+    let historyRetentionSettings: any HistoryRetentionSettingsRepositoryProtocol
+    do {
+      historyRetentionSettings =
+        try LocalHistoryRetentionSettingsRepository(
+          fileURL: root.appending(
+            path: "history-retention-settings.json"
+          )
+        )
+    } catch {
+      historyRetentionSettings =
+        UnavailableHistoryRetentionSettingsRepository()
+    }
     let historyRepositories = SQLiteBrokerHistoryRepositoryPool(
-      directoryURL: historyDirectory
+      directoryURL: historyDirectory,
+      retentionPolicyProvider: { brokerID in
+        historyRetentionSettings.policy(for: brokerID)
+      }
     )
     let historyRepositoryProvider = BrokerHistoryRepositoryProvider {
+      brokerID in
+      historyRepositories.repository(for: brokerID)
+    }
+    let historyMaintenanceProvider = BrokerHistoryMaintenanceProvider {
       brokerID in
       historyRepositories.repository(for: brokerID)
     }
@@ -193,7 +212,10 @@ public struct JollysMQTTAppDependencies: Sendable {
         historySourceID: MQTTBrokerFeedAttempt.historySourceID(
           for: profile
         ),
-        historyWriter: historyWriter
+        historyWriter: historyWriter,
+        retentionPolicyProvider: {
+          historyRetentionSettings.policy(for: profile.id)
+        }
       )
       let attempt = MQTTBrokerFeedAttempt(
         credentialResolver: CredentialRepository.shared,
@@ -217,7 +239,9 @@ public struct JollysMQTTAppDependencies: Sendable {
         registry.makeLease(workspaceID: workspaceID)
       },
       brokerFeedGenerationCoordinator: registry,
-      historyRepositoryProvider: historyRepositoryProvider
+      historyRepositoryProvider: historyRepositoryProvider,
+      historyMaintenanceProvider: historyMaintenanceProvider,
+      historyRetentionSettings: historyRetentionSettings
     )
   }()
 
@@ -228,6 +252,8 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let brokerFeedFactory: BrokerFeedLeaseFactory
   public let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
   public let historyRepositoryProvider: BrokerHistoryRepositoryProvider
+  public let historyMaintenanceProvider: BrokerHistoryMaintenanceProvider
+  public let historyRetentionSettings: any HistoryRetentionSettingsRepositoryProtocol
 
   public init(
     profileRepository: any ProfileRepositoryProtocol,
@@ -238,7 +264,12 @@ public struct JollysMQTTAppDependencies: Sendable {
     brokerFeedGenerationCoordinator:
       any BrokerFeedGenerationCoordinating =
       NoopBrokerFeedGenerationCoordinator(),
-    historyRepositoryProvider: BrokerHistoryRepositoryProvider = .empty
+    historyRepositoryProvider: BrokerHistoryRepositoryProvider = .empty,
+    historyMaintenanceProvider:
+      BrokerHistoryMaintenanceProvider = .empty,
+    historyRetentionSettings:
+      any HistoryRetentionSettingsRepositoryProtocol =
+      MemoryHistoryRetentionSettingsRepository()
   ) {
     self.profileRepository = profileRepository
     self.credentialRepository = credentialRepository
@@ -248,6 +279,8 @@ public struct JollysMQTTAppDependencies: Sendable {
     self.brokerFeedGenerationCoordinator =
       brokerFeedGenerationCoordinator
     self.historyRepositoryProvider = historyRepositoryProvider
+    self.historyMaintenanceProvider = historyMaintenanceProvider
+    self.historyRetentionSettings = historyRetentionSettings
   }
 
   @MainActor
@@ -281,6 +314,7 @@ public final class WorkspaceSceneStore {
   public let publishComposer: PublishStore
   public let retainedDeletion: RetainedDeletionStore
   public let history: HistoryStore
+  public let historyMaintenance: HistoryMaintenanceStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
   private let credentialRepository: any CredentialRepositoryProtocol
@@ -315,12 +349,26 @@ public final class WorkspaceSceneStore {
       repositories: dependencies.historyRepositoryProvider
     )
     self.history = history
-    self.serverList = ServerListStore(
+    let historyMaintenance = HistoryMaintenanceStore(
+      maintenance: dependencies.historyMaintenanceProvider,
+      settings: dependencies.historyRetentionSettings
+    )
+    self.historyMaintenance = historyMaintenance
+    historyMaintenance.onHistoryCleared = { [weak history] brokerID in
+      guard history?.state.context?.brokerID == brokerID else { return }
+      history?.reload()
+    }
+    let serverList = ServerListStore(
       repository: dependencies.profileRepository,
       credentialRepository: dependencies.credentialRepository,
       brokerFeedGenerationCoordinator:
-        dependencies.brokerFeedGenerationCoordinator
+        dependencies.brokerFeedGenerationCoordinator,
+      historyMaintenanceProvider:
+        dependencies.historyMaintenanceProvider,
+      historyRetentionSettings:
+        dependencies.historyRetentionSettings
     )
+    self.serverList = serverList
     self.workspaceRepository = dependencies.workspaceRepository
     self.credentialRepository = dependencies.credentialRepository
     self.lifecycle = WorkspaceLifecycleOwner(
@@ -334,6 +382,9 @@ public final class WorkspaceSceneStore {
         await workspace.flush()
       }
     )
+    serverList.onProfileDeletionOutcome = { [weak self] outcome in
+      self?.profileDeletionFinished(outcome)
+    }
     self.topics.onPayloadSelectionChange = {
       [weak payloadInspector, weak publishComposer] selection in
       payloadInspector?.send(
@@ -348,12 +399,26 @@ public final class WorkspaceSceneStore {
       retainedDeletion?.updateContext(context, snapshot: snapshot)
     }
     self.topics.onHistoryContextChange = {
-      [weak history] selection, snapshot in
+      [weak history, weak historyMaintenance, weak serverList]
+      selection,
+      snapshot in
       guard
         let historySourceID = snapshot.historySourceID,
         case .current(let current) = selection
       else {
         history?.updateContext(nil)
+        if let profile = serverList?.state.profiles.first(where: {
+          $0.id == serverList?.state.selectedProfileID
+        })?.profile {
+          historyMaintenance?.updateContext(
+            HistoryMaintenanceContext(
+              brokerID: profile.id,
+              brokerName: profile.name
+            )
+          )
+        } else {
+          historyMaintenance?.updateContext(nil)
+        }
         return
       }
       history?.updateContext(
@@ -361,6 +426,18 @@ public final class WorkspaceSceneStore {
           brokerID: current.topicID.brokerID,
           historySourceID: historySourceID,
           current: current
+        )
+      )
+      let brokerName =
+        serverList?.state.profiles.first {
+          $0.id == current.topicID.brokerID
+        }?.profile.name ?? current.topicID.brokerID.uuidString
+      historyMaintenance?.updateContext(
+        HistoryMaintenanceContext(
+          brokerID: current.topicID.brokerID,
+          brokerName: brokerName,
+          historySourceID: historySourceID,
+          topic: current.topicID.fullTopic
         )
       )
     }
@@ -371,6 +448,9 @@ public final class WorkspaceSceneStore {
     set {
       workspace.selectedProfileID = newValue
       serverList.sendImmediately(.select(newValue))
+      if case .serverList = workspace.state.record.route {
+        updateHistoryMaintenanceBrokerContext(newValue)
+      }
     }
   }
 
@@ -449,6 +529,7 @@ public final class WorkspaceSceneStore {
         ? restoredSelection
         : serverList.state.selectedProfileID
       selectedProfileID = resolvedSelection
+      updateHistoryMaintenanceBrokerContext(resolvedSelection)
       await workspace.flush()
     }
   }
@@ -527,6 +608,34 @@ public final class WorkspaceSceneStore {
 
   public func waitUntilOwned() async {
     await lifecycle.waitUntilRunning()
+  }
+
+  private func updateHistoryMaintenanceBrokerContext(
+    _ brokerID: UUID?
+  ) {
+    guard let brokerID,
+      let profile = serverList.state.profiles.first(where: {
+        $0.id == brokerID
+      })?.profile
+    else {
+      historyMaintenance.updateContext(nil)
+      return
+    }
+    historyMaintenance.updateContext(
+      HistoryMaintenanceContext(
+        brokerID: profile.id,
+        brokerName: profile.name
+      )
+    )
+  }
+
+  private func profileDeletionFinished(
+    _ outcome: BrokerDeletionOutcome
+  ) {
+    guard outcome.profile == .removed else { return }
+    let selection = serverList.state.selectedProfileID
+    selectedProfileID = selection
+    updateHistoryMaintenanceBrokerContext(selection)
   }
 
   private func restoreConnectionIfNeeded() async {

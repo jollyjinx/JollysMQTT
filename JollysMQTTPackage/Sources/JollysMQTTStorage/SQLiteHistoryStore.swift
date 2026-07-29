@@ -3,7 +3,7 @@ import Foundation
 import JollysMQTTCore
 
 public actor SQLiteHistoryStore {
-  public static let currentSchemaVersion = 4
+  public static let currentSchemaVersion = 5
 
   private let databaseURL: URL
   private let databaseHandle: UInt
@@ -124,9 +124,11 @@ public actor SQLiteHistoryStore {
             qos,
             retained,
             received_at_microseconds,
-            payload
+            payload,
+            payload_original_byte_count,
+            payload_omission_reason
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         operation: "prepare message insert"
       )
@@ -253,7 +255,9 @@ public actor SQLiteHistoryStore {
           messages.qos,
           messages.retained,
           messages.received_at_microseconds,
-          messages.payload
+          messages.payload,
+          messages.payload_original_byte_count,
+          messages.payload_omission_reason
       FROM messages
       JOIN topics ON topics.id = messages.topic_id
       WHERE topics.history_source_id = ? AND topics.topic = ?
@@ -312,7 +316,14 @@ public actor SQLiteHistoryStore {
               ) ?? .atMostOnce,
             retained: sqlite3_column_int(statement, 8) != 0,
             receivedAtMicroseconds: sqlite3_column_int64(statement, 9),
-            payload: dataColumn(statement, index: 10)
+            payload: dataColumn(statement, index: 10),
+            payloadStorage: try payloadStorage(
+              storedByteCount: Int(
+                sqlite3_column_bytes(statement, 10)
+              ),
+              originalByteCount: Int(sqlite3_column_int64(statement, 11)),
+              omissionReason: optionalTextColumn(statement, index: 12)
+            )
           )
         )
       case SQLITE_DONE:
@@ -580,7 +591,9 @@ public actor SQLiteHistoryStore {
       try expectDone(sqlite3_step(statement), operation: "prune history")
       let deleted = Int(sqlite3_changes(database))
       try execute("COMMIT", operation: "commit pruning")
-      _ = try checkpoint(.truncate)
+      if deleted > 0 {
+        _ = try checkpoint(.truncate)
+      }
       return HistoryPruneResult(
         deletedCount: deleted,
         remainingCount: Int(countBefore) - deleted
@@ -588,6 +601,441 @@ public actor SQLiteHistoryStore {
     } catch {
       try? execute("ROLLBACK", operation: "rollback pruning")
       throw error
+    }
+  }
+
+  public func prepareTopicHistoryClear(
+    historySourceID: String,
+    topic: String
+  ) throws -> HistoryTopicClearScope {
+    HistoryTopicClearScope(
+      historySourceID: historySourceID,
+      topic: topic,
+      throughDurableOrder: try maximumMessageOrder(
+        historySourceID: historySourceID,
+        topic: topic
+      )
+    )
+  }
+
+  public func clearTopicHistory(
+    _ scope: HistoryTopicClearScope,
+    batchLimit: Int,
+    vacuumPageLimit: Int
+  ) throws -> HistoryClearStepResult {
+    guard batchLimit > 0, batchLimit <= Int(Int32.max),
+      vacuumPageLimit > 0, vacuumPageLimit <= Int(Int32.max)
+    else {
+      throw HistoryStorageError.invalidRetention(
+        keepingNewest: 0,
+        batchLimit: batchLimit
+      )
+    }
+    try execute("BEGIN IMMEDIATE", operation: "begin topic-history clear")
+    do {
+      let deleteMessages = try prepare(
+        """
+        DELETE FROM messages
+        WHERE id IN (
+            SELECT messages.id
+            FROM messages
+            JOIN topics ON topics.id = messages.topic_id
+            WHERE topics.history_source_id = ? AND topics.topic = ?
+              AND messages.id <= ?
+            ORDER BY messages.id ASC
+            LIMIT ?
+        )
+        """,
+        operation: "prepare topic-history clear"
+      )
+      defer { sqlite3_finalize(deleteMessages) }
+      try bind(
+        scope.historySourceID,
+        to: 1,
+        in: deleteMessages,
+        operation: "bind clear history source"
+      )
+      try bind(
+        scope.topic,
+        to: 2,
+        in: deleteMessages,
+        operation: "bind clear topic"
+      )
+      try check(
+        sqlite3_bind_int64(
+          deleteMessages,
+          3,
+          scope.throughDurableOrder
+        ),
+        operation: "bind topic-history clear cutoff"
+      )
+      try check(
+        sqlite3_bind_int64(deleteMessages, 4, Int64(batchLimit)),
+        operation: "bind topic-history clear batch"
+      )
+      try expectDone(
+        sqlite3_step(deleteMessages),
+        operation: "clear topic messages"
+      )
+      let deletedMessages = Int(sqlite3_changes(database))
+
+      let remaining = Int(
+        try countMessages(
+          historySourceID: scope.historySourceID,
+          topic: scope.topic,
+          throughDurableOrder: scope.throughDurableOrder
+        )
+      )
+      var deletedTopics = 0
+      if remaining == 0 {
+        let deleteTopic = try prepare(
+          """
+          DELETE FROM topics
+          WHERE history_source_id = ? AND topic = ?
+            AND NOT EXISTS (
+                SELECT 1 FROM messages
+                WHERE messages.topic_id = topics.id
+            )
+          """,
+          operation: "prepare cleared topic removal"
+        )
+        defer { sqlite3_finalize(deleteTopic) }
+        try bind(
+          scope.historySourceID,
+          to: 1,
+          in: deleteTopic,
+          operation: "bind cleared topic history source"
+        )
+        try bind(
+          scope.topic,
+          to: 2,
+          in: deleteTopic,
+          operation: "bind cleared topic"
+        )
+        try expectDone(
+          sqlite3_step(deleteTopic),
+          operation: "remove cleared topic"
+        )
+        deletedTopics = Int(sqlite3_changes(database))
+      }
+      try execute("COMMIT", operation: "commit topic-history clear")
+      var cleanupStatus: HistorySecureCleanupStatus = .notRequired
+      if remaining == 0 {
+        do {
+          try finalizeHistoryClear(
+            vacuumPageLimit: vacuumPageLimit
+          )
+          cleanupStatus = .completed
+        } catch {
+          cleanupStatus = .pending
+        }
+      }
+      return HistoryClearStepResult(
+        deletedMessageCount: deletedMessages,
+        deletedTopicCount: deletedTopics,
+        remainingMessageCount: remaining,
+        secureCleanupStatus: cleanupStatus
+      )
+    } catch {
+      try? execute("ROLLBACK", operation: "rollback topic-history clear")
+      throw error
+    }
+  }
+
+  private func countMessages(
+    historySourceID: String,
+    topic: String,
+    throughDurableOrder: Int64
+  ) throws -> Int64 {
+    let statement = try prepare(
+      """
+      SELECT COUNT(*)
+      FROM messages
+      JOIN topics ON topics.id = messages.topic_id
+      WHERE topics.history_source_id = ? AND topics.topic = ?
+        AND messages.id <= ?
+      """,
+      operation: "prepare topic message count"
+    )
+    defer { sqlite3_finalize(statement) }
+    try bind(
+      historySourceID,
+      to: 1,
+      in: statement,
+      operation: "bind counted history source"
+    )
+    try bind(
+      topic,
+      to: 2,
+      in: statement,
+      operation: "bind counted topic"
+    )
+    try check(
+      sqlite3_bind_int64(statement, 3, throughDurableOrder),
+      operation: "bind counted message cutoff"
+    )
+    let result = sqlite3_step(statement)
+    guard result == SQLITE_ROW else {
+      throw sqliteError(code: result, operation: "count topic messages")
+    }
+    return sqlite3_column_int64(statement, 0)
+  }
+
+  private func maximumMessageOrder(
+    historySourceID: String,
+    topic: String
+  ) throws -> Int64 {
+    let statement = try prepare(
+      """
+      SELECT COALESCE(MAX(messages.id), 0)
+      FROM messages
+      JOIN topics ON topics.id = messages.topic_id
+      WHERE topics.history_source_id = ? AND topics.topic = ?
+      """,
+      operation: "prepare topic clear cutoff"
+    )
+    defer { sqlite3_finalize(statement) }
+    try bind(
+      historySourceID,
+      to: 1,
+      in: statement,
+      operation: "bind cutoff history source"
+    )
+    try bind(
+      topic,
+      to: 2,
+      in: statement,
+      operation: "bind cutoff topic"
+    )
+    let result = sqlite3_step(statement)
+    guard result == SQLITE_ROW else {
+      throw sqliteError(code: result, operation: "read topic clear cutoff")
+    }
+    return sqlite3_column_int64(statement, 0)
+  }
+
+  public func prepareBrokerHistoryClear() throws -> HistoryBrokerClearScope {
+    HistoryBrokerClearScope(
+      throughMessageOrder: try maximumOrder(in: "messages"),
+      throughTopicOrder: try maximumOrder(in: "topics"),
+      throughCoverageGapOrder: try maximumOrder(
+        in: "history_coverage_gaps"
+      )
+    )
+  }
+
+  public func clearBrokerHistory(
+    _ scope: HistoryBrokerClearScope,
+    batchLimit: Int,
+    vacuumPageLimit: Int
+  ) throws -> HistoryBrokerClearStepResult {
+    guard batchLimit > 0, batchLimit <= Int(Int32.max),
+      vacuumPageLimit > 0, vacuumPageLimit <= Int(Int32.max)
+    else {
+      throw HistoryStorageError.invalidRetention(
+        keepingNewest: 0,
+        batchLimit: batchLimit
+      )
+    }
+    try execute("BEGIN IMMEDIATE", operation: "begin broker-history clear")
+    do {
+      let messagesBefore = Int(
+        try scalarInt64(
+          "SELECT COUNT(*) FROM messages WHERE id <= \(scope.throughMessageOrder)",
+          operation: "count broker messages before clear"
+        )
+      )
+      let topicsBefore = Int(
+        try scalarInt64(
+          """
+          SELECT COUNT(*) FROM topics
+          WHERE id <= \(scope.throughTopicOrder)
+            AND NOT EXISTS (
+                SELECT 1 FROM messages
+                WHERE messages.topic_id = topics.id
+            )
+          """,
+          operation: "count broker topics before clear"
+        )
+      )
+      let phase: HistoryBrokerClearPhase
+      let deletedMessages: Int
+      let deletedTopics: Int
+      let deletedGaps: Int
+      if messagesBefore > 0 {
+        phase = .messages
+        deletedMessages = try deleteOldestRows(
+          table: "messages",
+          throughOrder: scope.throughMessageOrder,
+          requireOrphan: false,
+          batchLimit: batchLimit,
+          operation: "clear broker messages"
+        )
+        deletedTopics = 0
+        deletedGaps = 0
+      } else if topicsBefore > 0 {
+        phase = .topics
+        deletedMessages = 0
+        deletedTopics = try deleteOldestRows(
+          table: "topics",
+          throughOrder: scope.throughTopicOrder,
+          requireOrphan: true,
+          batchLimit: batchLimit,
+          operation: "clear broker topics"
+        )
+        deletedGaps = 0
+      } else {
+        phase = .coverageGaps
+        deletedMessages = 0
+        deletedTopics = 0
+        deletedGaps = try deleteOldestRows(
+          table: "history_coverage_gaps",
+          throughOrder: scope.throughCoverageGapOrder,
+          requireOrphan: false,
+          batchLimit: batchLimit,
+          operation: "clear broker coverage"
+        )
+      }
+      // Recompute after the phase. Deleting the last message can create a new
+      // orphan topic that was not present in `topicsBefore`.
+      let messagesAfter = Int(
+        try scalarInt64(
+          "SELECT COUNT(*) FROM messages WHERE id <= \(scope.throughMessageOrder)",
+          operation: "count broker messages after clear"
+        )
+      )
+      let topicsAfter = Int(
+        try scalarInt64(
+          """
+          SELECT COUNT(*) FROM topics
+          WHERE id <= \(scope.throughTopicOrder)
+            AND NOT EXISTS (
+                SELECT 1 FROM messages
+                WHERE messages.topic_id = topics.id
+            )
+          """,
+          operation: "count broker topics after clear"
+        )
+      )
+      let gapsAfter = Int(
+        try scalarInt64(
+          "SELECT COUNT(*) FROM history_coverage_gaps WHERE id <= \(scope.throughCoverageGapOrder)",
+          operation: "count broker coverage after clear"
+        )
+      )
+      try execute("COMMIT", operation: "commit broker-history clear")
+      let hasRemaining =
+        messagesAfter > 0 || topicsAfter > 0 || gapsAfter > 0
+      var cleanupStatus: HistorySecureCleanupStatus = .notRequired
+      if !hasRemaining {
+        do {
+          try finalizeHistoryClear(
+            vacuumPageLimit: vacuumPageLimit
+          )
+          cleanupStatus = .completed
+        } catch {
+          cleanupStatus = .pending
+        }
+      }
+      return HistoryBrokerClearStepResult(
+        phase: phase,
+        deletedMessageCount: deletedMessages,
+        deletedTopicCount: deletedTopics,
+        deletedCoverageGapCount: deletedGaps,
+        remainingMessageCount: messagesAfter,
+        remainingTopicCount: topicsAfter,
+        remainingCoverageGapCount: gapsAfter,
+        secureCleanupStatus: cleanupStatus
+      )
+    } catch {
+      try? execute("ROLLBACK", operation: "rollback broker-history clear")
+      throw error
+    }
+  }
+
+  private func deleteOldestRows(
+    table: String,
+    throughOrder: Int64,
+    requireOrphan: Bool,
+    batchLimit: Int,
+    operation: String
+  ) throws -> Int {
+    precondition(
+      table == "messages"
+        || table == "topics"
+        || table == "history_coverage_gaps"
+    )
+    let orphanPredicate =
+      requireOrphan
+      ? """
+       AND NOT EXISTS (
+           SELECT 1 FROM messages
+           WHERE messages.topic_id = topics.id
+       )
+      """
+      : ""
+    let statement = try prepare(
+      """
+      DELETE FROM \(table)
+      WHERE id IN (
+          SELECT id
+          FROM \(table)
+          WHERE id <= ?
+          \(orphanPredicate)
+          ORDER BY id ASC
+          LIMIT ?
+      )
+      """,
+      operation: "prepare \(operation)"
+    )
+    defer { sqlite3_finalize(statement) }
+    try check(
+      sqlite3_bind_int64(statement, 1, throughOrder),
+      operation: "bind \(operation) cutoff"
+    )
+    try check(
+      sqlite3_bind_int64(statement, 2, Int64(batchLimit)),
+      operation: "bind \(operation) batch"
+    )
+    try expectDone(sqlite3_step(statement), operation: operation)
+    return Int(sqlite3_changes(database))
+  }
+
+  private func maximumOrder(in table: String) throws -> Int64 {
+    precondition(
+      table == "messages"
+        || table == "topics"
+        || table == "history_coverage_gaps"
+    )
+    return try scalarInt64(
+      "SELECT COALESCE(MAX(id), 0) FROM \(table)",
+      operation: "read \(table) clear cutoff"
+    )
+  }
+
+  public func finalizeHistoryClear(
+    vacuumPageLimit: Int
+  ) throws {
+    guard vacuumPageLimit > 0,
+      vacuumPageLimit <= Int(Int32.max)
+    else {
+      throw HistoryStorageError.invalidSizeRetention(
+        maximumBytes: 0,
+        batchLimit: 1,
+        vacuumPageLimit: vacuumPageLimit
+      )
+    }
+    let checkpointBeforeVacuum = try checkpoint(.truncate)
+    guard !checkpointBeforeVacuum.wasBusy else {
+      throw HistoryStorageError.secureCleanupBusy
+    }
+    try execute(
+      "PRAGMA incremental_vacuum(\(vacuumPageLimit))",
+      operation: "reclaim cleared history pages"
+    )
+    let checkpointAfterVacuum = try checkpoint(.truncate)
+    guard !checkpointAfterVacuum.wasBusy else {
+      throw HistoryStorageError.secureCleanupBusy
     }
   }
 
@@ -604,6 +1052,11 @@ public actor SQLiteHistoryStore {
         "PRAGMA journal_mode",
         operation: "read journal mode"
       ).lowercased(),
+      secureDeleteEnabled:
+        try scalarInt64(
+          "PRAGMA secure_delete",
+          operation: "read secure-delete mode"
+        ) != 0,
       messageCount: Int(
         try scalarInt64(
           "SELECT COUNT(*) FROM messages",
@@ -836,6 +1289,22 @@ public actor SQLiteHistoryStore {
   private func configureAndMigrate() throws {
     try execute("PRAGMA foreign_keys = ON", operation: "enable foreign keys")
     try execute(
+      "PRAGMA secure_delete = ON",
+      operation: "enable secure history deletion"
+    )
+    guard
+      try scalarInt64(
+        "PRAGMA secure_delete",
+        operation: "verify secure history deletion"
+      ) == 1
+    else {
+      throw HistoryStorageError.sqlite(
+        code: SQLITE_ERROR,
+        operation: "verify secure history deletion",
+        message: "SQLite did not enable secure deletion."
+      )
+    }
+    try execute(
       "PRAGMA auto_vacuum = INCREMENTAL",
       operation: "request incremental auto-vacuum"
     )
@@ -879,11 +1348,16 @@ public actor SQLiteHistoryStore {
         try migrateSchemaVersionOneToTwo()
         try migrateSchemaVersionTwoToThree()
         try migrateSchemaVersionThreeToFour()
+        try migrateSchemaVersionFourToFive()
       } else if version == 2 {
         try migrateSchemaVersionTwoToThree()
         try migrateSchemaVersionThreeToFour()
+        try migrateSchemaVersionFourToFive()
       } else if version == 3 {
         try migrateSchemaVersionThreeToFour()
+        try migrateSchemaVersionFourToFive()
+      } else if version == 4 {
+        try migrateSchemaVersionFourToFive()
       } else if version != Self.currentSchemaVersion {
         throw HistoryStorageError.sqlite(
           code: SQLITE_ERROR,
@@ -940,6 +1414,24 @@ public actor SQLiteHistoryStore {
           retained INTEGER NOT NULL CHECK (retained IN (0, 1)),
           received_at_microseconds INTEGER NOT NULL,
           payload BLOB NOT NULL,
+          payload_original_byte_count INTEGER NOT NULL
+              CHECK (payload_original_byte_count >= length(payload)),
+          payload_omission_reason TEXT
+              CHECK (
+                  payload_omission_reason IS NULL
+                  OR payload_omission_reason = 'retention-limit'
+              ),
+          CHECK (
+              (
+                  payload_omission_reason IS NULL
+                  AND payload_original_byte_count = length(payload)
+              )
+              OR (
+                  payload_omission_reason = 'retention-limit'
+                  AND length(payload) = 0
+                  AND payload_original_byte_count > 0
+              )
+          ),
           CHECK (
               (
                   direction = 'received'
@@ -1014,6 +1506,41 @@ public actor SQLiteHistoryStore {
       try? execute(
         "ROLLBACK",
         operation: "rollback schema version four migration"
+      )
+      throw error
+    }
+  }
+
+  private func migrateSchemaVersionFourToFive() throws {
+    try execute(
+      "BEGIN IMMEDIATE",
+      operation: "begin schema version five migration"
+    )
+    do {
+      try execute(
+        "ALTER TABLE messages ADD COLUMN payload_original_byte_count INTEGER",
+        operation: "add original payload byte count"
+      )
+      try execute(
+        "ALTER TABLE messages ADD COLUMN payload_omission_reason TEXT",
+        operation: "add payload omission reason"
+      )
+      try execute(
+        "UPDATE messages SET payload_original_byte_count = length(payload)",
+        operation: "backfill original payload byte count"
+      )
+      try execute(
+        "UPDATE schema_version SET version = 5 WHERE singleton = 1",
+        operation: "record schema version five"
+      )
+      try execute(
+        "COMMIT",
+        operation: "commit schema version five migration"
+      )
+    } catch {
+      try? execute(
+        "ROLLBACK",
+        operation: "rollback schema version five migration"
       )
       throw error
     }
@@ -1237,6 +1764,26 @@ public actor SQLiteHistoryStore {
       }
     }
     try check(blobResult, operation: "bind payload")
+    let originalByteCount =
+      message.payloadStorage.originalByteCount ?? message.payload.count
+    try check(
+      sqlite3_bind_int64(statement, 10, Int64(originalByteCount)),
+      operation: "bind original payload byte count"
+    )
+    switch message.payloadStorage {
+    case .stored:
+      try check(
+        sqlite3_bind_null(statement, 11),
+        operation: "bind stored payload status"
+      )
+    case .omittedByRetentionLimit:
+      try bind(
+        "retention-limit",
+        to: 11,
+        in: statement,
+        operation: "bind payload omission reason"
+      )
+    }
     try expectDone(sqlite3_step(statement), operation: "insert message")
   }
 
@@ -1264,6 +1811,19 @@ public actor SQLiteHistoryStore {
         throw HistoryStorageError.invalidMessage(
           index: index,
           reason: .payloadTooLarge(byteCount: message.payload.count)
+        )
+      }
+      let payloadStorageIsValid =
+        switch message.payloadStorage {
+        case .stored:
+          true
+        case .omittedByRetentionLimit(let originalByteCount):
+          message.payload.isEmpty && originalByteCount > 0
+        }
+      if !payloadStorageIsValid {
+        throw HistoryStorageError.invalidMessage(
+          index: index,
+          reason: .invalidPayloadStorage
         )
       }
       let hasReceivedIdentity =
@@ -1393,4 +1953,33 @@ private func dataColumn(_ statement: OpaquePointer, index: Int32) -> Data {
     return Data()
   }
   return Data(bytes: bytes, count: count)
+}
+
+private func payloadStorage(
+  storedByteCount: Int,
+  originalByteCount: Int,
+  omissionReason: String?
+) throws -> HistoryPayloadStorage {
+  guard let omissionReason else {
+    guard originalByteCount == storedByteCount else {
+      throw HistoryStorageError.sqlite(
+        code: SQLITE_CORRUPT,
+        operation: "read payload storage status",
+        message: "Stored payload byte metadata is inconsistent."
+      )
+    }
+    return .stored
+  }
+  guard omissionReason == "retention-limit", storedByteCount == 0,
+    originalByteCount > 0
+  else {
+    throw HistoryStorageError.sqlite(
+      code: SQLITE_CORRUPT,
+      operation: "read payload storage status",
+      message: "Payload omission metadata is invalid."
+    )
+  }
+  return .omittedByRetentionLimit(
+    originalByteCount: originalByteCount
+  )
 }

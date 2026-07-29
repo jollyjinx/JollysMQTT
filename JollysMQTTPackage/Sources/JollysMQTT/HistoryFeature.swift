@@ -278,7 +278,8 @@ public enum HistoryFeature {
       guard
         let baseline = state.rows.first(where: {
           $0.id == durableOrder
-        })?.message
+        })?.message,
+        baseline.hasStoredPayload
       else {
         return nil
       }
@@ -292,7 +293,8 @@ public enum HistoryFeature {
       guard
         let message = state.rows.first(where: {
           $0.id == durableOrder
-        })?.message
+        })?.message,
+        message.hasStoredPayload
       else {
         return nil
       }
@@ -370,8 +372,9 @@ public enum HistoryFeature {
           // A newer live delivery arrived while this page was loading.
         } else {
           state.defaultBaseline = page.messages.first {
-            !matchesCurrent($0, current: context.current)
-          }.map(operand)
+            $0.hasStoredPayload
+              && !matchesCurrent($0, current: context.current)
+          }.flatMap(operand)
         }
       }
       state.comparison = nil
@@ -412,9 +415,9 @@ public enum HistoryFeature {
     let baseline: PayloadComparisonOperand? =
       state.selectedBaselineID.flatMap { selected in
         state.rows.first(where: { $0.id == selected })?.message
-      }.map(operand)
+      }.flatMap(operand)
       ?? state.defaultBaseline
-      ?? fallback.map(operand)
+      ?? fallback.flatMap(operand)
     guard let baseline else { return nil }
     state.comparisonRequestID &+= 1
     return .compare(
@@ -429,8 +432,9 @@ public enum HistoryFeature {
 
   private static func operand(
     _ message: StoredHistoryMessage
-  ) -> PayloadComparisonOperand {
-    PayloadComparisonOperand(
+  ) -> PayloadComparisonOperand? {
+    guard message.hasStoredPayload else { return nil }
+    return PayloadComparisonOperand(
       id: .durable(message.durableOrder),
       direction: message.direction,
       payload: message.payload
@@ -496,6 +500,79 @@ private actor EmptyBrokerHistoryRepository: BrokerHistoryReading {
   }
 }
 
+public struct BrokerHistoryMaintenanceProvider: Sendable {
+  public static let empty = BrokerHistoryMaintenanceProvider { _ in
+    EmptyBrokerHistoryMaintenance()
+  }
+
+  private let operation: @Sendable (UUID) -> any BrokerHistoryMaintaining
+
+  public init(
+    _ operation:
+      @escaping @Sendable (UUID) -> any BrokerHistoryMaintaining
+  ) {
+    self.operation = operation
+  }
+
+  public func repository(
+    for brokerID: UUID
+  ) -> any BrokerHistoryMaintaining {
+    operation(brokerID)
+  }
+}
+
+private actor EmptyBrokerHistoryMaintenance:
+  BrokerHistoryMaintaining
+{
+  func retentionPolicy() -> HistoryRetentionPolicy { .default }
+  func maintenanceStatus() -> HistoryMaintenanceStatus { .notRun }
+  func applyRetention() -> HistoryMaintenanceReport {
+    HistoryMaintenanceReport(
+      deletedForTopicLimit: 0,
+      deletedForBrokerLimit: 0,
+      deletedOrphanTopicCount: 0,
+      finalMessageCount: 0,
+      finalSQLiteBytes: 0
+    )
+  }
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) -> HistoryClearOutcome {
+    HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 0,
+        deletedTopicCount: 0,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .completed
+      )
+    )
+  }
+  func clearBrokerHistory() -> HistoryClearOutcome {
+    HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 0,
+        deletedTopicCount: 0,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .completed
+      )
+    )
+  }
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) -> HistoryClearOutcome {
+    HistoryClearOutcome(
+      summary: HistoryClearSummary(
+        deletedMessageCount: 0,
+        deletedTopicCount: 0,
+        deletedCoverageGapCount: 0,
+        secureCleanupStatus: .completed
+      )
+    )
+  }
+  func retrySecureCleanup() {}
+}
+
 @MainActor
 @Observable
 public final class HistoryStore {
@@ -520,6 +597,12 @@ public final class HistoryStore {
   }
 
   public func updateContext(_ context: HistoryContext?) {
+    send(.contextChanged(context))
+  }
+
+  public func reload() {
+    guard let context = state.context else { return }
+    send(.contextChanged(nil))
     send(.contextChanged(context))
   }
 

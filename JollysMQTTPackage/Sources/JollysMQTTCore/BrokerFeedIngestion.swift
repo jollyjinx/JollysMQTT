@@ -446,6 +446,7 @@ public actor BrokerFeedIngestion {
   private let brokerID: UUID
   private let historySourceID: String
   private let policy: BrokerFeedIngestionPolicy
+  private let retentionPolicyProvider: @Sendable () -> HistoryRetentionPolicy
   private let clock: BrokerFeedClock
   private let stream: AsyncStream<BrokerTopicTreeSnapshot>
   private let continuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
@@ -453,6 +454,7 @@ public actor BrokerFeedIngestion {
   private var roots: [String: Node] = [:]
   private var historyWriter: (any BrokerHistoryWriting)?
   private var pendingHistory: [BrokerHistoryMessage] = []
+  private var pendingHistoryPayloadBytes = 0
   private var historyFlushTask: Task<Void, Never>?
   private var historyFlushWaiters: [CheckedContinuation<Void, Never>] = []
   private var presentationTask: Task<Void, Never>?
@@ -478,12 +480,36 @@ public actor BrokerFeedIngestion {
     historySourceID: String,
     historyWriter: any BrokerHistoryWriting,
     policy: BrokerFeedIngestionPolicy = .init(),
+    retentionPolicy: HistoryRetentionPolicy = .default,
     clock: BrokerFeedClock = .continuous
   ) {
     self.brokerID = brokerID
     self.historySourceID = historySourceID
     self.historyWriter = historyWriter
     self.policy = policy
+    self.retentionPolicyProvider = { retentionPolicy }
+    self.clock = clock
+    (stream, continuation) = AsyncStream.makeStream(
+      of: BrokerTopicTreeSnapshot.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    continuation.yield(.empty)
+  }
+
+  public init(
+    brokerID: UUID,
+    historySourceID: String,
+    historyWriter: any BrokerHistoryWriting,
+    policy: BrokerFeedIngestionPolicy = .init(),
+    retentionPolicyProvider:
+      @escaping @Sendable () -> HistoryRetentionPolicy,
+    clock: BrokerFeedClock = .continuous
+  ) {
+    self.brokerID = brokerID
+    self.historySourceID = historySourceID
+    self.historyWriter = historyWriter
+    self.policy = policy
+    self.retentionPolicyProvider = retentionPolicyProvider
     self.clock = clock
     (stream, continuation) = AsyncStream.makeStream(
       of: BrokerTopicTreeSnapshot.self,
@@ -544,14 +570,35 @@ public actor BrokerFeedIngestion {
   private func recordHistory(_ message: BrokerHistoryMessage) async {
     await waitForHistoryRecoveryIfNeeded()
     if historyIsHealthy {
+      let retentionPolicy = retentionPolicyProvider()
+      if !pendingHistory.isEmpty,
+        exceedsAppendPayloadLimit(
+          pendingHistoryPayloadBytes,
+          adding: message.payload.count,
+          policy: retentionPolicy
+        )
+      {
+        historyFlushTask?.cancel()
+        historyFlushTask = nil
+        await forceFlushHistory()
+        guard historyIsHealthy, !isShutdownRequested else {
+          addMissingHistoryMessage(message)
+          schedulePresentation()
+          return
+        }
+      }
       pendingHistory.append(message)
+      pendingHistoryPayloadBytes += message.payload.count
     } else {
       addMissingHistoryMessage(message)
     }
     schedulePresentation()
     if !historyIsHealthy {
       return
-    } else if pendingHistory.count >= policy.historyBatchSize {
+    } else if pendingHistory.count >= effectiveHistoryBatchSize
+      || pendingHistoryPayloadBytes
+        >= retentionPolicyProvider().maximumAppendPayloadBytes
+    {
       historyFlushTask?.cancel()
       historyFlushTask = nil
       await flushFullHistoryBatch()
@@ -594,6 +641,7 @@ public actor BrokerFeedIngestion {
     }
     self.historyWriter = nil
     pendingHistory.removeAll(keepingCapacity: false)
+    pendingHistoryPayloadBytes = 0
     clearTopicTree()
     continuation.finish()
     releaseHistoryFlush()
@@ -848,11 +896,32 @@ public actor BrokerFeedIngestion {
     var forceNextBatch = force
     while historyIsHealthy,
       !pendingHistory.isEmpty,
-      forceNextBatch || pendingHistory.count >= policy.historyBatchSize
+      forceNextBatch || pendingHistory.count >= effectiveHistoryBatchSize
+        || pendingHistoryPayloadBytes
+          >= retentionPolicyProvider().maximumAppendPayloadBytes
     {
-      let count = min(policy.historyBatchSize, pendingHistory.count)
+      let retentionPolicy = retentionPolicyProvider()
+      var count = 0
+      var batchPayloadBytes = 0
+      while count < pendingHistory.count
+        && count < effectiveHistoryBatchSize
+      {
+        let candidateBytes = pendingHistory[count].payload.count
+        if count > 0,
+          exceedsAppendPayloadLimit(
+            batchPayloadBytes,
+            adding: candidateBytes,
+            policy: retentionPolicy
+          )
+        {
+          break
+        }
+        batchPayloadBytes += candidateBytes
+        count += 1
+      }
       let batch = Array(pendingHistory.prefix(count))
       pendingHistory.removeFirst(count)
+      pendingHistoryPayloadBytes -= batchPayloadBytes
       do {
         try await historyWriter?.append(batch)
       } catch {
@@ -873,6 +942,7 @@ public actor BrokerFeedIngestion {
           )
         }
         pendingHistory.removeAll(keepingCapacity: false)
+        pendingHistoryPayloadBytes = 0
       }
       forceNextBatch = force
     }
@@ -880,6 +950,24 @@ public actor BrokerFeedIngestion {
     if historyIsHealthy, !pendingHistory.isEmpty {
       scheduleHistoryFlush()
     }
+  }
+
+  private var effectiveHistoryBatchSize: Int {
+    min(
+      policy.historyBatchSize,
+      HistoryRetentionPolicy.maximumAppendMessageCount
+    )
+  }
+
+  private func exceedsAppendPayloadLimit(
+    _ byteCount: Int,
+    adding additionalByteCount: Int,
+    policy: HistoryRetentionPolicy
+  ) -> Bool {
+    let limit = policy.maximumAppendPayloadBytes
+    let existing = Int64(byteCount)
+    let additional = Int64(additionalByteCount)
+    return existing > limit || additional > limit - existing
   }
 
   private func releaseHistoryFlush() {

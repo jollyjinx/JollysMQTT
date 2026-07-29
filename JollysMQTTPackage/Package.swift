@@ -87,7 +87,7 @@ let package = Package(
     ),
     .testTarget(
       name: "JollysMQTTStorageTests",
-      dependencies: ["JollysMQTTStorage"],
+      dependencies: ["JollysMQTTStorage", "CSQLite"],
       swiftSettings: strictSwiftSettings
     ),
     .testTarget(

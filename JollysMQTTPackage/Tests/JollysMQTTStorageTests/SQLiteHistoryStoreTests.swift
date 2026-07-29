@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import JollysMQTTCore
 import JollysMQTTStorage
@@ -710,6 +711,367 @@ struct SQLiteHistoryStoreTests {
     )
     #expect(empty.map(\.payload) == [Data()])
     #expect(try await store.diagnostics().messageCount == 1)
+  }
+
+  @Test("Clearing one exact topic preserves every other row and source-wide coverage")
+  func clearExactTopicHistory() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "site/clear",
+        receivedAtMicroseconds: 1,
+        payload: Data([1])
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "site/keep",
+        receivedAtMicroseconds: 2,
+        payload: Data([2])
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-b",
+        topic: "site/clear",
+        receivedAtMicroseconds: 3,
+        payload: Data([3])
+      ),
+    ])
+    _ = try await store.recordCoverageGap(
+      HistoryCoverageGapInput(
+        historySourceID: "source-a",
+        connectionEpoch: nil,
+        startedAtMicroseconds: 0,
+        endedAtMicroseconds: 4,
+        minimumMissingMessageCount: 1,
+        reason: .storageFailure,
+        isOpenEnded: false
+      )
+    )
+
+    let scope = try await store.prepareTopicHistoryClear(
+      historySourceID: "source-a",
+      topic: "site/clear"
+    )
+    let result = try await store.clearTopicHistory(
+      scope,
+      batchLimit: 5_000,
+      vacuumPageLimit: 8_192
+    )
+
+    #expect(
+      result
+        == HistoryClearStepResult(
+          deletedMessageCount: 1,
+          deletedTopicCount: 1,
+          remainingMessageCount: 0,
+          secureCleanupStatus: .completed
+        )
+    )
+    #expect(
+      try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "site/clear",
+        limit: 10
+      ).isEmpty
+    )
+    #expect(
+      try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "site/keep",
+        limit: 10
+      ).map(\.payload) == [Data([2])]
+    )
+    #expect(
+      try await store.newestMessages(
+        historySourceID: "source-b",
+        topic: "site/clear",
+        limit: 10
+      ).map(\.payload) == [Data([3])]
+    )
+    #expect(
+      try await store.coverageGaps(historySourceID: "source-a").count == 1
+    )
+    #expect(try await store.integrityCheck() == "ok")
+    let diagnostics = try await store.diagnostics()
+    #expect(diagnostics.secureDeleteEnabled)
+    #expect(diagnostics.writeAheadLogBytes == 0)
+  }
+
+  @Test("Clearing broker history removes messages, topics, and coverage in bounded phases")
+  func clearBrokerHistory() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    _ = try await store.append(
+      (1...3).map {
+        HistoryMessageInput(
+          historySourceID: "source-a",
+          topic: "topic/\($0)",
+          receivedAtMicroseconds: Int64($0),
+          payload: Data([$0])
+        )
+      }
+    )
+    for timestamp in 1...2 {
+      _ = try await store.recordCoverageGap(
+        HistoryCoverageGapInput(
+          historySourceID: "source-a",
+          connectionEpoch: nil,
+          startedAtMicroseconds: Int64(timestamp),
+          endedAtMicroseconds: Int64(timestamp),
+          minimumMissingMessageCount: 1,
+          reason: .storageFailure,
+          isOpenEnded: false
+        )
+      )
+    }
+
+    let scope = try await store.prepareBrokerHistoryClear()
+    var steps: [HistoryBrokerClearStepResult] = []
+    repeat {
+      steps.append(
+        try await store.clearBrokerHistory(
+          scope,
+          batchLimit: 2,
+          vacuumPageLimit: 8_192
+        )
+      )
+    } while try #require(steps.last).requiresMoreWork
+
+    #expect(steps.map(\.phase) == [.messages, .messages, .topics, .topics, .coverageGaps])
+    #expect(steps.reduce(0) { $0 + $1.deletedMessageCount } == 3)
+    #expect(steps.reduce(0) { $0 + $1.deletedTopicCount } == 3)
+    #expect(steps.reduce(0) { $0 + $1.deletedCoverageGapCount } == 2)
+    let diagnostics = try await store.diagnostics()
+    #expect(diagnostics.messageCount == 0)
+    #expect(diagnostics.topicCount == 0)
+    #expect(try await store.coverageGaps(historySourceID: "source-a").isEmpty)
+    #expect(try await store.integrityCheck() == "ok")
+    #expect(diagnostics.secureDeleteEnabled)
+    #expect(diagnostics.writeAheadLogBytes == 0)
+  }
+
+  @Test("A broker clear preserves history appended after its confirmation cutoff")
+  func brokerClearPreservesConcurrentAppend() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: directory.appending(path: "history.sqlite")
+    )
+    _ = try await store.append(
+      (1...4).map {
+        HistoryMessageInput(
+          historySourceID: "source-a",
+          topic: "existing",
+          receivedAtMicroseconds: Int64($0),
+          payload: Data([$0])
+        )
+      }
+    )
+    let scope = try await store.prepareBrokerHistoryClear()
+    _ = try await store.clearBrokerHistory(
+      scope,
+      batchLimit: 1,
+      vacuumPageLimit: 8_192
+    )
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "existing",
+        receivedAtMicroseconds: 5,
+        payload: Data([5])
+      ),
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "new",
+        receivedAtMicroseconds: 6,
+        payload: Data([6])
+      ),
+    ])
+
+    var stepCount = 1
+    while try await store.clearBrokerHistory(
+      scope,
+      batchLimit: 1,
+      vacuumPageLimit: 8_192
+    ).requiresMoreWork {
+      stepCount += 1
+      #expect(stepCount <= 10)
+    }
+
+    #expect(
+      try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "existing",
+        limit: 10
+      ).map(\.payload) == [Data([5])]
+    )
+    #expect(
+      try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "new",
+        limit: 10
+      ).map(\.payload) == [Data([6])]
+    )
+    #expect(try await store.integrityCheck() == "ok")
+  }
+
+  @Test("A busy WAL checkpoint leaves secure cleanup explicitly pending")
+  func busyCheckpointLeavesCleanupPending() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appending(path: "history.sqlite")
+    let store = try await SQLiteHistoryStore.open(
+      databaseURL: databaseURL
+    )
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "events",
+        receivedAtMicroseconds: 1,
+        payload: Data([1])
+      )
+    ])
+
+    var reader: OpaquePointer?
+    #expect(
+      sqlite3_open_v2(
+        databaseURL.path,
+        &reader,
+        SQLITE_OPEN_READONLY,
+        nil
+      ) == SQLITE_OK
+    )
+    let openedReader = try #require(reader)
+    defer { sqlite3_close(openedReader) }
+    #expect(
+      sqlite3_exec(
+        openedReader,
+        "BEGIN; SELECT COUNT(*) FROM messages;",
+        nil,
+        nil,
+        nil
+      ) == SQLITE_OK
+    )
+
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "events",
+        receivedAtMicroseconds: 2,
+        payload: Data([2])
+      )
+    ])
+    let scope = try await store.prepareBrokerHistoryClear()
+    var finalStep: HistoryBrokerClearStepResult?
+    repeat {
+      finalStep = try await store.clearBrokerHistory(
+        scope,
+        batchLimit: 100,
+        vacuumPageLimit: 100
+      )
+    } while try #require(finalStep).requiresMoreWork
+
+    #expect(finalStep?.secureCleanupStatus == .pending)
+    #expect(
+      sqlite3_exec(openedReader, "COMMIT", nil, nil, nil) == SQLITE_OK
+    )
+    try await store.finalizeHistoryClear(vacuumPageLimit: 100)
+    #expect(try await store.integrityCheck() == "ok")
+  }
+
+  @Test("Inconsistent payload metadata is reported as SQLite corruption")
+  func corruptPayloadMetadataFailsRead() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(
+        path: "JollysMQTTStorageTests-\(UUID().uuidString)",
+        directoryHint: .isDirectory
+      )
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appending(path: "history.sqlite")
+    let store = try await SQLiteHistoryStore.open(databaseURL: databaseURL)
+    _ = try await store.append([
+      HistoryMessageInput(
+        historySourceID: "source-a",
+        topic: "events",
+        receivedAtMicroseconds: 1,
+        payload: Data([1])
+      )
+    ])
+
+    var connection: OpaquePointer?
+    #expect(sqlite3_open(databaseURL.path, &connection) == SQLITE_OK)
+    let opened = try #require(connection)
+    defer { sqlite3_close(opened) }
+    #expect(
+      sqlite3_exec(
+        opened,
+        """
+        PRAGMA ignore_check_constraints=ON;
+        UPDATE messages SET payload_original_byte_count=99;
+        """,
+        nil,
+        nil,
+        nil
+      ) == SQLITE_OK
+    )
+
+    do {
+      _ = try await store.newestMessages(
+        historySourceID: "source-a",
+        topic: "events",
+        limit: 10
+      )
+      Issue.record("Expected inconsistent payload metadata to fail")
+    } catch let error as HistoryStorageError {
+      guard case .sqlite(let code, _, _) = error else {
+        Issue.record("Expected a SQLite corruption error")
+        return
+      }
+      #expect(code == SQLITE_CORRUPT)
+    }
   }
 }
 

@@ -12,6 +12,7 @@ public struct HistoryMessageInput: Sendable, Equatable {
   public let retained: Bool
   public let receivedAtMicroseconds: Int64
   public let payload: Data
+  public let payloadStorage: HistoryPayloadStorage
 
   public init(
     historySourceID: String,
@@ -23,7 +24,8 @@ public struct HistoryMessageInput: Sendable, Equatable {
     qos: MQTTQualityOfService = .atMostOnce,
     retained: Bool = false,
     receivedAtMicroseconds: Int64,
-    payload: Data
+    payload: Data,
+    payloadStorage: HistoryPayloadStorage = .stored
   ) {
     self.historySourceID = historySourceID
     self.connectionEpoch = connectionEpoch
@@ -35,6 +37,19 @@ public struct HistoryMessageInput: Sendable, Equatable {
     self.retained = retained
     self.receivedAtMicroseconds = receivedAtMicroseconds
     self.payload = payload
+    self.payloadStorage = payloadStorage
+  }
+}
+
+public enum HistoryPayloadStorage: Sendable, Equatable {
+  case stored
+  case omittedByRetentionLimit(originalByteCount: Int)
+
+  public var originalByteCount: Int? {
+    guard case .omittedByRetentionLimit(let byteCount) = self else {
+      return nil
+    }
+    return byteCount
   }
 }
 
@@ -50,6 +65,7 @@ public struct StoredHistoryMessage: Sendable, Equatable {
   public let retained: Bool
   public let receivedAtMicroseconds: Int64
   public let payload: Data
+  public let payloadStorage: HistoryPayloadStorage
 
   public init(
     durableOrder: Int64,
@@ -62,7 +78,8 @@ public struct StoredHistoryMessage: Sendable, Equatable {
     qos: MQTTQualityOfService,
     retained: Bool,
     receivedAtMicroseconds: Int64,
-    payload: Data
+    payload: Data,
+    payloadStorage: HistoryPayloadStorage = .stored
   ) {
     self.durableOrder = durableOrder
     self.historySourceID = historySourceID
@@ -75,6 +92,15 @@ public struct StoredHistoryMessage: Sendable, Equatable {
     self.retained = retained
     self.receivedAtMicroseconds = receivedAtMicroseconds
     self.payload = payload
+    self.payloadStorage = payloadStorage
+  }
+
+  public var originalPayloadByteCount: Int {
+    payloadStorage.originalByteCount ?? payload.count
+  }
+
+  public var hasStoredPayload: Bool {
+    payloadStorage == .stored
   }
 }
 
@@ -118,6 +144,21 @@ public struct HistoryPage: Sendable, Equatable {
 
 public protocol BrokerHistoryReading: Sendable {
   func page(_ request: HistoryPageRequest) async throws -> HistoryPage
+}
+
+public protocol BrokerHistoryMaintaining: Sendable {
+  func retentionPolicy() async -> HistoryRetentionPolicy
+  func maintenanceStatus() async -> HistoryMaintenanceStatus
+  func applyRetention() async throws -> HistoryMaintenanceReport
+  func clearTopicHistory(
+    historySourceID: String,
+    topic: String
+  ) async throws -> HistoryClearOutcome
+  func clearBrokerHistory() async throws -> HistoryClearOutcome
+  func resumeHistoryClear(
+    _ continuation: HistoryClearContinuation
+  ) async throws -> HistoryClearOutcome
+  func retrySecureCleanup() async throws
 }
 
 public struct HistoryCoverageGapInput: Sendable, Equatable {
@@ -179,6 +220,110 @@ public struct HistoryPruneResult: Sendable, Equatable {
   }
 }
 
+public struct HistoryClearStepResult: Sendable, Equatable {
+  public let deletedMessageCount: Int
+  public let deletedTopicCount: Int
+  public let remainingMessageCount: Int
+  public let secureCleanupStatus: HistorySecureCleanupStatus
+
+  public init(
+    deletedMessageCount: Int,
+    deletedTopicCount: Int,
+    remainingMessageCount: Int,
+    secureCleanupStatus: HistorySecureCleanupStatus = .notRequired
+  ) {
+    self.deletedMessageCount = deletedMessageCount
+    self.deletedTopicCount = deletedTopicCount
+    self.remainingMessageCount = remainingMessageCount
+    self.secureCleanupStatus = secureCleanupStatus
+  }
+
+  public var requiresMoreWork: Bool {
+    remainingMessageCount > 0
+  }
+}
+
+public enum HistorySecureCleanupStatus: Sendable, Equatable {
+  case notRequired
+  case completed
+  case pending
+}
+
+public struct HistoryTopicClearScope: Sendable, Equatable {
+  public let historySourceID: String
+  public let topic: String
+  public let throughDurableOrder: Int64
+
+  public init(
+    historySourceID: String,
+    topic: String,
+    throughDurableOrder: Int64
+  ) {
+    self.historySourceID = historySourceID
+    self.topic = topic
+    self.throughDurableOrder = throughDurableOrder
+  }
+}
+
+public struct HistoryBrokerClearScope: Sendable, Equatable {
+  public let throughMessageOrder: Int64
+  public let throughTopicOrder: Int64
+  public let throughCoverageGapOrder: Int64
+
+  public init(
+    throughMessageOrder: Int64,
+    throughTopicOrder: Int64,
+    throughCoverageGapOrder: Int64
+  ) {
+    self.throughMessageOrder = throughMessageOrder
+    self.throughTopicOrder = throughTopicOrder
+    self.throughCoverageGapOrder = throughCoverageGapOrder
+  }
+}
+
+public enum HistoryBrokerClearPhase: Sendable, Equatable {
+  case messages
+  case topics
+  case coverageGaps
+}
+
+public struct HistoryBrokerClearStepResult: Sendable, Equatable {
+  public let phase: HistoryBrokerClearPhase
+  public let deletedMessageCount: Int
+  public let deletedTopicCount: Int
+  public let deletedCoverageGapCount: Int
+  public let remainingMessageCount: Int
+  public let remainingTopicCount: Int
+  public let remainingCoverageGapCount: Int
+  public let secureCleanupStatus: HistorySecureCleanupStatus
+
+  public init(
+    phase: HistoryBrokerClearPhase,
+    deletedMessageCount: Int,
+    deletedTopicCount: Int,
+    deletedCoverageGapCount: Int,
+    remainingMessageCount: Int,
+    remainingTopicCount: Int,
+    remainingCoverageGapCount: Int,
+    secureCleanupStatus: HistorySecureCleanupStatus = .notRequired
+  ) {
+    self.phase = phase
+    self.deletedMessageCount = deletedMessageCount
+    self.deletedTopicCount = deletedTopicCount
+    self.deletedCoverageGapCount = deletedCoverageGapCount
+    self.remainingMessageCount = remainingMessageCount
+    self.remainingTopicCount = remainingTopicCount
+    self.remainingCoverageGapCount = remainingCoverageGapCount
+    self.secureCleanupStatus = secureCleanupStatus
+  }
+
+  public var requiresMoreWork: Bool {
+    remainingMessageCount > 0
+      || remainingTopicCount > 0
+      || remainingCoverageGapCount > 0
+  }
+}
+
 public enum HistoryCheckpointMode: Sendable {
   case passive
   case truncate
@@ -228,6 +373,7 @@ public struct HistoryFileSizes: Sendable, Equatable {
 public struct HistoryStoreDiagnostics: Sendable, Equatable {
   public let schemaVersion: Int
   public let journalMode: String
+  public let secureDeleteEnabled: Bool
   public let messageCount: Int
   public let topicCount: Int
   public let orphanTopicCount: Int
@@ -265,12 +411,105 @@ public struct HistorySizePruneResult: Sendable, Equatable {
   }
 }
 
+public struct HistoryMaintenanceReport: Sendable, Equatable {
+  public let deletedForTopicLimit: Int
+  public let deletedForBrokerLimit: Int
+  public let deletedOrphanTopicCount: Int
+  public let finalMessageCount: Int
+  public let finalSQLiteBytes: Int64
+
+  public init(
+    deletedForTopicLimit: Int,
+    deletedForBrokerLimit: Int,
+    deletedOrphanTopicCount: Int,
+    finalMessageCount: Int,
+    finalSQLiteBytes: Int64
+  ) {
+    self.deletedForTopicLimit = deletedForTopicLimit
+    self.deletedForBrokerLimit = deletedForBrokerLimit
+    self.deletedOrphanTopicCount = deletedOrphanTopicCount
+    self.finalMessageCount = finalMessageCount
+    self.finalSQLiteBytes = finalSQLiteBytes
+  }
+}
+
+public enum HistoryMaintenanceStatus: Sendable, Equatable {
+  case notRun
+  case succeeded(HistoryMaintenanceReport)
+  case failed
+  case cancelled
+}
+
+public struct HistoryClearSummary: Sendable, Equatable {
+  public let deletedMessageCount: Int
+  public let deletedTopicCount: Int
+  public let deletedCoverageGapCount: Int
+  public let secureCleanupStatus: HistorySecureCleanupStatus
+
+  public init(
+    deletedMessageCount: Int,
+    deletedTopicCount: Int,
+    deletedCoverageGapCount: Int,
+    secureCleanupStatus: HistorySecureCleanupStatus
+  ) {
+    self.deletedMessageCount = deletedMessageCount
+    self.deletedTopicCount = deletedTopicCount
+    self.deletedCoverageGapCount = deletedCoverageGapCount
+    self.secureCleanupStatus = secureCleanupStatus
+  }
+}
+
+public enum HistoryClearContinuation: Sendable, Equatable {
+  case topic(
+    scope: HistoryTopicClearScope,
+    accumulated: HistoryClearSummary
+  )
+  case broker(
+    scope: HistoryBrokerClearScope,
+    accumulated: HistoryClearSummary
+  )
+}
+
+public enum HistoryClearInterruption: Sendable, Equatable {
+  case cancelled
+  case storageFailure
+}
+
+/// The durable result of a bounded clear operation.
+///
+/// An interrupted result always carries the original cutoff. Resuming that
+/// continuation can only delete rows that existed when the user confirmed.
+public struct HistoryClearOutcome: Sendable, Equatable {
+  public let summary: HistoryClearSummary
+  public let continuation: HistoryClearContinuation?
+  public let interruption: HistoryClearInterruption?
+
+  public init(
+    summary: HistoryClearSummary,
+    continuation: HistoryClearContinuation? = nil,
+    interruption: HistoryClearInterruption? = nil
+  ) {
+    precondition(
+      (continuation == nil && interruption == nil)
+        || (continuation != nil && interruption != nil)
+    )
+    self.summary = summary
+    self.continuation = continuation
+    self.interruption = interruption
+  }
+
+  public var isComplete: Bool {
+    continuation == nil
+  }
+}
+
 public enum InvalidHistoryMessageReason: Sendable, Equatable {
   case emptyHistorySourceID
   case emptyTopic
   case containsNullCharacter
   case payloadTooLarge(byteCount: Int)
   case invalidIdentity
+  case invalidPayloadStorage
 }
 
 public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvertible {
@@ -284,6 +523,14 @@ public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvert
   )
   case invalidMessage(index: Int, reason: InvalidHistoryMessageReason)
   case invalidCoverageGap
+  case invalidAppendBatch(
+    messageCount: Int,
+    payloadBytes: Int64,
+    maximumMessageCount: Int,
+    maximumPayloadBytes: Int64
+  )
+  case maintenanceDidNotConverge(stepLimit: Int)
+  case secureCleanupBusy
   case sqlite(code: Int32, operation: String, message: String)
 
   public var description: String {
@@ -304,6 +551,17 @@ public enum HistoryStorageError: Error, Sendable, Equatable, CustomStringConvert
       "History message at index \(index) is invalid: \(reason)."
     case .invalidCoverageGap:
       "The history coverage gap is invalid."
+    case .invalidAppendBatch(
+      let messageCount,
+      let payloadBytes,
+      let maximumMessageCount,
+      let maximumPayloadBytes
+    ):
+      "History append batch has \(messageCount) messages and \(payloadBytes) payload bytes; limits are \(maximumMessageCount) and \(maximumPayloadBytes)."
+    case .maintenanceDidNotConverge(let stepLimit):
+      "History maintenance did not converge within \(stepLimit) bounded steps."
+    case .secureCleanupBusy:
+      "History secure cleanup is pending because the WAL checkpoint is busy."
     case .sqlite(let code, let operation, let message):
       "SQLite \(operation) failed with code \(code): \(message)"
     }
