@@ -4,7 +4,7 @@ description: "Detailed product, architecture, persistence, testing, and staged d
 area: "architecture"
 doc_type: "implementation-plan"
 status: "reviewed"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-05"
 tags:
   - "swift"
   - "swiftui"
@@ -44,8 +44,8 @@ Reference behavior:
 
 - MQTT Explorer feature overview:
   <https://mqtt-explorer.com/>
-- mqtt-nio:
-  <https://github.com/swift-server-community/mqtt-nio>
+- mqtt-nio fork:
+  <https://github.com/jollyjinx/mqtt-nio>
 - Existing local mqtt-nio v3 migration and MQTT Explorer screenshot:
   `~/GitHub/modbus2mqtt`
 - Checked-in MQTT Explorer behavioral reference at revision
@@ -72,10 +72,11 @@ Reference behavior:
 - The package and app compile in Swift 6 mode with complete concurrency checks.
 - "mqttnio version 3" means the mqtt-nio package's v3 API, not merely MQTT
   protocol 3.1.1.
-- The local `modbus2mqtt` checkout has resolved mqtt-nio
-  `3.0.0-alpha.2` at revision
-  `c980b0f86a3d211f04391a0f5ea627b0960751d3`. Pin that tag exactly until a
-  newer version passes JollysMQTT's compatibility suite.
+- JollysMQTT uses the `jollyjinx/mqtt-nio` fork at revision
+  `e670a69ee3122bd11ef04f668757ffc01c263468`. It is upstream
+  `3.0.0-alpha.2` plus a fix preventing MQTT task timeout double completion.
+  Pin that immutable revision until the fix is available in a newer upstream
+  release that passes JollysMQTT's compatibility suite.
 - MQTT 3.1.1 is the initial protocol default. The domain model leaves room for
   MQTT 5 because mqtt-nio supports both.
 - iPhone uses one active app scene. Multiwindow is a first-class requirement on
@@ -310,8 +311,8 @@ This is the only target that depends on:
 
 ```swift
 .package(
-    url: "https://github.com/swift-server-community/mqtt-nio.git",
-    exact: "3.0.0-alpha.2"
+    url: "https://github.com/jollyjinx/mqtt-nio.git",
+    revision: "e670a69ee3122bd11ef04f668757ffc01c263468"
 )
 ```
 
@@ -1234,7 +1235,7 @@ Every milestone must:
 
 - Create thin multiplatform Xcode app and local package.
 - Establish Swift 6.2.3 settings and deployment targets.
-- Add exact mqtt-nio `3.0.0-alpha.2` pin only to transport target.
+- Add the exact `jollyjinx/mqtt-nio` revision pin only to the transport target.
 - Add package/app build schemes and test plan.
 - Prove connect, subscribe, publish, cancellation, and TLS on macOS and iOS.
 - Prove the bounded-ingress adapter under a producer faster than its consumer;

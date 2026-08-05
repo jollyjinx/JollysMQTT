@@ -4,7 +4,7 @@ description: "Repository map, architectural boundaries, validation commands, and
 area: "repo"
 doc_type: "agent-guidance"
 status: "active"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-05"
 tags:
   - "documentation"
   - "agents"
@@ -104,11 +104,14 @@ declared by an application bundle.
 
 ## mqtt-nio dependency rule
 
-The requested mqtt-nio major version 3 is prerelease as of 2026-07-28.
-`modbus2mqtt` has already resolved and begun migrating to
-`3.0.0-alpha.2` (revision `c980b0f86a3d211f04391a0f5ea627b0960751d3`).
-Pin `3.0.0-alpha.2` exactly during the initial implementation; do not depend on
-`main` or use `from:` with a prerelease. Changes to the pin require:
+The requested mqtt-nio major version 3 is prerelease. Use the
+[`jollyjinx/mqtt-nio`](https://github.com/jollyjinx/mqtt-nio) fork pinned to
+revision `e670a69ee3122bd11ef04f668757ffc01c263468`. That revision is one commit
+on top of upstream `3.0.0-alpha.2` and prevents MQTT task timeout double
+completion. Do not depend on `main`; keep the immutable revision pin until the
+fix is available in a verified upstream release. See
+`AI/MQTT_NIO_FORK.md` for the exact delta and adoption notes. Changes to the
+pin require:
 
 1. reading the upstream release notes,
 2. building all package targets,

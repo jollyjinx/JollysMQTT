@@ -144,7 +144,7 @@ private func runProbe() async throws {
             buildConfiguration: buildConfiguration,
             mqttNIOVersion: "3.0.0-alpha.2",
             mqttNIORevision:
-                "c980b0f86a3d211f04391a0f5ea627b0960751d3",
+                "e670a69ee3122bd11ef04f668757ffc01c263468",
             attemptedMessages: arguments.messageCount,
             publisherSentMessages: sentMessages,
             publisherElapsedMilliseconds: publisherElapsed.milliseconds,
