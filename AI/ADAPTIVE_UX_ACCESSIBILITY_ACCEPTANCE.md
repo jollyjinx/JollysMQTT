@@ -20,6 +20,15 @@ that still require physical Apple devices.
 
 ## Automated release gates
 
+- On 2026-08-08, `swift build` and the full parallel package test suite passed.
+  The focused adaptive workspace suite passed all eight tests.
+- The localization audit compares the compiler's extracted strings with the
+  package String Catalog exactly. It passed with 452 extracted keys and 452
+  catalog keys, source language `en`, no stale extraction states, and only
+  translated or new localization states. `xcstringstool` also accepted the
+  catalog in a dry-run compile.
+- Debug macOS and unsigned generic iOS builds passed against the same package
+  UI and String Catalog.
 - Package tests cover the compact and regular presentation policy, restoration
   of all four workspace destinations, completeness of the seven operational
   help concepts, the String Catalog source language and required keys, and
@@ -28,9 +37,12 @@ that still require physical Apple devices.
   records to Topics when the new field is absent.
 - UI tests launch a deterministic anonymous broker fixture. They do not use the
   network, Keychain, CloudKit, a real broker, or real credentials.
-- The compact UI test forces the tab presentation at the largest accessibility
-  text category and verifies that Topics, Details, Publish, and Charts remain
-  independently reachable.
+- Compact UI coverage forces the tab presentation at accessibility text sizes
+  and verifies that Topics, Details, Publish, and Charts remain independently
+  reachable. A focused macOS UI run at
+  `UICTContentSizeCategoryAccessibilityXXXL` passed and verified that the
+  publish topic, payload editor, Publish button, and Help button remain
+  reachable.
 - The regular UI tests force the split presentation and verify that Charts
   keeps the topic outline, selected-topic information, and resizable dashboard
   visible together while users traverse topics and pin another payload. They
@@ -45,7 +57,17 @@ that still require physical Apple devices.
   selected broker directly into a persistent detail-pane editor, compact width
   retains its dedicated editor, and selection or connection cannot silently
   discard an unsaved draft.
-- macOS and generic iOS builds compile the same package UI and String Catalog.
+- A focused iPad Pro 13-inch simulator UI run passed in 10.814 seconds with no
+  failures. It verified unique topic disclosure labels and identifiers,
+  expand/collapse state, the selected topic trait, and the spoken current value
+  `21.5` in the accessibility hierarchy.
+
+The complete macOS UI bundle was attempted with Xcode 27. Its first two broker
+tests passed, after which repeated relaunches produced an empty system window
+instead of the app content. That runner failure is not counted as acceptance
+evidence. The focused largest-text macOS test and focused iPad semantic-tree
+test above both completed successfully. Physical-device checks remain separate
+below.
 
 ## Keyboard, editing, and alternate input
 
@@ -66,8 +88,13 @@ that still require physical Apple devices.
 - Interactive controls use `Button`, `Toggle`, `Picker`, `TextField`, or
   `TextEditor`; icon-only controls have localized labels.
 - Topic rows expose a stable label, value, selected state, and labeled
-  expand/collapse action. Structural JSON rows expose their deterministic JSON
-  path and value.
+  expand/collapse action. Topic action labels include the exact topic for Voice
+  Control disambiguation, and row identifiers remain distinct from disclosure
+  identifiers. Structural JSON rows expose their deterministic JSON path and
+  value.
+- Chart controls include the exact chart topic in their accessibility labels,
+  keeping Settings, Pause/Resume, Clear, Move, and Remove actions unique even
+  when several cards are visible.
 - Custom topic disclosure controls and structural JSON rows provide at least a
   44-point interaction height.
 - Statuses pair text and symbols with color, so errors, warnings, connection
@@ -95,6 +122,10 @@ one manual pass on iPhone, iPad, and Mac with:
    Contrast, Differentiate Without Color, Bold Text, Reduce Transparency, and
    Reduce Motion.
 5. Portrait and landscape at the largest accessibility text categories.
+
+No physical-device VoiceOver, Voice Control, Switch Control, Full Keyboard
+Access, contrast, or reading-order result is claimed by the automated evidence
+above.
 
 CloudKit two-device verification is explicitly deferred because the required
 provisioned devices are not currently available. This ticket makes no

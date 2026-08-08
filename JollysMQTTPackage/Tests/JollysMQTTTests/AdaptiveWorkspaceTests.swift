@@ -136,6 +136,7 @@ struct AdaptiveWorkspaceTests {
         as? [String: Any]
     )
     #expect(object["sourceLanguage"] as? String == "en")
+    #expect(object["version"] as? String == "1.0")
     let strings = try #require(object["strings"] as? [String: Any])
     let releaseBlockingKeys = [
       "Topics",
@@ -159,6 +160,33 @@ struct AdaptiveWorkspaceTests {
     for key in releaseBlockingKeys {
       #expect(strings[key] != nil, "Missing release string: \(key)")
     }
+
+    var localizedLanguages: Set<String> = []
+    for (key, rawEntry) in strings {
+      let entry = try #require(rawEntry as? [String: Any])
+      #expect(
+        entry["extractionState"] as? String != "stale",
+        "Stale catalog string: \(key)"
+      )
+      guard let localizations = entry["localizations"] as? [String: Any]
+      else { continue }
+      localizedLanguages.formUnion(localizations.keys)
+      for (language, rawLocalization) in localizations {
+        let localization = try #require(
+          rawLocalization as? [String: Any]
+        )
+        let stringUnit = try #require(
+          localization["stringUnit"] as? [String: Any]
+        )
+        let state = try #require(stringUnit["state"] as? String)
+        #expect(
+          state == "new" || state == "translated",
+          "Incomplete \(language) catalog string: \(key)"
+        )
+        #expect(stringUnit["value"] is String)
+      }
+    }
+    #expect(localizedLanguages.isSubset(of: ["en"]))
   }
 
   @Test("Package navigation never uses app-bundle shorthand labels")

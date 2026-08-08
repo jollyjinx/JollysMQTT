@@ -2764,14 +2764,16 @@ private struct TopicOutlineRow: View {
         .accessibilityLabel(
           row.isExpanded
             ? LocalizedStringResource(
-              "Collapse Topic",
+              "Collapse \(row.fullTopic)",
               bundle: #bundle,
-              comment: "Accessible action that collapses a topic branch."
+              comment:
+                "Accessible and Voice Control action that collapses an MQTT topic branch. The variable is the exact topic path."
             )
             : LocalizedStringResource(
-              "Expand Topic",
+              "Expand \(row.fullTopic)",
               bundle: #bundle,
-              comment: "Accessible action that expands a topic branch."
+              comment:
+                "Accessible and Voice Control action that expands an MQTT topic branch. The variable is the exact topic path."
             )
         )
         .accessibilityHint(
@@ -2788,9 +2790,9 @@ private struct TopicOutlineRow: View {
           .accessibilityHidden(true)
       }
       TopicOutlineRowContent(row: row)
+        .accessibilityIdentifier("topic-row.\(row.fullTopic)")
     }
     .padding(.leading, CGFloat(min(row.depth, 12)) * indentation)
-    .accessibilityIdentifier("topic-row.\(row.fullTopic)")
   }
 
   private var disclosureSize: CGFloat {

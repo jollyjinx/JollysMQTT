@@ -22,6 +22,51 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
   }
 
   @MainActor
+  func testCompactPublishRemainsUsableAtLargestAccessibilityTextSize() {
+    let app = launch(
+      destination: "publish",
+      widthClass: "compact",
+      accessibilityTextSize: true
+    )
+
+    let topic = app.textFields["publish.topic"]
+    XCTAssertTrue(topic.waitForExistence(timeout: 5))
+    XCTAssertTrue(app.textViews["publish.payload"].exists)
+    XCTAssertTrue(app.buttons["Publish"].exists)
+    XCTAssertTrue(app.buttons["help.open"].exists)
+  }
+
+  @MainActor
+  func testTopicAccessibilityTreeHasUniqueActionsAndCurrentValueSemantics() {
+    let app = launch(destination: "topics", widthClass: "regular")
+    let factory = app.descendants(matching: .any)[
+      "topic-disclosure.factory"
+    ]
+    XCTAssertTrue(factory.waitForExistence(timeout: 5))
+    XCTAssertEqual(factory.label, "Expand factory")
+    factory.tap()
+    XCTAssertEqual(factory.label, "Collapse factory")
+
+    let line = app.descendants(matching: .any)[
+      "topic-disclosure.factory/line"
+    ]
+    XCTAssertTrue(line.waitForExistence(timeout: 2))
+    XCTAssertEqual(line.label, "Expand factory/line")
+    line.tap()
+
+    let temperature = app.descendants(matching: .any)[
+      "topic-row.factory/line/temperature"
+    ]
+    XCTAssertTrue(temperature.waitForExistence(timeout: 2))
+    temperature.tap()
+    XCTAssertEqual(temperature.label, "factory/line/temperature")
+    XCTAssertTrue(
+      String(describing: temperature.value).contains("current value 21.5")
+    )
+    XCTAssertTrue(temperature.isSelected)
+  }
+
+  @MainActor
   func testWideSplitKeepsTopicsAlongsideEveryWorkflow() {
     let app = launch(destination: "details", widthClass: "regular")
     XCTAssertTrue(
@@ -96,14 +141,19 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     let pin = app.buttons["Pin to Chart"]
     XCTAssertTrue(pin.waitForExistence(timeout: 3))
     pin.tap()
-    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.buttons["Remove chart for factory/line/temperature"]
+        .waitForExistence(timeout: 3)
+    )
 
     let pressure = app.descendants(matching: .any)[
       "topic-row.factory/line/pressure"
     ]
     XCTAssertTrue(pressure.exists)
     pressure.tap()
-    XCTAssertTrue(app.buttons["Remove Chart"].exists)
+    XCTAssertTrue(
+      app.buttons["Remove chart for factory/line/temperature"].exists
+    )
     XCTAssertTrue(
       app.descendants(matching: .any)["payload-information-pane"].exists
     )
@@ -189,10 +239,13 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     )
     drillToTemperature(in: app)
     app.buttons["Pin to Chart"].tap()
-    let pause = app.buttons["Pause"]
+    let pause = app.buttons["Pause chart for factory/line/temperature"]
     XCTAssertTrue(pause.waitForExistence(timeout: 3))
     pause.tap()
-    XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.buttons["Resume chart for factory/line/temperature"]
+        .waitForExistence(timeout: 3)
+    )
 
     app.buttons["workspace.test.resize.compact"].tap()
     XCTAssertTrue(
@@ -200,14 +253,18 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
         .waitForExistence(timeout: 3)
     )
     XCTAssertTrue(app.tabBars.buttons["Charts"].isSelected)
-    XCTAssertTrue(app.buttons["Resume"].exists)
+    XCTAssertTrue(
+      app.buttons["Resume chart for factory/line/temperature"].exists
+    )
 
     app.buttons["workspace.test.resize.regular"].tap()
     XCTAssertTrue(
       app.descendants(matching: .any)["workspace.graph.split"]
         .waitForExistence(timeout: 3)
     )
-    XCTAssertTrue(app.buttons["Resume"].exists)
+    XCTAssertTrue(
+      app.buttons["Resume chart for factory/line/temperature"].exists
+    )
     XCTAssertTrue(
       app.descendants(matching: .any)["topic-explorer"].exists
     )
@@ -232,7 +289,10 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     )
     drillToTemperature(in: app)
     app.buttons["Pin to Chart"].tap()
-    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.buttons["Remove chart for factory/line/temperature"]
+        .waitForExistence(timeout: 3)
+    )
     waitForPersistedChart(at: persistenceURL)
 
     app.terminate()
@@ -248,7 +308,10 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     XCTAssertTrue(
       app.descendants(matching: .any)["payload-information-pane"].exists
     )
-    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
+    XCTAssertTrue(
+      app.buttons["Remove chart for factory/line/temperature"]
+        .waitForExistence(timeout: 3)
+    )
   }
 
   @MainActor
@@ -504,7 +567,12 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     workspaceFile: String? = nil
   ) -> XCUIApplication {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-testing-connected"]
+    if app.state != .notRunning {
+      app.terminate()
+    }
+    app.launchArguments = [
+      "-ApplePersistenceIgnoreState", "YES", "--ui-testing-connected",
+    ]
     if resizeControl {
       app.launchArguments.append("--ui-testing-resize-workspace")
     }
@@ -568,7 +636,12 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     requiresCredential: Bool = false
   ) -> XCUIApplication {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-testing-broker-list"]
+    if app.state != .notRunning {
+      app.terminate()
+    }
+    app.launchArguments = [
+      "-ApplePersistenceIgnoreState", "YES", "--ui-testing-broker-list",
+    ]
     app.launchEnvironment["JOLLYSMQTT_UI_WIDTH_CLASS"] = widthClass
     if empty {
       app.launchEnvironment["JOLLYSMQTT_UI_EMPTY_BROKER_LIST"] = "1"

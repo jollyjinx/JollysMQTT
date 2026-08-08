@@ -328,6 +328,14 @@ private struct NumericChartCard: View {
               comment: "Expands settings for one numeric chart card."
             )
           }
+          .accessibilityLabel(
+            Text(
+              "Settings for \(configuration.series.id.topic)",
+              bundle: #bundle,
+              comment:
+                "Accessible and Voice Control label for one chart settings disclosure. The variable is the exact MQTT topic."
+            )
+          )
           NumericChartContent(
             card: card,
             store: store
@@ -398,6 +406,23 @@ private struct NumericChartHeader: View {
             )
           }
         }
+        .accessibilityLabel(
+          Text(
+            configuration.isPaused
+              ? LocalizedStringResource(
+                "Resume chart for \(configuration.series.id.topic)",
+                bundle: #bundle,
+                comment:
+                  "Accessible and Voice Control action that resumes one chart. The variable is the exact MQTT topic."
+              )
+              : LocalizedStringResource(
+                "Pause chart for \(configuration.series.id.topic)",
+                bundle: #bundle,
+                comment:
+                  "Accessible and Voice Control action that pauses one chart. The variable is the exact MQTT topic."
+              )
+          )
+        )
         Spacer()
         Button(role: .destructive) {
           dashboard.send(.remove(card.id))
@@ -412,6 +437,14 @@ private struct NumericChartHeader: View {
             Image(systemName: "xmark")
           }
         }
+        .accessibilityLabel(
+          Text(
+            "Remove chart for \(configuration.series.id.topic)",
+            bundle: #bundle,
+            comment:
+              "Accessible and Voice Control action that removes one chart. The variable is the exact MQTT topic."
+          )
+        )
       }
     }
   }
@@ -539,6 +572,14 @@ private struct NumericChartSettings: View {
       }
     }
     .disabled(samples.isEmpty)
+    .accessibilityLabel(
+      Text(
+        "Clear displayed samples for \(configuration.series.id.topic)",
+        bundle: #bundle,
+        comment:
+          "Accessible and Voice Control action that clears one chart's displayed samples. The variable is the exact MQTT topic."
+      )
+    )
     Button {
       dashboard.send(.move(card.id, .earlier))
     } label: {
@@ -553,6 +594,14 @@ private struct NumericChartSettings: View {
       }
     }
     .disabled(dashboard.state.cards.first?.id == card.id)
+    .accessibilityLabel(
+      Text(
+        "Move chart for \(configuration.series.id.topic) earlier",
+        bundle: #bundle,
+        comment:
+          "Accessible and Voice Control action that moves one chart earlier. The variable is the exact MQTT topic."
+      )
+    )
     Button {
       dashboard.send(.move(card.id, .later))
     } label: {
@@ -567,6 +616,14 @@ private struct NumericChartSettings: View {
       }
     }
     .disabled(dashboard.state.cards.last?.id == card.id)
+    .accessibilityLabel(
+      Text(
+        "Move chart for \(configuration.series.id.topic) later",
+        bundle: #bundle,
+        comment:
+          "Accessible and Voice Control action that moves one chart later. The variable is the exact MQTT topic."
+      )
+    )
   }
 }
 

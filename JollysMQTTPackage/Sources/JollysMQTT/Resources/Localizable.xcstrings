@@ -1,33 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Continue Editing" : {
-      "comment" : "Keeps the current broker draft and cancels navigation."
-    },
-    "Discard Changes" : {
-      "comment" : "Discards a broker draft before continuing the requested action."
-    },
-    "Loading broker profile editor" : {
-      "comment" : "Accessibility label while the selected broker editor is prepared."
-    },
-    "New Broker" : {
-      "comment" : "Heading for a new inline broker profile draft."
-    },
-    "Revert" : {
-      "comment" : "Restores the selected broker draft to its saved values."
-    },
-    "Save Changes" : {
-      "comment" : "Saves a broker draft before continuing the requested action."
-    },
-    "Save or discard this draft before changing brokers." : {
-      "comment" : "Explains that changing broker selection never silently discards a draft."
-    },
-    "Save this draft before connecting, or discard it to connect with the stored profile." : {
-      "comment" : "Explains that connecting never uses an unsaved broker draft."
-    },
-    "Unsaved Broker Changes" : {
-      "comment" : "Title shown before navigation would leave an unsaved broker draft."
-    },
     "%@ line %lld: %@" : {
       "comment" : "Accessible summary for one text payload difference.",
       "localizations" : {
@@ -106,11 +79,11 @@
     "1 minute" : {
       "comment" : "One-minute numeric-chart visible range."
     },
-    "5 minutes" : {
-      "comment" : "Five-minute numeric-chart visible range."
-    },
     "15 minutes" : {
       "comment" : "Fifteen-minute numeric-chart visible range."
+    },
+    "5 minutes" : {
+      "comment" : "Five-minute numeric-chart visible range."
     },
     "A current payload is required before a value can be pinned." : {
       "comment" : "Explains why chart pinning is unavailable without a current payload."
@@ -121,14 +94,14 @@
     "A retained zero-byte publish deletes a retained value and requires confirmation." : {
       "comment" : "Blocks an unconfirmed destructive retained-value deletion."
     },
-    "Add a broker profile to get started." : {
-      "comment" : "Description on the initial empty broker-list screen."
-    },
     "Add Broker" : {
       "comment" : "Action that creates a broker profile."
     },
     "Add Subscription" : {
       "comment" : "Action that adds an MQTT subscription filter."
+    },
+    "Add a broker profile to get started." : {
+      "comment" : "Description on the initial empty broker-list screen."
     },
     "Added" : {
       "comment" : "A JSON value was added in the current MQTT payload."
@@ -199,32 +172,32 @@
     "Broker" : {
       "comment" : "Label for the broker affected by history settings."
     },
-    "Broker allocation is a ceiling. Pruning begins near 60% and targets 50% so sustained traffic converges without one long transaction." : {
-      "comment" : "Explains broker history allocation high-water and target behavior."
-    },
     "Broker Deleted" : {
       "comment" : "Title for a completed broker deletion."
-    },
-    "Broker deletion did not complete." : {
-      "comment" : "Fallback broker deletion outcome alert message.\nFallback incomplete broker deletion outcome."
     },
     "Broker Deletion Incomplete" : {
       "comment" : "Title for a partial cross-resource broker deletion."
     },
-    "Broker history clearing was interrupted after deleting %lld messages. Resume uses its original confirmation cutoff." : {
-      "comment" : "Partial broker clear outcome retaining the original safe cutoff."
-    },
     "Broker Profile" : {
-      "comment" : "Title of the broker profile editor."
-    },
-    "Broker profiles remain available on this device while the network is offline." : {
-      "comment" : "Explains that an offline CloudKit failure did not remove local profiles."
+      "comment" : "Heading for the selected inline broker profile editor.\nTitle of the broker profile editor."
     },
     "Broker Settings Changed" : {
       "comment" : "Title of the warning that a connected broker profile has newer settings."
     },
     "Broker Unavailable" : {
       "comment" : "Connected-workspace heading when its saved broker profile is unavailable.\nToolbar title when the connected workspace broker profile is unavailable."
+    },
+    "Broker allocation is a ceiling. Pruning begins near 60% and targets 50% so sustained traffic converges without one long transaction." : {
+      "comment" : "Explains broker history allocation high-water and target behavior."
+    },
+    "Broker deletion did not complete." : {
+      "comment" : "Fallback broker deletion outcome alert message.\nFallback incomplete broker deletion outcome."
+    },
+    "Broker history clearing was interrupted after deleting %lld messages. Resume uses its original confirmation cutoff." : {
+      "comment" : "Partial broker clear outcome retaining the original safe cutoff."
+    },
+    "Broker profiles remain available on this device while the network is offline." : {
+      "comment" : "Explains that an offline CloudKit failure did not remove local profiles."
     },
     "Brokers" : {
       "comment" : "Returns a connected workspace to the broker list."
@@ -241,7 +214,7 @@
       }
     },
     "Cancel" : {
-      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels a destructive local history clear.\nCancels a retained-value deletion confirmation.\nCancels broker password entry.\nCancels the current broker connection or retry."
+      "comment" : "Action that cancels a broker profile operation.\nAction that closes the profile editor without saving.\nCancels a destructive local history clear.\nCancels a retained-value deletion confirmation.\nCancels broker password entry.\nCancels creation of an inline broker profile.\nCancels the current broker connection or retry."
     },
     "Cancel after current topic" : {
       "comment" : "Stops recursive retained deletion after the current acknowledged publish settles."
@@ -291,6 +264,9 @@
     "Clear Topic History?" : {
       "comment" : "Confirmation title for exact topic history removal."
     },
+    "Clear displayed samples for %@" : {
+      "comment" : "Accessible and Voice Control action that clears one chart's displayed samples. The variable is the exact MQTT topic."
+    },
     "Cleared %lld messages, %lld topic records, and %lld coverage records." : {
       "comment" : "Completed local history clear counts.",
       "localizations" : {
@@ -322,8 +298,8 @@
     "Cloud sync is off for this session, but the device-only choice could not be saved. Retry before closing the app." : {
       "comment" : "Warns that the fail-safe CloudKit opt-out is active but could not be persisted."
     },
-    "Collapse Topic" : {
-      "comment" : "Accessible action that collapses a topic branch."
+    "Collapse %@" : {
+      "comment" : "Accessible and Voice Control action that collapses an MQTT topic branch. The variable is the exact topic path."
     },
     "Color" : {
       "comment" : "Label for a numeric chart card color."
@@ -344,7 +320,7 @@
       "comment" : "Accessible destructive confirmation label. The variable is the exact MQTT topic."
     },
     "Connect" : {
-      "comment" : "Primary action that connects to a selected broker."
+      "comment" : "Connects using the unchanged saved broker profile.\nPrimary action that connects to a selected broker."
     },
     "Connect to Selected Broker" : {
       "comment" : "File-menu command that connects the selected saved broker in the current workspace."
@@ -367,6 +343,9 @@
     "Connection overloaded" : {
       "comment" : "Broker connection phase shown after bounded intake overflows."
     },
+    "Continue Editing" : {
+      "comment" : "Keeps the current broker draft and cancels navigation."
+    },
     "Copied" : {
       "comment" : "Accessible confirmation after a payload copy action."
     },
@@ -385,9 +364,6 @@
     "Copy Formatted JSON" : {
       "comment" : "Copies the complete formatted JSON document."
     },
-    "Copy history payload raw bytes" : {
-      "comment" : "Accessible action to copy exact bytes from a history row."
-    },
     "Copy Raw Bytes" : {
       "comment" : "Copies the exact selected MQTT payload bytes."
     },
@@ -396,6 +372,9 @@
     },
     "Copy Topic" : {
       "comment" : "Copies the exact selected MQTT topic."
+    },
+    "Copy history payload raw bytes" : {
+      "comment" : "Accessible action to copy exact bytes from a history row."
     },
     "Current (%lld bytes)" : {
       "comment" : "Heading and exact byte count for the current hex preview."
@@ -421,11 +400,23 @@
     "Delete %lld retained values?" : {
       "comment" : "Recursive retained-value confirmation title. The variable is the exact target count."
     },
-    "Delete all durable message history and coverage records for broker “%@”? The live topic index and graph remain unchanged." : {
-      "comment" : "Explains the exact broker-history clear scope and that live state is unaffected."
-    },
     "Delete Broker?" : {
       "comment" : "Title confirming deletion of a broker profile."
+    },
+    "Delete Profile Only" : {
+      "comment" : "Destructive action that deletes a broker profile but keeps its device password."
+    },
+    "Delete Profile and History" : {
+      "comment" : "Destructive action that deletes a broker profile and local history while keeping its device password."
+    },
+    "Delete Profile and Password" : {
+      "comment" : "Destructive action that deletes a broker profile and its device password while keeping local history."
+    },
+    "Delete Profile, History, and Password" : {
+      "comment" : "Destructive action that deletes a broker profile, local history, and device password."
+    },
+    "Delete all durable message history and coverage records for broker “%@”? The live topic index and graph remain unchanged." : {
+      "comment" : "Explains the exact broker-history clear scope and that live state is unaffected."
     },
     "Delete durable history for topic “%@” from broker “%@”? The live topic index and graph remain unchanged." : {
       "comment" : "Explains the exact topic-history clear scope and that live state is unaffected.",
@@ -438,18 +429,6 @@
         }
       }
     },
-    "Delete Profile and History" : {
-      "comment" : "Destructive action that deletes a broker profile and local history while keeping its device password."
-    },
-    "Delete Profile and Password" : {
-      "comment" : "Destructive action that deletes a broker profile and its device password while keeping local history."
-    },
-    "Delete Profile Only" : {
-      "comment" : "Destructive action that deletes a broker profile but keeps its device password."
-    },
-    "Delete Profile, History, and Password" : {
-      "comment" : "Destructive action that deletes a broker profile, local history, and device password."
-    },
     "Delete retained value" : {
       "comment" : "Confirms one retained-value deletion.\nDestructive action that publishes one zero-byte retained MQTT message after confirmation."
     },
@@ -459,11 +438,11 @@
     "Delete retained values in subtree" : {
       "comment" : "Destructive action that targets locally known value topics in the selected subtree."
     },
-    "Deleting “%@” creates a permanent synchronization tombstone. Broker-specific topic, search, and chart state is removed from this workspace; other restored workspaces are scrubbed when they observe the deletion. Choose independently whether to delete local history and the device password. Per-broker retention settings are always removed." : {
-      "comment" : "Deletion warning describing the permanent tombstone, workspace privacy cleanup, independent history/password choices, and retention-settings cleanup. The variable is the broker profile name."
-    },
     "Deleting retained values" : {
       "comment" : "Progress label for a retained deletion operation."
+    },
+    "Deleting “%@” creates a permanent synchronization tombstone. Broker-specific topic, search, and chart state is removed from this workspace; other restored workspaces are scrubbed when they observe the deletion. Choose independently whether to delete local history and the device password. Per-broker retention settings are always removed." : {
+      "comment" : "Deletion warning describing the permanent tombstone, workspace privacy cleanup, independent history/password choices, and retention-settings cleanup. The variable is the broker profile name."
     },
     "Destructive Actions" : {
       "comment" : "Heading for local history deletion controls."
@@ -476,6 +455,9 @@
     },
     "Direction: Received" : {
       "comment" : "Direction of an incoming durable MQTT history row."
+    },
+    "Discard Changes" : {
+      "comment" : "Discards a broker draft before continuing the requested action."
     },
     "Disconnect" : {
       "comment" : "Disconnects the current broker workspace."
@@ -513,9 +495,6 @@
     "Enabled" : {
       "comment" : "Toggle enabling an MQTT subscription filter."
     },
-    "Enables drag handles for reordering broker profiles." : {
-      "comment" : "Accessibility hint for editing broker list order."
-    },
     "Ended at Unix time %lld µs" : {
       "comment" : "Exact end of a source-wide durable MQTT history gap."
     },
@@ -549,8 +528,8 @@
     "Enumerates the current local snapshot and asks you to confirm the exact topic count." : {
       "comment" : "Accessible hint explaining recursive retained-value target enumeration."
     },
-    "Expand Topic" : {
-      "comment" : "Accessible action that expands a topic branch."
+    "Expand %@" : {
+      "comment" : "Accessible and Voice Control action that expands an MQTT topic branch. The variable is the exact topic path."
     },
     "Expect reconnect after suspension" : {
       "comment" : "Help heading about iOS and iPadOS background suspension."
@@ -563,9 +542,6 @@
     },
     "Explicit Client ID" : {
       "comment" : "Label for a fixed MQTT client identifier."
-    },
-    "factory/line/status" : {
-      "comment" : "Example MQTT publication topic in the composer."
     },
     "Fix Before Saving" : {
       "comment" : "Header for broker profile validation errors."
@@ -594,6 +570,12 @@
     "History" : {
       "comment" : "Heading for durable MQTT payload history."
     },
+    "History QoS %lld" : {
+      "comment" : "MQTT quality of service in a durable history row."
+    },
+    "History Settings" : {
+      "comment" : "Opens local retention settings and destructive history controls."
+    },
     "History becomes available for the current value of a connected topic." : {
       "comment" : "History placeholder when no current MQTT topic is selected."
     },
@@ -615,9 +597,6 @@
     "History payload copy failed" : {
       "comment" : "Failure after copying bytes from a durable history row."
     },
-    "History QoS %lld" : {
-      "comment" : "MQTT quality of service in a durable history row."
-    },
     "History retained delivery: No" : {
       "comment" : "History metadata saying an MQTT publish did not carry the retained-delivery flag."
     },
@@ -627,9 +606,6 @@
     "History rows were cleared, but the secure WAL and free-page cleanup is pending." : {
       "comment" : "Logical clear succeeded while secure cleanup remains pending."
     },
-    "History Settings" : {
-      "comment" : "Opens local retention settings and destructive history controls."
-    },
     "History was not cleared. No committed partial progress was reported." : {
       "comment" : "History clear failed before any reported committed progress."
     },
@@ -638,27 +614,6 @@
     },
     "Host" : {
       "comment" : "Label for the broker host name or IP address."
-    },
-    "iCloud asked JollysMQTT to wait. Broker profiles remain available on this device." : {
-      "comment" : "Explains a rate-limited CloudKit retry without exposing private profile data."
-    },
-    "iCloud profile sync did not finish. Broker profiles remain available on this device." : {
-      "comment" : "Generic CloudKit sync failure preserving local broker profiles."
-    },
-    "iCloud profile sync is off on this device. Broker profiles remain stored locally." : {
-      "comment" : "Explains the durable, device-local CloudKit opt-out."
-    },
-    "iCloud profile sync is unavailable. Broker profiles remain available on this device." : {
-      "comment" : "Explains unavailable CloudKit sync while preserving local profiles."
-    },
-    "iCloud purged the profile zone. Local profiles were preserved. Choose whether to recreate the zone from them." : {
-      "comment" : "Prompts after CloudKit purges the custom profile zone."
-    },
-    "iCloud reset the encrypted-data key. Local profiles were preserved. Choose whether to upload them again under the new key." : {
-      "comment" : "Prompts after an encrypted CloudKit data-key reset."
-    },
-    "iCloud was signed out. Sign in first, then choose whether to use these local profiles with that account or keep them only on this device." : {
-      "comment" : "Prompts for an explicit choice after the iCloud account signs out."
     },
     "If messages arrive faster than bounded queues can process them, JollysMQTT disconnects with an overload error instead of allowing memory to grow without limit. Review subscription scope, then choose Retry." : {
       "comment" : "Help explaining visible bounded-ingress overload behavior."
@@ -672,20 +627,11 @@
     "Inspecting Payload" : {
       "comment" : "Progress label while the selected MQTT payload is parsed."
     },
-    "iPhone and iPad suspend general apps in the background. JollysMQTT saves the workspace, disconnects when no scene is active, and reconnects after activation; it does not promise background MQTT monitoring." : {
-      "comment" : "Help explaining honest iOS and iPadOS background behavior."
-    },
-    "JollysMQTT" : {
-      "comment" : "Application title shown in navigation chrome."
-    },
-    "JollysMQTT Help" : {
-      "comment" : "Title of the onboarding and operational help screen."
-    },
-    "JollysMQTT shows live broker data while keeping connections, local history, and synchronized profiles within explicit safety limits." : {
-      "comment" : "Onboarding introduction at the top of application help."
-    },
     "JSON" : {
       "comment" : "Publish composer JSON input mode."
+    },
+    "JSON Presentation" : {
+      "comment" : "Label for choosing structural or raw JSON presentation."
     },
     "JSON parsing was skipped because nesting exceeds the %lld-level inspection limit." : {
       "comment" : "Visible bounded-inspection notice. The variable is the JSON nesting limit."
@@ -707,8 +653,14 @@
         }
       }
     },
-    "JSON Presentation" : {
-      "comment" : "Label for choosing structural or raw JSON presentation."
+    "JollysMQTT" : {
+      "comment" : "Application title shown in navigation chrome."
+    },
+    "JollysMQTT Help" : {
+      "comment" : "Title of the onboarding and operational help screen."
+    },
+    "JollysMQTT shows live broker data while keeping connections, local history, and synchronized profiles within explicit safety limits." : {
+      "comment" : "Onboarding introduction at the top of application help."
     },
     "Jump to Live (%lld)" : {
       "comment" : "Resumes a frozen topic view. The variable is the pending-message count."
@@ -750,14 +702,17 @@
     "Live topics will appear here as messages arrive." : {
       "comment" : "Description shown before the broker has delivered any topics."
     },
-    "Loading broker profiles" : {
-      "comment" : "Accessibility label for profile loading progress."
-    },
     "Loading History" : {
       "comment" : "Progress label while durable MQTT history loads."
     },
+    "Loading broker profile editor" : {
+      "comment" : "Accessibility label while the selected broker editor is prepared."
+    },
+    "Loading broker profiles" : {
+      "comment" : "Accessibility label for profile loading progress."
+    },
     "Local History" : {
-      "comment" : "Opens per-broker local retention and history clearing while disconnected.\nTitle for local MQTT history settings."
+      "comment" : "Opens local history controls for the selected broker.\nOpens per-broker local retention and history clearing while disconnected.\nTitle for local MQTT history settings."
     },
     "Local overload" : {
       "comment" : "Reason for a source-wide durable MQTT history gap."
@@ -789,14 +744,23 @@
     "Move Later" : {
       "comment" : "Moves one chart card later in dashboard order."
     },
+    "Move chart for %@ earlier" : {
+      "comment" : "Accessible and Voice Control action that moves one chart earlier. The variable is the exact MQTT topic."
+    },
+    "Move chart for %@ later" : {
+      "comment" : "Accessible and Voice Control action that moves one chart later. The variable is the exact MQTT topic."
+    },
     "Name" : {
       "comment" : "Label for a broker profile display name.\nSorts topic siblings alphabetically by segment name."
     },
-    "New profiles include # and $SYS/# so ordinary and system topics are visible. Broad subscriptions can create heavy traffic on production brokers; narrow or disable them before connecting when appropriate." : {
-      "comment" : "Help explaining broad MQTT subscription cost and defaults."
+    "New Broker" : {
+      "comment" : "Heading for a new inline broker profile draft."
     },
     "New Window" : {
       "comment" : "Command that opens a fresh broker-list workspace."
+    },
+    "New profiles include # and $SYS/# so ordinary and system topics are visible. Broad subscriptions can create heavy traffic on production brokers; narrow or disable them before connecting when appropriate." : {
+      "comment" : "Help explaining broad MQTT subscription cost and defaults."
     },
     "Newer" : {
       "comment" : "Loads a newer page of MQTT payload history."
@@ -810,6 +774,18 @@
     "No Current Payload" : {
       "comment" : "Inspector title for a stale cached topic."
     },
+    "No JSON differences." : {
+      "comment" : "Empty result for a structural JSON payload comparison."
+    },
+    "No Matching Topics" : {
+      "comment" : "Empty topic explorer title when search has no matches."
+    },
+    "No Numeric Samples" : {
+      "comment" : "Empty numeric chart title."
+    },
+    "No Pinned Charts" : {
+      "comment" : "Empty numeric chart dashboard title."
+    },
     "No current retryable retained values" : {
       "comment" : "Accessible summary when retained deletion reconfirmation has no current targets."
     },
@@ -819,20 +795,8 @@
     "No history scope is selected." : {
       "comment" : "Fallback history-clear confirmation message."
     },
-    "No JSON differences." : {
-      "comment" : "Empty result for a structural JSON payload comparison."
-    },
-    "No Matching Topics" : {
-      "comment" : "Empty topic explorer title when search has no matches."
-    },
     "No non-stale locally known value-bearing topics are available in the selected scope." : {
       "comment" : "Explains why a retained deletion request produced no current local targets."
-    },
-    "No Numeric Samples" : {
-      "comment" : "Empty numeric chart title."
-    },
-    "No Pinned Charts" : {
-      "comment" : "Empty numeric chart dashboard title."
     },
     "No text differences." : {
       "comment" : "Empty result for a text payload comparison."
@@ -873,6 +837,9 @@
     "Password" : {
       "comment" : "Label for transient broker password entry."
     },
+    "Password Not Updated" : {
+      "comment" : "Title for a device credential operation failure."
+    },
     "Password access was cancelled. The broker profile was not changed." : {
       "comment" : "Explains a cancelled Keychain credential operation."
     },
@@ -888,9 +855,6 @@
     "Password for %@" : {
       "comment" : "Credential prompt title. The variable is a broker profile name."
     },
-    "Password Not Updated" : {
-      "comment" : "Title for a device credential operation failure."
-    },
     "Password required on this device" : {
       "comment" : "Indicates that this device has no broker password."
     },
@@ -905,6 +869,9 @@
     },
     "Pause" : {
       "comment" : "Pauses one numeric chart card."
+    },
+    "Pause chart for %@" : {
+      "comment" : "Accessible and Voice Control action that pauses one chart. The variable is the exact MQTT topic."
     },
     "Payload" : {
       "comment" : "Accessible label for the MQTT publish payload editor."
@@ -1026,6 +993,9 @@
     "Remove Chart" : {
       "comment" : "Removes one pinned numeric chart card."
     },
+    "Remove chart for %@" : {
+      "comment" : "Accessible and Voice Control action that removes one chart. The variable is the exact MQTT topic."
+    },
     "Removed" : {
       "comment" : "A JSON value was removed from the current MQTT payload."
     },
@@ -1047,8 +1017,14 @@
     "Resume Clear" : {
       "comment" : "Resumes an interrupted clear using its original confirmation cutoff."
     },
+    "Resume chart for %@" : {
+      "comment" : "Accessible and Voice Control action that resumes one chart. The variable is the exact MQTT topic."
+    },
     "Retain" : {
       "comment" : "Requests broker retention for the MQTT publication."
+    },
+    "Retained Values" : {
+      "comment" : "Menu containing destructive retained-value actions."
     },
     "Retained delivery" : {
       "comment" : "Accessible retained-delivery history metadata.\nIndicates that the latest MQTT delivery carried the retained flag."
@@ -1084,9 +1060,6 @@
     "Retained delivery: Yes" : {
       "comment" : "Packet metadata saying the MQTT publish carried the retained-delivery flag; this does not claim current broker state."
     },
-    "Retained Values" : {
-      "comment" : "Menu containing destructive retained-value actions."
-    },
     "Retention" : {
       "comment" : "Heading for local history retention fields."
     },
@@ -1105,14 +1078,8 @@
     "Retry History" : {
       "comment" : "Attempts to resume durable MQTT history persistence."
     },
-    "Retry iCloud Sync" : {
-      "comment" : "Retries a transient CloudKit profile sync failure.\nRetries an unavailable CloudKit profile sync operation."
-    },
     "Retry Remaining Cleanup" : {
       "comment" : "Retries failed optional resource cleanup after profile deletion committed."
-    },
-    "Retry remaining topics" : {
-      "comment" : "Retries failed or cancelled retained deletions on the same connection."
     },
     "Retry Saving Device-Only Choice" : {
       "comment" : "Retries persistence of the device-local CloudKit opt-out."
@@ -1120,20 +1087,38 @@
     "Retry Secure Cleanup" : {
       "comment" : "Retries WAL checkpoint and free-page cleanup."
     },
+    "Retry iCloud Sync" : {
+      "comment" : "Retries a transient CloudKit profile sync failure.\nRetries an unavailable CloudKit profile sync operation."
+    },
+    "Retry remaining topics" : {
+      "comment" : "Retries failed or cancelled retained deletions on the same connection."
+    },
     "Retryable" : {
       "comment" : "Accessible status for a retained deletion not yet attempted."
+    },
+    "Revert" : {
+      "comment" : "Restores the selected broker draft to its saved values."
     },
     "Rows per pruning transaction (1–5,000)" : {
       "comment" : "Validated incremental history prune batch field."
     },
     "Save" : {
-      "comment" : "Action that validates and saves a broker profile."
+      "comment" : "Action that validates and saves a broker profile.\nValidates and saves the inline broker profile draft."
+    },
+    "Save Changes" : {
+      "comment" : "Saves a broker draft before continuing the requested action."
     },
     "Save and Apply Retention" : {
       "comment" : "Saves local retention settings and runs bounded pruning."
     },
     "Save and Connect" : {
       "comment" : "Saves a device password and continues connecting."
+    },
+    "Save or discard this draft before changing brokers." : {
+      "comment" : "Explains that changing broker selection never silently discards a draft."
+    },
+    "Save this draft before connecting, or discard it to connect with the stored profile." : {
+      "comment" : "Explains that connecting never uses an unsaved broker draft."
     },
     "Saving password" : {
       "comment" : "Accessibility label while a broker password is saved."
@@ -1153,14 +1138,14 @@
     "Secure history cleanup completed." : {
       "comment" : "Successful retry of local history secure cleanup."
     },
+    "Select a Topic" : {
+      "comment" : "Inspector title when no MQTT topic is selected."
+    },
     "Select a numeric or Boolean JSON leaf to enable charting." : {
       "comment" : "Explains that JSON containers cannot be charted."
     },
     "Select a numeric or Boolean payload in topic information, then choose Pin to Chart." : {
       "comment" : "Explains how to add cards to the chart dashboard."
-    },
-    "Select a Topic" : {
-      "comment" : "Inspector title when no MQTT topic is selected."
     },
     "Selected comparison baseline" : {
       "comment" : "Accessibility value for the selected history baseline."
@@ -1170,6 +1155,9 @@
     },
     "Settings" : {
       "comment" : "Expands settings for one numeric chart card."
+    },
+    "Settings for %@" : {
+      "comment" : "Accessible and Voice Control label for one chart settings disclosure. The variable is the exact MQTT topic."
     },
     "Settings were saved, but bounded pruning could not complete." : {
       "comment" : "Settings committed but applying retention failed."
@@ -1256,6 +1244,9 @@
     "TCP" : {
       "comment" : "Unencrypted TCP broker transport."
     },
+    "TLS" : {
+      "comment" : "System-trust TLS broker transport."
+    },
     "Teal" : {
       "comment" : "Teal numeric chart card color."
     },
@@ -1272,6 +1263,9 @@
           }
         }
       }
+    },
+    "The MQTT session is already in use." : {
+      "comment" : "Explains a terminal duplicate MQTT session failure."
     },
     "The broker certificate is not trusted." : {
       "comment" : "Explains a terminal broker TLS trust failure."
@@ -1317,9 +1311,6 @@
     },
     "The iCloud profile zone was deleted. Local profiles were preserved. Choose whether to recreate the zone from them." : {
       "comment" : "Prompts after a user-deleted CloudKit custom zone."
-    },
-    "The MQTT session is already in use." : {
-      "comment" : "Explains a terminal duplicate MQTT session failure."
     },
     "The network connection ended." : {
       "comment" : "Explains a transient transport failure."
@@ -1372,14 +1363,14 @@
     "The reconnect delays are incompatible." : {
       "comment" : "Validation error for reconnect delay settings."
     },
-    "The selected cleanup completed, but its crash-recovery journal could not be removed. Retry to finish securely." : {
-      "comment" : "Deletion cleanup succeeded but its durable retry journal could not be removed."
-    },
     "The selected JSON path is unavailable." : {
       "comment" : "Explains that an invalid JSON path cannot be charted."
     },
     "The selected JSON value is not a number or Boolean." : {
       "comment" : "Explains that strings and null cannot be charted."
+    },
+    "The selected cleanup completed, but its crash-recovery journal could not be removed. Retry to finish securely." : {
+      "comment" : "Deletion cleanup succeeded but its durable retry journal could not be removed."
     },
     "The updated fixed client ID is already in use by another connection to this broker. Choose a different client ID before reconnecting." : {
       "comment" : "Explains why updated broker settings cannot reconnect all windows."
@@ -1404,9 +1395,6 @@
     },
     "This publishes zero-byte retained messages to exactly %lld unique, non-stale, locally known value-bearing topics in the selected subtree. This is not the broker’s complete retained-message inventory." : {
       "comment" : "Explains recursive retained deletion scope. The variable is the exact snapshotted target count."
-    },
-    "TLS" : {
-      "comment" : "System-trust TLS broker transport."
     },
     "Topic" : {
       "comment" : "Label for the exact MQTT publication topic.\nLabel for the topic affected by a topic-history clear."
@@ -1438,6 +1426,9 @@
     "Unix time: %lld µs" : {
       "comment" : "Exact local receive timestamp in microseconds for one durable MQTT history row."
     },
+    "Unsaved Broker Changes" : {
+      "comment" : "Title shown before navigation would leave an unsaved broker draft."
+    },
     "Use Compact Test Layout" : {
       "comment" : "UI-test-only control that simulates a compact workspace resize."
     },
@@ -1456,23 +1447,23 @@
     "Validate and Format JSON" : {
       "comment" : "Validates and pretty-prints JSON in the publish composer."
     },
-    "Waiting for broker acknowledgement" : {
-      "comment" : "Accessible status for an in-flight retained deletion."
-    },
     "Waiting for MQTT completion" : {
       "comment" : "Publish state while transport acceptance or acknowledgement is pending."
     },
     "Waiting for Topics" : {
       "comment" : "Empty topic explorer title before live messages arrive."
     },
+    "Waiting for broker acknowledgement" : {
+      "comment" : "Accessible status for an in-flight retained deletion."
+    },
     "Waiting to reconnect" : {
       "comment" : "Broker connection phase shown during automatic backoff."
     },
-    "Workspace state could not be restored or saved. Existing data was left unchanged." : {
-      "comment" : "Explains a workspace restoration or persistence failure."
-    },
     "Workspace State Unavailable" : {
       "comment" : "Title for workspace restoration or persistence failure."
+    },
+    "Workspace state could not be restored or saved. Existing data was left unchanged." : {
+      "comment" : "Explains a workspace restoration or persistence failure."
     },
     "Y maximum" : {
       "comment" : "Fixed numeric-chart Y-axis maximum."
@@ -1482,6 +1473,33 @@
     },
     "Y-axis" : {
       "comment" : "Label for numeric chart Y-axis scaling mode."
+    },
+    "factory/line/status" : {
+      "comment" : "Example MQTT publication topic in the composer."
+    },
+    "iCloud asked JollysMQTT to wait. Broker profiles remain available on this device." : {
+      "comment" : "Explains a rate-limited CloudKit retry without exposing private profile data."
+    },
+    "iCloud profile sync did not finish. Broker profiles remain available on this device." : {
+      "comment" : "Generic CloudKit sync failure preserving local broker profiles."
+    },
+    "iCloud profile sync is off on this device. Broker profiles remain stored locally." : {
+      "comment" : "Explains the durable, device-local CloudKit opt-out."
+    },
+    "iCloud profile sync is unavailable. Broker profiles remain available on this device." : {
+      "comment" : "Explains unavailable CloudKit sync while preserving local profiles."
+    },
+    "iCloud purged the profile zone. Local profiles were preserved. Choose whether to recreate the zone from them." : {
+      "comment" : "Prompts after CloudKit purges the custom profile zone."
+    },
+    "iCloud reset the encrypted-data key. Local profiles were preserved. Choose whether to upload them again under the new key." : {
+      "comment" : "Prompts after an encrypted CloudKit data-key reset."
+    },
+    "iCloud was signed out. Sign in first, then choose whether to use these local profiles with that account or keep them only on this device." : {
+      "comment" : "Prompts for an explicit choice after the iCloud account signs out."
+    },
+    "iPhone and iPad suspend general apps in the background. JollysMQTT saves the workspace, disconnects when no scene is active, and reconnects after activation; it does not promise background MQTT monitoring." : {
+      "comment" : "Help explaining honest iOS and iPadOS background behavior."
     }
   },
   "version" : "1.0"
