@@ -137,6 +137,117 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     }
 
     @MainActor
+    func testSingleClickSelectsBrokerWithoutConnecting() {
+      let app = launchBrokerList(widthClass: "regular", twoBrokers: true)
+      let secondBroker = app.descendants(matching: .any)[
+        "server-list.profile.A1F9B0EF-D340-4F57-8E1A-4835CA73A1B2"
+      ]
+      XCTAssertTrue(secondBroker.waitForExistence(timeout: 5))
+
+      secondBroker.click()
+
+      let name = app.descendants(matching: .any)["profile-editor.name"]
+      XCTAssertTrue(name.waitForExistence(timeout: 3))
+      XCTAssertEqual(name.value as? String, "UI Test Broker 2")
+      XCTAssertFalse(
+        app.descendants(matching: .any)["workspace.wide.split"].exists
+      )
+    }
+
+    @MainActor
+    func testDoubleClickConnectsTheExactBrokerRow() {
+      let app = launchBrokerList(widthClass: "regular", twoBrokers: true)
+      let secondBroker = app.descendants(matching: .any)[
+        "server-list.profile.A1F9B0EF-D340-4F57-8E1A-4835CA73A1B2"
+      ]
+      XCTAssertTrue(secondBroker.waitForExistence(timeout: 5))
+
+      secondBroker.doubleClick()
+
+      XCTAssertTrue(
+        app.descendants(matching: .any)["workspace.wide.split"]
+          .waitForExistence(timeout: 5)
+      )
+      XCTAssertTrue(app.staticTexts["UI Test Broker 2"].exists)
+    }
+
+    @MainActor
+    func testDoubleClickPreservesDirtyDraftUntilTheUserDecides() {
+      let app = launchBrokerList(widthClass: "regular", twoBrokers: true)
+      let name = app.descendants(matching: .any)["profile-editor.name"]
+      XCTAssertTrue(name.waitForExistence(timeout: 5))
+      name.click()
+      name.typeKey("a", modifierFlags: .command)
+      name.typeText("Unsaved Double Click Draft")
+
+      app.descendants(matching: .any)[
+        "server-list.profile.A1F9B0EF-D340-4F57-8E1A-4835CA73A1B2"
+      ].doubleClick()
+
+      XCTAssertTrue(
+        app.staticTexts["Unsaved Broker Changes"]
+          .waitForExistence(timeout: 3)
+      )
+      app.sheets.buttons["Continue Editing"].click()
+      XCTAssertEqual(name.value as? String, "Unsaved Double Click Draft")
+      XCTAssertFalse(
+        app.descendants(matching: .any)["workspace.wide.split"].exists
+      )
+    }
+
+    @MainActor
+    func testDoubleClickUsesMissingCredentialPrompt() {
+      let app = launchBrokerList(
+        widthClass: "regular",
+        requiresCredential: true
+      )
+      let broker = app.descendants(matching: .any)[
+        "server-list.profile.E9DE2914-EDB1-4774-BFE5-601A5D8C7C1A"
+      ]
+      XCTAssertTrue(broker.waitForExistence(timeout: 5))
+
+      broker.doubleClick()
+
+      XCTAssertTrue(
+        app.staticTexts["Password for UI Test Broker"]
+          .waitForExistence(timeout: 3)
+      )
+      XCTAssertTrue(app.secureTextFields["Password"].exists)
+      XCTAssertTrue(app.buttons["Save and Connect"].exists)
+      XCTAssertFalse(
+        app.descendants(matching: .any)["workspace.wide.split"].exists
+      )
+    }
+
+    @MainActor
+    func testCommandOConnectsTheSelectedBroker() {
+      let app = launchBrokerList(widthClass: "regular")
+      XCTAssertTrue(
+        app.descendants(matching: .any)["server-list.inline-editor"]
+          .waitForExistence(timeout: 5)
+      )
+      app.typeKey("o", modifierFlags: .command)
+      XCTAssertTrue(
+        app.descendants(matching: .any)["workspace.wide.split"]
+          .waitForExistence(timeout: 5)
+      )
+    }
+
+    @MainActor
+    func testReturnConnectsTheSelectedBroker() {
+      let app = launchBrokerList(widthClass: "regular")
+      XCTAssertTrue(
+        app.descendants(matching: .any)["server-list.inline-editor"]
+          .waitForExistence(timeout: 5)
+      )
+      app.typeKey(.return, modifierFlags: [])
+      XCTAssertTrue(
+        app.descendants(matching: .any)["workspace.wide.split"]
+          .waitForExistence(timeout: 5)
+      )
+    }
+
+    @MainActor
     func testCompactBrokerSelectionKeepsDedicatedEditor() {
       let app = launchBrokerList(widthClass: "compact")
 
@@ -193,7 +304,8 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
   private func launchBrokerList(
     empty: Bool = false,
     widthClass: String = "regular",
-    twoBrokers: Bool = false
+    twoBrokers: Bool = false,
+    requiresCredential: Bool = false
   ) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-testing-broker-list"]
@@ -203,6 +315,9 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     }
     if twoBrokers {
       app.launchEnvironment["JOLLYSMQTT_UI_TWO_BROKERS"] = "1"
+    }
+    if requiresCredential {
+      app.launchEnvironment["JOLLYSMQTT_UI_REQUIRES_CREDENTIAL"] = "1"
     }
     app.launch()
     return app

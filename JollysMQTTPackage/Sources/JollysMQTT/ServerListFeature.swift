@@ -256,6 +256,14 @@ public enum ServerListFeature {
       isProfileDeletionCommitPending
     }
 
+    public var isConnectionRequestPending: Bool {
+      if pendingConnectRequest != nil || credentialPrompt != nil || connectReady != nil {
+        return true
+      }
+      guard case .connection = pendingDraftDestination else { return false }
+      return true
+    }
+
     public init(
       profiles: [RankedBrokerProfile] = [],
       selectedProfileID: BrokerProfile.ID? = nil,
@@ -625,6 +633,7 @@ public enum ServerListFeature {
       state.pendingDraftDestination = nil
 
     case .connect(let id):
+      guard !state.isConnectionRequestPending else { return nil }
       if state.editorHasUnsavedChanges {
         state.pendingDraftDestination = .connection(id)
         return nil

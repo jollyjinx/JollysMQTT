@@ -3,8 +3,13 @@ import JollysMQTTStorage
 import JollysMQTTTransport
 import SwiftUI
 
+extension FocusedValues {
+  @Entry var activeServerListStore: ServerListStore?
+}
+
 public struct JollysMQTTWindowCommands: Commands {
   @Environment(\.openWindow) private var openWindow
+  @FocusedValue(\.activeServerListStore) private var activeServerListStore
 
   public init() {}
 
@@ -21,6 +26,30 @@ public struct JollysMQTTWindowCommands: Commands {
       }
       .keyboardShortcut("n", modifiers: .command)
     }
+    CommandGroup(after: .newItem) {
+      Button {
+        connectSelectedBroker()
+      } label: {
+        Text(
+          "Connect to Selected Broker",
+          bundle: #bundle,
+          comment:
+            "File-menu command that connects the selected saved broker in the current workspace."
+        )
+      }
+      .keyboardShortcut("o", modifiers: .command)
+      .disabled(
+        activeServerListStore?.state.selectedProfileID == nil
+          || activeServerListStore?.state.isConnectionRequestPending == true
+      )
+    }
+  }
+
+  private func connectSelectedBroker() {
+    guard let activeServerListStore,
+      let profileID = activeServerListStore.state.selectedProfileID
+    else { return }
+    Task { await activeServerListStore.send(.connect(profileID)) }
   }
 }
 
@@ -3102,6 +3131,7 @@ struct ServerListView: View {
         store: sceneStore.profileSync
       )
     }
+    .focusedSceneValue(\.activeServerListStore, store)
     .task {
       await sceneStore.profileSync.run()
     }
@@ -3690,7 +3720,8 @@ private struct BrokerListSidebar: View {
         BrokerProfileRow(
           id: ranked.id,
           name: ranked.profile.name,
-          endpoint: ranked.profile.endpointSummary
+          endpoint: ranked.profile.endpointSummary,
+          store: store
         )
         .tag(ranked.id)
         .contextMenu {
@@ -3812,6 +3843,7 @@ private struct BrokerProfileRow: View {
   let id: BrokerProfile.ID
   let name: String
   let endpoint: String
+  let store: ServerListStore
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
@@ -3823,6 +3855,11 @@ private struct BrokerProfileRow: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("server-list.profile.\(id.uuidString)")
+    #if os(macOS)
+      .onTapGesture(count: 2) {
+        Task { await store.send(.connect(id)) }
+      }
+    #endif
   }
 }
 
@@ -4107,6 +4144,8 @@ private struct BrokerInlineActions: View {
       }
     }
     .buttonStyle(.borderedProminent)
+    .keyboardShortcut(.return, modifiers: [])
+    .disabled(store.state.isConnectionRequestPending)
 
     Button {
       historyMaintenanceStore.send(.setPresented(true))
@@ -4376,6 +4415,8 @@ private struct BrokerActionButtons: View {
       }
     }
     .buttonStyle(.borderedProminent)
+    .keyboardShortcut(.return, modifiers: [])
+    .disabled(store.state.isConnectionRequestPending)
 
     Button {
       Task { await store.send(.editProfile(profileID)) }

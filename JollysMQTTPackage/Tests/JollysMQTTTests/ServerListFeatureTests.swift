@@ -294,6 +294,106 @@ struct ServerListFeatureTests {
     #expect(state.connectReady?.profile == profile.profile)
   }
 
+  @Test("Selecting a broker row never begins a connection")
+  @MainActor
+  func rowSelectionDoesNotConnect() {
+    let first = uniqueRankedProfile(name: "First", rank: 10)
+    let second = uniqueRankedProfile(name: "Second", rank: 20)
+    var state = ServerListFeature.State(
+      profiles: [first, second],
+      selectedProfileID: first.id
+    )
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .select(second.id)
+    )
+
+    #expect(effect == nil)
+    #expect(state.selectedProfileID == second.id)
+    #expect(!state.isConnectionRequestPending)
+    #expect(state.connectReady == nil)
+  }
+
+  @Test("Broker activation connects the exact available valid profile")
+  @MainActor
+  func rowActivationConnectsExactProfile() {
+    let first = uniqueRankedProfile(name: "First", rank: 10)
+    let second = uniqueRankedProfile(name: "Second", rank: 20)
+    var state = ServerListFeature.State(
+      profiles: [first, second],
+      selectedProfileID: first.id
+    )
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(second.id)
+    )
+
+    #expect(effect == nil)
+    #expect(state.connectReady?.profile == second.profile)
+    #expect(state.connectReady?.requestID == 1)
+  }
+
+  @Test("Unavailable and invalid broker rows cannot begin a connection")
+  @MainActor
+  func unavailableAndInvalidRowsDoNotConnect() throws {
+    let invalid = RankedBrokerProfile(
+      profile: .new(name: "Invalid", host: ""),
+      reorderRank: 10
+    )
+    var state = ServerListFeature.State(profiles: [invalid])
+
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(UUID())
+    )
+    #expect(!state.isConnectionRequestPending)
+    #expect(state.editor == nil)
+
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(invalid.id)
+    )
+    #expect(!state.isConnectionRequestPending)
+    #expect(state.connectReady == nil)
+    #expect(try #require(state.editor).validationIssues.isEmpty == false)
+  }
+
+  @Test("Repeated broker activation cannot replace an in-flight connection request")
+  @MainActor
+  func duplicateRowActivationIsSuppressed() throws {
+    let profile = rankedProfile(
+      name: "Credentialed",
+      rank: 10,
+      username: "operator"
+    )
+    var state = ServerListFeature.State(profiles: [profile])
+
+    let first = try #require(
+      ServerListFeature.reduce(
+        state: &state,
+        intent: .connect(profile.id)
+      )
+    )
+    let request = try #require(state.pendingConnectRequest)
+    let duplicate = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(profile.id)
+    )
+
+    #expect(
+      first
+        == .checkCredential(
+          profile.profile,
+          requestID: request.requestID
+        )
+    )
+    #expect(duplicate == nil)
+    #expect(state.pendingConnectRequest == request)
+    #expect(state.isConnectionRequestPending)
+  }
+
   @Test("The observable store persists a create and restores it on relaunch")
   @MainActor
   func storePersistsCreate() async throws {

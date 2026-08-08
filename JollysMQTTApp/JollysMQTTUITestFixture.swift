@@ -31,10 +31,27 @@
         ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_DESTINATION"]
         .flatMap(WorkspaceDestination.init(rawValue:))
         ?? .topics
-      let profile = BrokerProfile.new(
+      let requiresCredential =
+        ProcessInfo.processInfo.environment[
+          "JOLLYSMQTT_UI_REQUIRES_CREDENTIAL"
+        ] == "1"
+      let baseProfile = BrokerProfile.new(
         id: profileID,
         name: "UI Test Broker",
         host: "fixture.invalid"
+      )
+      let profile = BrokerProfile(
+        id: baseProfile.id,
+        name: baseProfile.name,
+        host: baseProfile.host,
+        port: baseProfile.port,
+        transport: baseProfile.transport,
+        username: requiresCredential ? "operator" : nil,
+        clientIDPolicy: baseProfile.clientIDPolicy,
+        cleanSession: baseProfile.cleanSession,
+        keepAliveSeconds: baseProfile.keepAliveSeconds,
+        reconnectPolicy: baseProfile.reconnectPolicy,
+        subscriptions: baseProfile.subscriptions
       )
       let profiles: [RankedBrokerProfile]
       if ProcessInfo.processInfo.environment[
@@ -71,6 +88,7 @@
           profileRepository: JollysMQTTestProfileRepository(
             profiles: profiles
           ),
+          credentialRepository: JollysMQTTestCredentialRepository(),
           workspaceRepository: JollysMQTTestWorkspaceRepository(
             route: route,
             selectedProfileID: profiles.first?.id,
@@ -81,6 +99,25 @@
           }
         )
       )
+    }
+  }
+
+  private actor JollysMQTTestCredentialRepository:
+    CredentialRepositoryProtocol
+  {
+    func status(for profileID: UUID) -> CredentialStatus {
+      CredentialStatus(availability: .missing, revision: 0)
+    }
+
+    func save(
+      _ credential: TransientCredential,
+      for profileID: UUID
+    ) -> CredentialStatus {
+      CredentialStatus(availability: .available, revision: 1)
+    }
+
+    func delete(for profileID: UUID) -> CredentialStatus {
+      CredentialStatus(availability: .missing, revision: 1)
     }
   }
 

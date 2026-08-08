@@ -346,6 +346,9 @@
     "Connect" : {
       "comment" : "Primary action that connects to a selected broker."
     },
+    "Connect to Selected Broker" : {
+      "comment" : "File-menu command that connects the selected saved broker in the current workspace."
+    },
     "Connect to the broker before publishing." : {
       "comment" : "Publish rejection when no connected feed can accept a command."
     },
