@@ -14,18 +14,22 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
   public struct PaneRequirements: Equatable, Sendable {
     public let topicTree: Double
     public let information: Double
+    public let graphDashboard: Double
     public let divider: Double
 
     public init(
       topicTree: Double,
       information: Double,
+      graphDashboard: Double = 320,
       divider: Double = 1
     ) {
       precondition(topicTree > 0)
       precondition(information > 0)
+      precondition(graphDashboard > 0)
       precondition(divider >= 0)
       self.topicTree = topicTree
       self.information = information
+      self.graphDashboard = graphDashboard
       self.divider = divider
     }
 
@@ -36,6 +40,16 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
 
     public var minimumRegularWidth: Double {
       topicTree + divider + information
+    }
+
+    public var minimumGraphWidth: Double {
+      minimumRegularWidth + divider + graphDashboard
+    }
+
+    public func minimumWidth(
+      for destination: WorkspaceDestination
+    ) -> Double {
+      destination == .charts ? minimumGraphWidth : minimumRegularWidth
     }
   }
 
@@ -53,11 +67,12 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
   public static func resolve(
     widthClass: WorkspaceWidthClass,
     availableWidth: Double,
+    destination: WorkspaceDestination = .details,
     requirements: PaneRequirements = .standard
   ) -> Self {
     guard widthClass == .regular,
       availableWidth.isFinite,
-      availableWidth >= requirements.minimumRegularWidth
+      availableWidth >= requirements.minimumWidth(for: destination)
     else {
       return .compactTabs
     }

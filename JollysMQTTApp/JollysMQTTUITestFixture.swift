@@ -92,7 +92,10 @@
           workspaceRepository: JollysMQTTestWorkspaceRepository(
             route: route,
             selectedProfileID: profiles.first?.id,
-            destination: requestedDestination
+            destination: requestedDestination,
+            persistenceFileURL: ProcessInfo.processInfo.environment[
+              "JOLLYSMQTT_UI_WORKSPACE_FILE"
+            ].map { URL(fileURLWithPath: $0) }
           ),
           brokerFeedFactory: BrokerFeedLeaseFactory { _ in
             JollysMQTTestFeed()
@@ -145,30 +148,51 @@
     private let route: WorkspaceRoute
     private let selectedProfileID: UUID?
     private let initialDestination: WorkspaceDestination
+    private let persistenceFileURL: URL?
     private var records: [WorkspaceID: WorkspaceRecord] = [:]
 
     init(
       route: WorkspaceRoute,
       selectedProfileID: UUID?,
-      destination: WorkspaceDestination
+      destination: WorkspaceDestination,
+      persistenceFileURL: URL?
     ) {
       self.route = route
       self.selectedProfileID = selectedProfileID
       self.initialDestination = destination
+      self.persistenceFileURL = persistenceFileURL
     }
 
-    func load(id: WorkspaceID) -> WorkspaceRecord {
-      records[id]
-        ?? WorkspaceRecord(
-          id: id,
-          route: route,
-          selectedProfileID: selectedProfileID,
-          destination: initialDestination
+    func load(id: WorkspaceID) throws -> WorkspaceRecord {
+      if let record = records[id] {
+        return record
+      }
+      if let persistenceFileURL,
+        FileManager.default.fileExists(atPath: persistenceFileURL.path)
+      {
+        let record = try JSONDecoder().decode(
+          WorkspaceRecord.self,
+          from: Data(contentsOf: persistenceFileURL)
         )
+        records[id] = record
+        return record
+      }
+      return WorkspaceRecord(
+        id: id,
+        route: route,
+        selectedProfileID: selectedProfileID,
+        destination: initialDestination
+      )
     }
 
-    func save(_ record: WorkspaceRecord) {
+    func save(_ record: WorkspaceRecord) throws {
       records[record.id] = record
+      if let persistenceFileURL {
+        try JSONEncoder().encode(record).write(
+          to: persistenceFileURL,
+          options: .atomic
+        )
+      }
     }
 
     func markClosed(id: WorkspaceID) {}

@@ -31,10 +31,13 @@ that still require physical Apple devices.
 - The compact UI test forces the tab presentation at the largest accessibility
   text category and verifies that Topics, Details, Publish, and Charts remain
   independently reachable.
-- The regular UI test forces the split presentation and verifies that the topic
-  column remains present alongside Details, Publish, and Charts.
-- UI tests restore Charts directly, open Help without depending on a keyboard,
-  and exercise Command-Return publishing on macOS.
+- The regular UI tests force the split presentation and verify that Charts
+  keeps the topic outline, selected-topic information, and resizable dashboard
+  visible together while users traverse topics and pin another payload. They
+  also verify compact-wide transitions preserve independent card pause state.
+- UI tests relaunch into the three-pane Charts workspace with its pinned card,
+  restore Charts directly, open Help without depending on a keyboard, and
+  exercise Command-Return publishing on macOS.
 - Broker-list UI tests verify that macOS presents Add Broker as a visible,
   correctly named sidebar action, that Command-Shift-N invokes the same action,
   and that both paths work when the list is empty.

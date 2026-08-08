@@ -4,7 +4,7 @@ description: "Desktop-specific information density, toolbar placement, split-vie
 area: "ui"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-08-08"
 tags:
   - "macos"
   - "swiftui"
@@ -33,6 +33,21 @@ The primary layout remains a native adjustable `NavigationSplitView`:
 - the user can resize or collapse the topic column through native macOS split
   behavior.
 
+When Charts is active and the window can fit all regions, the detail region
+uses a native horizontal split so the topic outline, selected-topic
+information, and chart dashboard remain visible in that order. The selected
+topic information has a 360-point minimum, 440-point ideal, and 600-point
+maximum width. The dashboard has a 320-point minimum and 640-point ideal width.
+Together with the topic outline and native divider widths, this makes 1,002
+points the regular graph-workspace threshold. Below that fit the workspace uses
+the compact tab presentation, where Charts remains a dedicated destination and
+keeps the same dashboard state.
+
+Navigating the outline only changes the information region; it does not dismiss
+or rebuild chart cards. Pinning from topic information updates the already
+visible dashboard. An empty dashboard keeps its region visible and explains
+how to select a numeric or Boolean payload and pin it.
+
 macOS topic rows are intentionally denser than touch-platform rows. Disclosure
 targets are 20 points, indentation advances by 12 points, and current payload
 summaries stay inline with the topic segment. iPhone and iPad retain 44-point
@@ -57,6 +72,10 @@ appears inline only while it is relevant.
   fit in the same height than in the touch presentation.
 - Copy and retained-value actions remain reachable without permanent vertical
   button stacks.
+- Charts at a fitting regular width presents three independently resizable
+  regions in topic-outline, topic-information, and dashboard order. Chart cards
+  preserve identity, order, pause state, settings, and clear boundaries while
+  topic selection changes.
 - Failure, generation-change, and history-degradation banners appear only while
   their exceptional state exists.
 - Compact iPhone/iPad navigation and touch target sizing are unchanged.

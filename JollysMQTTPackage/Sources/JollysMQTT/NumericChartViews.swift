@@ -140,7 +140,7 @@ struct NumericChartDashboardView: View {
           }
         } description: {
           Text(
-            "Select a numeric or Boolean payload value in Details, then pin it.",
+            "Select a numeric or Boolean payload in topic information, then choose Pin to Chart.",
             bundle: #bundle,
             comment: "Explains how to add cards to the chart dashboard."
           )

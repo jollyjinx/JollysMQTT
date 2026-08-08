@@ -1156,7 +1156,7 @@
     "Select a numeric or Boolean JSON leaf to enable charting." : {
       "comment" : "Explains that JSON containers cannot be charted."
     },
-    "Select a numeric or Boolean payload value in Details, then pin it." : {
+    "Select a numeric or Boolean payload in topic information, then choose Pin to Chart." : {
       "comment" : "Explains how to add cards to the chart dashboard."
     },
     "Select a Topic" : {

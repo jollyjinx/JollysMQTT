@@ -410,13 +410,29 @@ struct WorkspaceFeatureTests {
         directoryHint: .isDirectory
       )
     )
+    var temperatureCard = numericChartCard(
+      brokerID: brokerID,
+      topic: "factory/temperature"
+    )
+    temperatureCard.chart.isPaused = true
+    temperatureCard.presentationStyle = .step
+    temperatureCard.color = .orange
+    temperatureCard.gridSpan = .full
+    let pressureCard = numericChartCard(
+      brokerID: brokerID,
+      topic: "factory/pressure"
+    )
+    let dashboard = NumericChartDashboardConfiguration(
+      cards: [temperatureCard, pressureCard]
+    )
     try await workspaceRepository.save(
       WorkspaceRecord(
         id: workspaceID,
         route: .connected(profileID: brokerID),
         selectedProfileID: brokerID,
         selectedTopic: "factory/temperature",
-        destination: .charts
+        destination: .charts,
+        numericChartDashboard: dashboard
       )
     )
     let scene = JollysMQTTAppDependencies(
@@ -433,6 +449,7 @@ struct WorkspaceFeatureTests {
     )
 
     #expect(scene.destination == .charts)
+    #expect(scene.numericChartDashboard.state.configuration == dashboard)
 
     scene.toggleTopicExpansion(
       BrokerTopicID(brokerID: brokerID, fullTopic: "factory")
@@ -448,6 +465,7 @@ struct WorkspaceFeatureTests {
     )
 
     #expect(scene.destination == .charts)
+    #expect(scene.numericChartDashboard.state.configuration == dashboard)
 
     scene.selectTopic(nil)
     scene.selectTopic(
@@ -476,6 +494,7 @@ struct WorkspaceFeatureTests {
     await first.send(.selectProfile(profileID))
     await first.send(.connect(profileID: profileID))
     await first.send(.selectTopic("devices/pump/state"))
+    await first.send(.setDestination(.charts))
     await first.send(
       .setTopicOutlinePresentation(
         expandedTopics: ["devices", "devices/pump"],
@@ -484,6 +503,21 @@ struct WorkspaceFeatureTests {
       )
     )
     await first.send(.setTopicScrollAnchor("devices/pump/state"))
+    var firstCard = numericChartCard(
+      brokerID: profileID,
+      topic: "devices/pump/state"
+    )
+    firstCard.chart.isPaused = true
+    firstCard.presentationStyle = .points
+    firstCard.color = .purple
+    let secondCard = numericChartCard(
+      brokerID: profileID,
+      topic: "devices/pump/rate"
+    )
+    let dashboard = NumericChartDashboardConfiguration(
+      cards: [firstCard, secondCard]
+    )
+    await first.send(.setNumericChartDashboard(dashboard))
 
     let relaunched = WorkspaceStore(id: id, repository: repository)
     await relaunched.load()
@@ -502,6 +536,8 @@ struct WorkspaceFeatureTests {
     #expect(
       relaunched.state.record.topicScrollAnchor == "devices/pump/state"
     )
+    #expect(relaunched.state.record.destination == .charts)
+    #expect(relaunched.state.record.numericChartDashboard == dashboard)
   }
 
   @Test("Freeze state is deliberately absent from durable workspace state")

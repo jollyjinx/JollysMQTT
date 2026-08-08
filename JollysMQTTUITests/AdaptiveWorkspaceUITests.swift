@@ -72,6 +72,47 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
   }
 
   @MainActor
+  func testRegularChartsRemainBesideTopicInformationDuringTraversalAndPinning() {
+    let app = launch(destination: "charts", widthClass: "regular")
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"]
+        .waitForExistence(timeout: 5)
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-explorer"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["graph-dashboard-pane"].exists
+    )
+    XCTAssertTrue(app.staticTexts["No Pinned Charts"].exists)
+
+    drillToTemperature(in: app)
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"].exists
+    )
+    let pin = app.buttons["Pin to Chart"]
+    XCTAssertTrue(pin.waitForExistence(timeout: 3))
+    pin.tap()
+    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
+
+    let pressure = app.descendants(matching: .any)[
+      "topic-row.factory/line/pressure"
+    ]
+    XCTAssertTrue(pressure.exists)
+    pressure.tap()
+    XCTAssertTrue(app.buttons["Remove Chart"].exists)
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["graph-dashboard-pane"].exists
+    )
+  }
+
+  @MainActor
   func testCompactSelectionAdvancesAndReturnsToSelectedTopic() {
     let app = launch(destination: "topics", widthClass: "compact")
     XCTAssertTrue(
@@ -133,6 +174,81 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
       app.descendants(matching: .any)["payload-information-pane"].exists
     )
     XCTAssertTrue(app.staticTexts["factory/line/temperature"].exists)
+  }
+
+  @MainActor
+  func testChartResizeTransitionPreservesThePinnedCardAndPauseState() {
+    let app = launch(
+      destination: "charts",
+      widthClass: "regular",
+      resizeControl: true
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"]
+        .waitForExistence(timeout: 5)
+    )
+    drillToTemperature(in: app)
+    app.buttons["Pin to Chart"].tap()
+    let pause = app.buttons["Pause"]
+    XCTAssertTrue(pause.waitForExistence(timeout: 3))
+    pause.tap()
+    XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 3))
+
+    app.buttons["workspace.test.resize.compact"].tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.compact.tabs"]
+        .waitForExistence(timeout: 3)
+    )
+    XCTAssertTrue(app.tabBars.buttons["Charts"].isSelected)
+    XCTAssertTrue(app.buttons["Resume"].exists)
+
+    app.buttons["workspace.test.resize.regular"].tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"]
+        .waitForExistence(timeout: 3)
+    )
+    XCTAssertTrue(app.buttons["Resume"].exists)
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-explorer"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+  }
+
+  @MainActor
+  func testRelaunchRestoresTheWideGraphPaneAndPinnedCard() {
+    let persistenceURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("jollysmqtt-ui-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: persistenceURL) }
+    let app = launch(
+      destination: "charts",
+      widthClass: "regular",
+      workspaceFile: persistenceURL.path
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"]
+        .waitForExistence(timeout: 5)
+    )
+    drillToTemperature(in: app)
+    app.buttons["Pin to Chart"].tap()
+    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
+    waitForPersistedChart(at: persistenceURL)
+
+    app.terminate()
+    app.launch()
+
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.graph.split"]
+        .waitForExistence(timeout: 5)
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-explorer"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+    XCTAssertTrue(app.buttons["Remove Chart"].waitForExistence(timeout: 3))
   }
 
   @MainActor
@@ -384,7 +500,8 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     destination: String,
     widthClass: String,
     accessibilityTextSize: Bool = false,
-    resizeControl: Bool = false
+    resizeControl: Bool = false,
+    workspaceFile: String? = nil
   ) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-testing-connected"]
@@ -393,12 +510,33 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     }
     app.launchEnvironment["JOLLYSMQTT_UI_DESTINATION"] = destination
     app.launchEnvironment["JOLLYSMQTT_UI_WIDTH_CLASS"] = widthClass
+    if let workspaceFile {
+      app.launchEnvironment["JOLLYSMQTT_UI_WORKSPACE_FILE"] = workspaceFile
+    }
     if accessibilityTextSize {
       app.launchEnvironment["UIPreferredContentSizeCategoryName"] =
         "UICTContentSizeCategoryAccessibilityXXXL"
     }
     app.launch()
     return app
+  }
+
+  @MainActor
+  private func waitForPersistedChart(at url: URL) {
+    let persistedChart = NSPredicate { _, _ in
+      guard let data = try? Data(contentsOf: url),
+        let text = String(data: data, encoding: .utf8)
+      else {
+        return false
+      }
+      return text.contains("factory/line/temperature")
+        && text.contains("numericChartDashboard")
+    }
+    expectation(
+      for: persistedChart,
+      evaluatedWith: NSObject()
+    )
+    waitForExpectations(timeout: 5)
   }
 
   @MainActor

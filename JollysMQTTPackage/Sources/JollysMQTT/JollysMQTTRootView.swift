@@ -642,7 +642,8 @@ private struct SelectedPayloadWorkspace: View {
     #endif
     return AdaptiveWorkspacePresentation.resolve(
       widthClass: resolvedWidthClass,
-      availableWidth: availableWidth
+      availableWidth: availableWidth,
+      destination: sceneStore.destination
     )
   }
 
@@ -760,13 +761,10 @@ private struct PayloadCompactWorkspace: View {
         }
         .tag(WorkspaceDestination.publish)
 
-      ScrollView {
-        NumericChartDashboardView(
-          dashboard: sceneStore.numericChartDashboard,
-          layout: .compact
-        )
-        .padding(1)
-      }
+      NumericChartDashboardPane(
+        dashboard: sceneStore.numericChartDashboard,
+        layout: .compact
+      )
       .tabItem {
         Label {
           Text(
@@ -853,13 +851,11 @@ private struct PayloadWideWorkspace: View {
           }
           .tag(WorkspaceDestination.publish)
 
-        ScrollView {
-          NumericChartDashboardView(
-            dashboard: sceneStore.numericChartDashboard,
-            layout: .wide
-          )
-          .padding(1)
-        }
+        PayloadWideGraphWorkspace(
+          sceneStore: sceneStore,
+          inspectorStore: inspectorStore,
+          historyStore: historyStore
+        )
         .tabItem {
           Label {
             Text(
@@ -875,6 +871,89 @@ private struct PayloadWideWorkspace: View {
       }
     }
     .accessibilityIdentifier("workspace.wide.split")
+  }
+}
+
+private struct PayloadWideGraphWorkspace: View {
+  @Bindable var sceneStore: WorkspaceSceneStore
+  @Bindable var inspectorStore: PayloadInspectorStore
+  @Bindable var historyStore: HistoryStore
+
+  var body: some View {
+    #if os(macOS)
+      HSplitView {
+        PayloadInspectorPane(
+          store: inspectorStore,
+          historyStore: historyStore,
+          historyMaintenanceStore: sceneStore.historyMaintenance,
+          retainedDeletionStore: sceneStore.retainedDeletion,
+          numericChartDashboard: sceneStore.numericChartDashboard,
+          onPinNumericChart: sceneStore.pinNumericChart,
+          layout: .wide
+        )
+        .frame(minWidth: 360, idealWidth: 440, maxWidth: 600)
+
+        NumericChartDashboardPane(
+          dashboard: sceneStore.numericChartDashboard,
+          layout: .wide
+        )
+        .frame(minWidth: 320, idealWidth: 640)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .accessibilityIdentifier("workspace.graph.split")
+    #else
+      NavigationSplitView {
+        PayloadInspectorPane(
+          store: inspectorStore,
+          historyStore: historyStore,
+          historyMaintenanceStore: sceneStore.historyMaintenance,
+          retainedDeletionStore: sceneStore.retainedDeletion,
+          numericChartDashboard: sceneStore.numericChartDashboard,
+          onPinNumericChart: sceneStore.pinNumericChart,
+          layout: .wide
+        )
+        .navigationTitle(
+          Text(
+            "Details",
+            bundle: #bundle,
+            comment: "Selected-topic information column title beside the graph dashboard."
+          )
+        )
+        .navigationSplitViewColumnWidth(min: 360, ideal: 440)
+      } detail: {
+        NumericChartDashboardPane(
+          dashboard: sceneStore.numericChartDashboard,
+          layout: .wide
+        )
+        .navigationTitle(
+          Text(
+            "Charts",
+            bundle: #bundle,
+            comment: "Graph-dashboard column title beside selected-topic information."
+          )
+        )
+      }
+      .navigationSplitViewStyle(.balanced)
+      .accessibilityIdentifier("workspace.graph.split")
+    #endif
+  }
+}
+
+private struct NumericChartDashboardPane: View {
+  @Bindable var dashboard: NumericChartDashboardStore
+  let layout: NumericChartDashboardLayout
+
+  var body: some View {
+    ScrollView {
+      NumericChartDashboardView(
+        dashboard: dashboard,
+        layout: layout
+      )
+      .frame(maxWidth: .infinity, minHeight: 320)
+      .padding(1)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .accessibilityIdentifier("graph-dashboard-pane")
   }
 }
 

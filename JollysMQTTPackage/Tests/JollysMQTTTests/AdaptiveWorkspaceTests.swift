@@ -31,19 +31,22 @@ struct AdaptiveWorkspaceTests {
     )
   }
 
-  @Test("Regular presentation fits exactly the topic tree and information pane")
-  func regularPresentationUsesTwoPaneFit() {
+  @Test("Regular presentation uses destination-specific pane fit")
+  func regularPresentationUsesDestinationPaneFit() {
     let requirements = AdaptiveWorkspacePresentation.PaneRequirements(
       topicTree: 320,
       information: 360,
+      graphDashboard: 320,
       divider: 1
     )
 
     #expect(requirements.minimumRegularWidth == 681)
+    #expect(requirements.minimumGraphWidth == 1_002)
     #expect(
       AdaptiveWorkspacePresentation.resolve(
         widthClass: .regular,
         availableWidth: 680,
+        destination: .details,
         requirements: requirements
       ) == .compactTabs
     )
@@ -51,6 +54,7 @@ struct AdaptiveWorkspaceTests {
       AdaptiveWorkspacePresentation.resolve(
         widthClass: .regular,
         availableWidth: 681,
+        destination: .details,
         requirements: requirements
       ) == .wideSplit
     )
@@ -58,8 +62,25 @@ struct AdaptiveWorkspaceTests {
       AdaptiveWorkspacePresentation.resolve(
         widthClass: .compact,
         availableWidth: 1_200,
+        destination: .details,
         requirements: requirements
       ) == .compactTabs
+    )
+    #expect(
+      AdaptiveWorkspacePresentation.resolve(
+        widthClass: .regular,
+        availableWidth: 1_001,
+        destination: .charts,
+        requirements: requirements
+      ) == .compactTabs
+    )
+    #expect(
+      AdaptiveWorkspacePresentation.resolve(
+        widthClass: .regular,
+        availableWidth: 1_002,
+        destination: .charts,
+        requirements: requirements
+      ) == .wideSplit
     )
   }
 
