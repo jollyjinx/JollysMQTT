@@ -16,9 +16,12 @@
     let dependencies: JollysMQTTAppDependencies
 
     static var current: Self? {
-      guard
-        ProcessInfo.processInfo.arguments.contains("--ui-testing-connected")
-      else {
+      let arguments = ProcessInfo.processInfo.arguments
+      let launchesConnectedWorkspace =
+        arguments.contains("--ui-testing-connected")
+      let launchesBrokerList =
+        arguments.contains("--ui-testing-broker-list")
+      guard launchesConnectedWorkspace || launchesBrokerList else {
         return nil
       }
       let requestedDestination =
@@ -30,16 +33,24 @@
         name: "UI Test Broker",
         host: "fixture.invalid"
       )
+      let profiles =
+        ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_EMPTY_BROKER_LIST"]
+          == "1"
+        ? []
+        : [RankedBrokerProfile(profile: profile, reorderRank: 0)]
+      let route: WorkspaceRoute =
+        launchesBrokerList
+        ? .serverList
+        : .connected(profileID: profile.id)
       return Self(
         workspaceID: workspaceID,
         dependencies: JollysMQTTAppDependencies(
           profileRepository: JollysMQTTestProfileRepository(
-            profiles: [
-              RankedBrokerProfile(profile: profile, reorderRank: 0)
-            ]
+            profiles: profiles
           ),
           workspaceRepository: JollysMQTTestWorkspaceRepository(
-            profileID: profile.id,
+            route: route,
+            selectedProfileID: profiles.first?.id,
             destination: requestedDestination
           ),
           brokerFeedFactory: BrokerFeedLeaseFactory { _ in
@@ -71,15 +82,18 @@
   private actor JollysMQTTestWorkspaceRepository:
     WorkspaceRepositoryProtocol
   {
-    private let profileID: UUID
+    private let route: WorkspaceRoute
+    private let selectedProfileID: UUID?
     private let initialDestination: WorkspaceDestination
     private var records: [WorkspaceID: WorkspaceRecord] = [:]
 
     init(
-      profileID: UUID,
+      route: WorkspaceRoute,
+      selectedProfileID: UUID?,
       destination: WorkspaceDestination
     ) {
-      self.profileID = profileID
+      self.route = route
+      self.selectedProfileID = selectedProfileID
       self.initialDestination = destination
     }
 
@@ -87,8 +101,8 @@
       records[id]
         ?? WorkspaceRecord(
           id: id,
-          route: .connected(profileID: profileID),
-          selectedProfileID: profileID,
+          route: route,
+          selectedProfileID: selectedProfileID,
           destination: initialDestination
         )
     }

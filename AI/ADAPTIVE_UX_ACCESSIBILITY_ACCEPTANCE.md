@@ -4,7 +4,7 @@ description: "Release evidence and remaining device-only checks for adaptive nav
 area: "ui"
 doc_type: "acceptance"
 status: "active"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-08-08"
 tags:
   - "accessibility"
   - "adaptive-layout"
@@ -35,6 +35,9 @@ that still require physical Apple devices.
   column remains present alongside Details, Publish, and Charts.
 - UI tests restore Charts directly, open Help without depending on a keyboard,
   and exercise Command-Return publishing on macOS.
+- Broker-list UI tests verify that macOS presents Add Broker as a visible,
+  correctly named sidebar action, that Command-Shift-N invokes the same action,
+  and that both paths work when the list is empty.
 - macOS and generic iOS builds compile the same package UI and String Catalog.
 
 ## Keyboard, editing, and alternate input

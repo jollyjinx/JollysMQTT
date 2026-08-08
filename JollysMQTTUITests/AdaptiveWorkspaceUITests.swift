@@ -59,6 +59,40 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
 
   #if os(macOS)
     @MainActor
+    func testAddBrokerIsDirectNamedActionFromEmptyListAndOpensCreationEditor() {
+      let app = launchBrokerList(empty: true)
+      let addBroker = app.buttons["server-list.add-broker"]
+
+      XCTAssertTrue(
+        app.descendants(matching: .any)["onboarding.empty"]
+          .waitForExistence(timeout: 5)
+      )
+      XCTAssertTrue(addBroker.waitForExistence(timeout: 5))
+      XCTAssertEqual(addBroker.label, "Add Broker")
+
+      addBroker.click()
+      XCTAssertTrue(
+        app.staticTexts["Broker Profile"].waitForExistence(timeout: 3)
+      )
+    }
+
+    @MainActor
+    func testAddBrokerShortcutWorksFromEmptyBrokerList() {
+      let app = launchBrokerList(empty: true)
+
+      XCTAssertTrue(
+        app.descendants(matching: .any)["onboarding.empty"]
+          .waitForExistence(timeout: 5)
+      )
+      XCTAssertTrue(app.staticTexts["No Brokers"].exists)
+
+      app.typeKey("n", modifierFlags: [.command, .shift])
+      XCTAssertTrue(
+        app.staticTexts["Broker Profile"].waitForExistence(timeout: 3)
+      )
+    }
+
+    @MainActor
     func testFocusedPublishCommandUsesCommandReturn() {
       let app = launch(destination: "publish", widthClass: "regular")
       let topic = app.textFields["publish.topic"]
@@ -92,6 +126,18 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     if accessibilityTextSize {
       app.launchEnvironment["UIPreferredContentSizeCategoryName"] =
         "UICTContentSizeCategoryAccessibilityXXXL"
+    }
+    app.launch()
+    return app
+  }
+
+  @MainActor
+  private func launchBrokerList(empty: Bool = false) -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-testing-broker-list"]
+    app.launchEnvironment["JOLLYSMQTT_UI_WIDTH_CLASS"] = "regular"
+    if empty {
+      app.launchEnvironment["JOLLYSMQTT_UI_EMPTY_BROKER_LIST"] = "1"
     }
     app.launch()
     return app

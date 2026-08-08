@@ -120,6 +120,7 @@ targets:
       - target: JollysMQTT
     settings:
       base:
+        BUNDLE_LOADER: ""
         CODE_SIGNING_ALLOWED: NO
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.JollysMQTTUITests

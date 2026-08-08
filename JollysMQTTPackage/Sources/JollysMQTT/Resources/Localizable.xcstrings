@@ -98,7 +98,7 @@
       "comment" : "Description on the initial empty broker-list screen."
     },
     "Add Broker" : {
-      "comment" : "Toolbar action that creates a broker profile."
+      "comment" : "Action that creates a broker profile."
     },
     "Add Subscription" : {
       "comment" : "Action that adds an MQTT subscription filter."

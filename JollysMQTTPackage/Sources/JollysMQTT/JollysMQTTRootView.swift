@@ -3641,8 +3641,24 @@ private struct BrokerListSidebar: View {
         BrokerListEmptyState()
       }
     }
-    .toolbar {
-      #if os(iOS)
+    .modifier(BrokerListActionsModifier(store: store))
+  }
+}
+
+private struct BrokerListActionsModifier: ViewModifier {
+  let store: ServerListStore
+
+  func body(content: Content) -> some View {
+    #if os(macOS)
+      content.safeAreaInset(edge: .bottom) {
+        AddBrokerButton(store: store)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 6)
+          .background(.bar)
+      }
+    #else
+      content.toolbar {
         ToolbarItem(placement: .topBarLeading) {
           EditButton()
             .accessibilityHint(
@@ -3653,31 +3669,42 @@ private struct BrokerListSidebar: View {
               )
             )
         }
-      #endif
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          Task { await store.send(.createProfile(id: UUID())) }
-        } label: {
-          Label {
-            Text(
-              "Add Broker",
-              bundle: #bundle,
-              comment: "Toolbar action that creates a broker profile."
-            )
-          } icon: {
-            Image(systemName: "plus")
-          }
+        ToolbarItem(placement: .primaryAction) {
+          AddBrokerButton(store: store)
         }
-        .keyboardShortcut("n", modifiers: [.command, .shift])
-        .accessibilityHint(
-          Text(
-            "Opens the broker profile editor.",
-            bundle: #bundle,
-            comment: "Accessibility hint for the add broker action."
-          )
+      }
+    #endif
+  }
+}
+
+private struct AddBrokerButton: View {
+  let store: ServerListStore
+
+  var body: some View {
+    Button(action: addBroker) {
+      Label {
+        Text(
+          "Add Broker",
+          bundle: #bundle,
+          comment: "Action that creates a broker profile."
         )
+      } icon: {
+        Image(systemName: "plus")
       }
     }
+    .keyboardShortcut("n", modifiers: [.command, .shift])
+    .accessibilityIdentifier("server-list.add-broker")
+    .accessibilityHint(
+      Text(
+        "Opens the broker profile editor.",
+        bundle: #bundle,
+        comment: "Accessibility hint for the add broker action."
+      )
+    )
+  }
+
+  private func addBroker() {
+    Task { await store.send(.createProfile(id: UUID())) }
   }
 }
 
