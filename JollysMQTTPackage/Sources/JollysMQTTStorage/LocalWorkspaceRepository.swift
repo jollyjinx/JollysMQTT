@@ -14,6 +14,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
   public var expandedTopics: [String]
   public var topicSearchText: String
   public var topicSortMode: BrokerTopicSortMode
+  public var topicScrollAnchor: String?
   public var destination: WorkspaceDestination
   public var numericChartDashboard: NumericChartDashboardConfiguration
   public var closedAt: Date?
@@ -26,6 +27,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     expandedTopics: [String] = [],
     topicSearchText: String = "",
     topicSortMode: BrokerTopicSortMode = .name,
+    topicScrollAnchor: String? = nil,
     destination: WorkspaceDestination = .topics,
     numericChart: NumericChartConfiguration? = nil,
     numericChartDashboard: NumericChartDashboardConfiguration? = nil,
@@ -38,6 +40,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     self.expandedTopics = Array(Set(expandedTopics)).sorted()
     self.topicSearchText = topicSearchText
     self.topicSortMode = topicSortMode
+    self.topicScrollAnchor = topicScrollAnchor
     self.destination = destination
     self.numericChartDashboard =
       numericChartDashboard
@@ -66,6 +69,7 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     case expandedTopics
     case topicSearchText
     case topicSortMode
+    case topicScrollAnchor
     case destination
     case numericChart
     case numericChartDashboard
@@ -104,6 +108,10 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
         BrokerTopicSortMode.self,
         forKey: .topicSortMode
       ) ?? .name
+    topicScrollAnchor = try container.decodeIfPresent(
+      String.self,
+      forKey: .topicScrollAnchor
+    )
     destination =
       try container.decodeIfPresent(
         WorkspaceDestination.self,
@@ -138,6 +146,10 @@ public struct WorkspaceRecord: Codable, Equatable, Sendable {
     try container.encode(expandedTopics, forKey: .expandedTopics)
     try container.encode(topicSearchText, forKey: .topicSearchText)
     try container.encode(topicSortMode, forKey: .topicSortMode)
+    try container.encodeIfPresent(
+      topicScrollAnchor,
+      forKey: .topicScrollAnchor
+    )
     try container.encode(destination, forKey: .destination)
     try container.encode(
       numericChartDashboard,

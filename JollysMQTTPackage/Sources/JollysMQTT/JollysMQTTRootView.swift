@@ -579,6 +579,7 @@ private struct HistoryDegradedView: View {
 
 private struct SelectedPayloadWorkspace: View {
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @State private var testingPresentation: AdaptiveWorkspacePresentation?
   let topicState: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
   @Bindable var inspectorStore: PayloadInspectorStore
@@ -586,29 +587,48 @@ private struct SelectedPayloadWorkspace: View {
   @Bindable var publishStore: PublishStore
 
   var body: some View {
-    switch AdaptiveWorkspacePresentation.resolve(
-      widthClass: resolvedWidthClass
-    ) {
-    case .compactTabs:
-      PayloadCompactWorkspace(
-        topicState: topicState,
-        sceneStore: sceneStore,
-        inspectorStore: inspectorStore,
-        historyStore: historyStore,
-        publishStore: publishStore
+    GeometryReader { proxy in
+      let presentation = resolvedPresentation(
+        availableWidth: Double(proxy.size.width)
       )
-    case .wideSplit:
-      PayloadWideWorkspace(
-        topicState: topicState,
-        sceneStore: sceneStore,
-        inspectorStore: inspectorStore,
-        historyStore: historyStore,
-        publishStore: publishStore
-      )
+      switch presentation {
+      case .compactTabs:
+        PayloadCompactWorkspace(
+          topicState: topicState,
+          sceneStore: sceneStore,
+          inspectorStore: inspectorStore,
+          historyStore: historyStore,
+          publishStore: publishStore
+        )
+      case .wideSplit:
+        PayloadWideWorkspace(
+          topicState: topicState,
+          sceneStore: sceneStore,
+          inspectorStore: inspectorStore,
+          historyStore: historyStore,
+          publishStore: publishStore
+        )
+      }
     }
+    #if DEBUG
+      .overlay(alignment: .bottomTrailing) {
+        if ProcessInfo.processInfo.arguments.contains(
+          "--ui-testing-resize-workspace"
+        ) {
+          WorkspaceResizeTestControls(
+            presentation: $testingPresentation
+          )
+        }
+      }
+    #endif
   }
 
-  private var resolvedWidthClass: WorkspaceWidthClass {
+  private func resolvedPresentation(
+    availableWidth: Double
+  ) -> AdaptiveWorkspacePresentation {
+    if let testingPresentation {
+      return testingPresentation
+    }
     #if DEBUG
       if ProcessInfo.processInfo.arguments.contains(
         "--ui-testing-connected"
@@ -617,12 +637,60 @@ private struct SelectedPayloadWorkspace: View {
           "JOLLYSMQTT_UI_WIDTH_CLASS"
         ]
       {
-        return rawValue == "compact" ? .compact : .regular
+        return rawValue == "compact" ? .compactTabs : .wideSplit
       }
     #endif
+    return AdaptiveWorkspacePresentation.resolve(
+      widthClass: resolvedWidthClass,
+      availableWidth: availableWidth
+    )
+  }
+
+  private var resolvedWidthClass: WorkspaceWidthClass {
     return horizontalSizeClass == .compact ? .compact : .regular
   }
 }
+
+#if DEBUG
+  private struct WorkspaceResizeTestControls: View {
+    @Binding var presentation: AdaptiveWorkspacePresentation?
+
+    var body: some View {
+      HStack {
+        Button {
+          presentation = .compactTabs
+        } label: {
+          Image(systemName: "rectangle.compress.vertical")
+        }
+        .accessibilityLabel(
+          Text(
+            "Use Compact Test Layout",
+            bundle: #bundle,
+            comment: "UI-test-only control that simulates a compact workspace resize."
+          )
+        )
+        .accessibilityIdentifier("workspace.test.resize.compact")
+
+        Button {
+          presentation = .wideSplit
+        } label: {
+          Image(systemName: "rectangle.split.2x1")
+        }
+        .accessibilityLabel(
+          Text(
+            "Use Regular Test Layout",
+            bundle: #bundle,
+            comment: "UI-test-only control that simulates a regular workspace resize."
+          )
+        )
+        .accessibilityIdentifier("workspace.test.resize.regular")
+      }
+      .padding(8)
+      .background(.bar, in: .rect(cornerRadius: 8))
+      .padding(8)
+    }
+  }
+#endif
 
 private struct PayloadCompactWorkspace: View {
   let topicState: TopicOutlineFeature.State
@@ -640,7 +708,8 @@ private struct PayloadCompactWorkspace: View {
     ) {
       TopicExplorerView(
         state: topicState,
-        sceneStore: sceneStore
+        sceneStore: sceneStore,
+        selectionNavigationBehavior: .compactAdvancesToDetails
       )
       .tabItem {
         Label {
@@ -726,7 +795,8 @@ private struct PayloadWideWorkspace: View {
     NavigationSplitView {
       TopicExplorerView(
         state: topicState,
-        sceneStore: sceneStore
+        sceneStore: sceneStore,
+        selectionNavigationBehavior: .persistentInformationPane
       )
       .navigationTitle(
         Text(
@@ -1153,6 +1223,7 @@ private struct PayloadInspectorPane: View {
       store.send(.setLayout(layout))
     }
     .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("payload-information-pane")
   }
 }
 
@@ -1889,6 +1960,7 @@ private struct ConnectedWorkspaceHeader: View {
 private struct TopicExplorerView: View {
   let state: TopicOutlineFeature.State
   @Bindable var sceneStore: WorkspaceSceneStore
+  let selectionNavigationBehavior: TopicSelectionNavigationBehavior
 
   var body: some View {
     VStack(spacing: explorerSpacing) {
@@ -1907,7 +1979,17 @@ private struct TopicExplorerView: View {
         TopicOutlineEmptyState(isSearching: !state.searchText.isEmpty)
           .frame(maxHeight: .infinity)
       } else {
-        List(selection: $sceneStore.selectedTopicID) {
+        List(
+          selection: Binding(
+            get: { sceneStore.selectedTopicID },
+            set: {
+              sceneStore.selectTopic(
+                $0,
+                navigationBehavior: selectionNavigationBehavior
+              )
+            }
+          )
+        ) {
           ForEach(state.rows) { row in
             TopicOutlineRow(
               row: row,
@@ -1919,10 +2001,12 @@ private struct TopicExplorerView: View {
             .modifier(TopicOutlineListRowStyle())
           }
         }
+        .scrollPosition(id: $sceneStore.topicScrollPosition)
         .modifier(TopicOutlineListStyle())
       }
     }
     .frame(minHeight: 320)
+    .accessibilityIdentifier("topic-explorer")
   }
 
   private var explorerSpacing: CGFloat {
@@ -2619,6 +2703,7 @@ private struct TopicOutlineRow: View {
               "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
           )
         )
+        .accessibilityIdentifier("topic-disclosure.\(row.fullTopic)")
       } else {
         Color.clear.frame(width: disclosureSize, height: disclosureSize)
           .accessibilityHidden(true)
@@ -2626,6 +2711,7 @@ private struct TopicOutlineRow: View {
       TopicOutlineRowContent(row: row)
     }
     .padding(.leading, CGFloat(min(row.depth, 12)) * indentation)
+    .accessibilityIdentifier("topic-row.\(row.fullTopic)")
   }
 
   private var disclosureSize: CGFloat {

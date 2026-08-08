@@ -192,6 +192,39 @@
       )
       snapshotContinuation.yield(BrokerFeedSnapshot(phase: .connected))
       topicContinuation.yield(.empty)
+      let topicContinuation = topicContinuation
+      Task {
+        let ingestion = BrokerFeedIngestion(
+          brokerID: JollysMQTTUITestFixture.profileID,
+          historySourceID: "ui-test-source",
+          historyWriter: DisabledBrokerHistoryWriter()
+        )
+        let epoch = ConnectionEpochID(
+          rawValue: UUID(
+            uuidString: "28BD99D5-E270-46B0-9753-E30CD5A274E8"
+          )!
+        )
+        let topics = [
+          ("factory/line/temperature", "21.5"),
+          ("factory/line/pressure", "101.3"),
+          ("factory/other/status", "ready"),
+        ]
+        for (offset, fixture) in topics.enumerated() {
+          await ingestion.ingest(
+            BrokerInboundMessage(
+              connectionEpoch: epoch,
+              ordinal: UInt64(offset + 1),
+              topic: fixture.0,
+              payload: Data(fixture.1.utf8),
+              qos: .atMostOnce,
+              retained: false,
+              duplicate: false,
+              receivedAtMicroseconds: Int64(offset + 1) * 1_000_000
+            )
+          )
+        }
+        topicContinuation.yield(await ingestion.flush())
+      }
     }
 
     func snapshots() -> AsyncStream<BrokerFeedSnapshot> {

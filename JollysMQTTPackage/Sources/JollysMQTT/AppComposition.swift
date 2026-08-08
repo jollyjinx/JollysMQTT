@@ -535,6 +535,29 @@ public final class WorkspaceSceneStore {
     set { setTopicSortMode(newValue) }
   }
 
+  public var topicScrollPosition: BrokerTopicID? {
+    get {
+      guard case .connected(let brokerID) = workspace.state.record.route,
+        let topic = workspace.state.record.topicScrollAnchor
+      else {
+        return nil
+      }
+      return BrokerTopicID(brokerID: brokerID, fullTopic: topic)
+    }
+    set {
+      guard let newValue,
+        case .connected(let brokerID) = workspace.state.record.route,
+        newValue.brokerID == brokerID,
+        topics.state.rows.contains(where: { $0.id == newValue })
+      else {
+        return
+      }
+      workspace.sendImmediately(
+        .setTopicScrollAnchor(newValue.fullTopic)
+      )
+    }
+  }
+
   public var destination: WorkspaceDestination {
     get { workspace.state.record.destination }
     set {
@@ -697,7 +720,11 @@ public final class WorkspaceSceneStore {
     await connection.setSceneActive(isActive)
   }
 
-  public func selectTopic(_ id: BrokerTopicID?) {
+  public func selectTopic(
+    _ id: BrokerTopicID?,
+    navigationBehavior: TopicSelectionNavigationBehavior =
+      .compactAdvancesToDetails
+  ) {
     guard
       id == nil || topics.state.rows.contains(where: { $0.id == id })
     else {
@@ -707,7 +734,9 @@ public final class WorkspaceSceneStore {
     topics.send(.selectTopic(id))
     workspace.sendImmediately(.selectTopic(id?.fullTopic))
     if case .current = topics.state.payloadSelection {
-      destination = .details
+      destination = navigationBehavior.destinationAfterSelectingCurrentValue(
+        from: destination
+      )
     }
   }
 

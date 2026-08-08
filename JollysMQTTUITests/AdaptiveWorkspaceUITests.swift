@@ -39,6 +39,103 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
   }
 
   @MainActor
+  func testRegularSelectionAndDrillingKeepTopicTreeBesideInformation() {
+    let app = launch(destination: "topics", widthClass: "regular")
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.wide.split"]
+        .waitForExistence(timeout: 5)
+    )
+
+    drillToTemperature(in: app)
+
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-explorer"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-row.factory/line/pressure"]
+        .exists
+    )
+
+    let other = app.descendants(matching: .any)[
+      "topic-disclosure.factory/other"
+    ]
+    XCTAssertTrue(other.exists)
+    other.tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)["topic-row.factory/other/status"]
+        .waitForExistence(timeout: 2)
+    )
+    XCTAssertTrue(app.staticTexts["factory/line/temperature"].exists)
+  }
+
+  @MainActor
+  func testCompactSelectionAdvancesAndReturnsToSelectedTopic() {
+    let app = launch(destination: "topics", widthClass: "compact")
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.compact.tabs"]
+        .waitForExistence(timeout: 5)
+    )
+
+    drillToTemperature(in: app)
+
+    XCTAssertTrue(app.tabBars.buttons["Details"].isSelected)
+    XCTAssertTrue(app.staticTexts["factory/line/temperature"].exists)
+    app.tabBars.buttons["Topics"].tap()
+    XCTAssertTrue(app.tabBars.buttons["Topics"].isSelected)
+    XCTAssertTrue(
+      app.descendants(matching: .any)[
+        "topic-row.factory/line/temperature"
+      ].exists
+    )
+  }
+
+  @MainActor
+  func testResizeTransitionPreservesSelectionExpansionAndPayload() {
+    let app = launch(
+      destination: "topics",
+      widthClass: "regular",
+      resizeControl: true
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.wide.split"]
+        .waitForExistence(timeout: 5)
+    )
+    drillToTemperature(in: app)
+
+    app.buttons["workspace.test.resize.compact"].tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.compact.tabs"]
+        .waitForExistence(timeout: 3)
+    )
+    XCTAssertTrue(app.tabBars.buttons["Topics"].isSelected)
+    XCTAssertTrue(
+      app.descendants(matching: .any)[
+        "topic-row.factory/line/temperature"
+      ].exists
+    )
+    app.tabBars.buttons["Details"].tap()
+    XCTAssertTrue(app.staticTexts["factory/line/temperature"].exists)
+
+    app.buttons["workspace.test.resize.regular"].tap()
+    XCTAssertTrue(
+      app.descendants(matching: .any)["workspace.wide.split"]
+        .waitForExistence(timeout: 3)
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)[
+        "topic-row.factory/line/temperature"
+      ].exists
+    )
+    XCTAssertTrue(
+      app.descendants(matching: .any)["payload-information-pane"].exists
+    )
+    XCTAssertTrue(app.staticTexts["factory/line/temperature"].exists)
+  }
+
+  @MainActor
   func testRestoredDestinationAndHelpAreKeyboardIndependent() {
     let app = launch(destination: "charts", widthClass: "regular")
 
@@ -286,10 +383,14 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
   private func launch(
     destination: String,
     widthClass: String,
-    accessibilityTextSize: Bool = false
+    accessibilityTextSize: Bool = false,
+    resizeControl: Bool = false
   ) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-testing-connected"]
+    if resizeControl {
+      app.launchArguments.append("--ui-testing-resize-workspace")
+    }
     app.launchEnvironment["JOLLYSMQTT_UI_DESTINATION"] = destination
     app.launchEnvironment["JOLLYSMQTT_UI_WIDTH_CLASS"] = widthClass
     if accessibilityTextSize {
@@ -298,6 +399,27 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
     }
     app.launch()
     return app
+  }
+
+  @MainActor
+  private func drillToTemperature(in app: XCUIApplication) {
+    let factory = app.descendants(matching: .any)[
+      "topic-disclosure.factory"
+    ]
+    XCTAssertTrue(factory.waitForExistence(timeout: 5))
+    factory.tap()
+
+    let line = app.descendants(matching: .any)[
+      "topic-disclosure.factory/line"
+    ]
+    XCTAssertTrue(line.waitForExistence(timeout: 2))
+    line.tap()
+
+    let temperature = app.descendants(matching: .any)[
+      "topic-row.factory/line/temperature"
+    ]
+    XCTAssertTrue(temperature.waitForExistence(timeout: 2))
+    temperature.tap()
   }
 
   @MainActor

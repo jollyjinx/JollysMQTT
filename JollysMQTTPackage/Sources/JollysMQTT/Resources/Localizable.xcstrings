@@ -1438,8 +1438,14 @@
     "Unix time: %lld µs" : {
       "comment" : "Exact local receive timestamp in microseconds for one durable MQTT history row."
     },
+    "Use Compact Test Layout" : {
+      "comment" : "UI-test-only control that simulates a compact workspace resize."
+    },
     "Use Local Profiles with This iCloud Account" : {
       "comment" : "Explicitly resumes CloudKit by uploading the preserved local profiles to the current account."
+    },
+    "Use Regular Test Layout" : {
+      "comment" : "UI-test-only control that simulates a regular workspace resize."
     },
     "Use Selected Topic" : {
       "comment" : "Re-enables publish-topic prefill from outline selection."

@@ -443,7 +443,19 @@ struct WorkspaceFeatureTests {
       BrokerTopicID(
         brokerID: brokerID,
         fullTopic: "factory/temperature"
-      )
+      ),
+      navigationBehavior: .persistentInformationPane
+    )
+
+    #expect(scene.destination == .charts)
+
+    scene.selectTopic(nil)
+    scene.selectTopic(
+      BrokerTopicID(
+        brokerID: brokerID,
+        fullTopic: "factory/temperature"
+      ),
+      navigationBehavior: .compactAdvancesToDetails
     )
 
     #expect(scene.destination == .details)
@@ -471,6 +483,7 @@ struct WorkspaceFeatureTests {
         sortMode: .descendantMessages
       )
     )
+    await first.send(.setTopicScrollAnchor("devices/pump/state"))
 
     let relaunched = WorkspaceStore(id: id, repository: repository)
     await relaunched.load()
@@ -485,6 +498,9 @@ struct WorkspaceFeatureTests {
     #expect(relaunched.state.record.topicSearchText == "state")
     #expect(
       relaunched.state.record.topicSortMode == .descendantMessages
+    )
+    #expect(
+      relaunched.state.record.topicScrollAnchor == "devices/pump/state"
     )
   }
 

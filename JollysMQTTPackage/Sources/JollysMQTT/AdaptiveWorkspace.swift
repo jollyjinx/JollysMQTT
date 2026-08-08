@@ -11,6 +11,34 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
   case compactTabs
   case wideSplit
 
+  public struct PaneRequirements: Equatable, Sendable {
+    public let topicTree: Double
+    public let information: Double
+    public let divider: Double
+
+    public init(
+      topicTree: Double,
+      information: Double,
+      divider: Double = 1
+    ) {
+      precondition(topicTree > 0)
+      precondition(information > 0)
+      precondition(divider >= 0)
+      self.topicTree = topicTree
+      self.information = information
+      self.divider = divider
+    }
+
+    public static let standard = Self(
+      topicTree: 320,
+      information: 360
+    )
+
+    public var minimumRegularWidth: Double {
+      topicTree + divider + information
+    }
+  }
+
   public static func resolve(
     widthClass: WorkspaceWidthClass
   ) -> Self {
@@ -19,6 +47,36 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
       .compactTabs
     case .regular:
       .wideSplit
+    }
+  }
+
+  public static func resolve(
+    widthClass: WorkspaceWidthClass,
+    availableWidth: Double,
+    requirements: PaneRequirements = .standard
+  ) -> Self {
+    guard widthClass == .regular,
+      availableWidth.isFinite,
+      availableWidth >= requirements.minimumRegularWidth
+    else {
+      return .compactTabs
+    }
+    return .wideSplit
+  }
+}
+
+public enum TopicSelectionNavigationBehavior: Equatable, Sendable {
+  case compactAdvancesToDetails
+  case persistentInformationPane
+
+  public func destinationAfterSelectingCurrentValue(
+    from destination: WorkspaceDestination
+  ) -> WorkspaceDestination {
+    switch self {
+    case .compactAdvancesToDetails:
+      .details
+    case .persistentInformationPane:
+      destination
     }
   }
 }

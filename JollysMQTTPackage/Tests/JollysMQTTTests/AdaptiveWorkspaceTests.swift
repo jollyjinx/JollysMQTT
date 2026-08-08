@@ -31,6 +31,54 @@ struct AdaptiveWorkspaceTests {
     )
   }
 
+  @Test("Regular presentation fits exactly the topic tree and information pane")
+  func regularPresentationUsesTwoPaneFit() {
+    let requirements = AdaptiveWorkspacePresentation.PaneRequirements(
+      topicTree: 320,
+      information: 360,
+      divider: 1
+    )
+
+    #expect(requirements.minimumRegularWidth == 681)
+    #expect(
+      AdaptiveWorkspacePresentation.resolve(
+        widthClass: .regular,
+        availableWidth: 680,
+        requirements: requirements
+      ) == .compactTabs
+    )
+    #expect(
+      AdaptiveWorkspacePresentation.resolve(
+        widthClass: .regular,
+        availableWidth: 681,
+        requirements: requirements
+      ) == .wideSplit
+    )
+    #expect(
+      AdaptiveWorkspacePresentation.resolve(
+        widthClass: .compact,
+        availableWidth: 1_200,
+        requirements: requirements
+      ) == .compactTabs
+    )
+  }
+
+  @Test("Only compact topic selection advances the active destination")
+  func selectionNavigationFollowsPresentation() {
+    for destination in WorkspaceDestination.allCases {
+      #expect(
+        TopicSelectionNavigationBehavior.persistentInformationPane
+          .destinationAfterSelectingCurrentValue(from: destination)
+          == destination
+      )
+      #expect(
+        TopicSelectionNavigationBehavior.compactAdvancesToDetails
+          .destinationAfterSelectingCurrentValue(from: destination)
+          == .details
+      )
+    }
+  }
+
   @Test(
     "Broker profiles edit inline at regular width and retain a compact summary destination",
     arguments: [

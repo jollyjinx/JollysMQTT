@@ -36,6 +36,7 @@ public enum WorkspaceFeature {
       searchText: String,
       sortMode: BrokerTopicSortMode
     )
+    case setTopicScrollAnchor(String?)
     case setNumericChart(NumericChartConfiguration?)
     case setNumericChartDashboard(NumericChartDashboardConfiguration)
     case dismissPersistenceError
@@ -69,6 +70,7 @@ public enum WorkspaceFeature {
       if state.record.selectedProfileID != profileID {
         state.record.selectedTopic = nil
         state.record.expandedTopics = []
+        state.record.topicScrollAnchor = nil
       }
       state.record.numericChartDashboard = sanitizedDashboard(
         state.record.numericChartDashboard,
@@ -82,6 +84,7 @@ public enum WorkspaceFeature {
     case .showServerList:
       state.record.route = .serverList
       state.record.selectedTopic = nil
+      state.record.topicScrollAnchor = nil
       state.record.closedAt = nil
       return .save(state.record)
 
@@ -106,6 +109,7 @@ public enum WorkspaceFeature {
       state.record.selectedTopic = nil
       state.record.expandedTopics = []
       state.record.topicSearchText = ""
+      state.record.topicScrollAnchor = nil
       state.record.numericChartDashboard = .init()
       state.record.closedAt = nil
       return .save(state.record)
@@ -136,6 +140,11 @@ public enum WorkspaceFeature {
       state.record.expandedTopics = sortedTopics
       state.record.topicSearchText = searchText
       state.record.topicSortMode = sortMode
+      return .save(state.record)
+
+    case .setTopicScrollAnchor(let topic):
+      guard state.record.topicScrollAnchor != topic else { return nil }
+      state.record.topicScrollAnchor = topic
       return .save(state.record)
 
     case .setNumericChart(let configuration):
