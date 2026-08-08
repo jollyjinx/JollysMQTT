@@ -9,8 +9,14 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
     case edit
   }
 
+  public enum Presentation: Equatable, Sendable {
+    case modal
+    case inline
+  }
+
   public let id: UUID
   public let mode: Mode
+  public var presentation: Presentation
   public var name: String
   public var host: String
   public var port: Int
@@ -23,9 +29,14 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
   public var subscriptions: [SubscriptionDefinition]
   public var validationIssues: [BrokerProfileValidationIssue]
 
-  public init(profile: BrokerProfile, mode: Mode) {
+  public init(
+    profile: BrokerProfile,
+    mode: Mode,
+    presentation: Presentation = .modal
+  ) {
     self.id = profile.id
     self.mode = mode
+    self.presentation = presentation
     self.name = profile.name
     self.host = profile.host
     self.port = profile.port
@@ -60,6 +71,17 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
       subscriptions: subscriptions
     )
   }
+}
+
+public enum PendingProfileDraftDestination: Equatable, Sendable {
+  case selection(BrokerProfile.ID?)
+  case connection(BrokerProfile.ID)
+  case create(BrokerProfile.ID, ProfileEditorState.Presentation)
+  case duplicate(
+    sourceID: BrokerProfile.ID,
+    newID: BrokerProfile.ID,
+    ProfileEditorState.Presentation
+  )
 }
 
 public struct ConnectReadyState: Equatable, Sendable {
@@ -219,6 +241,7 @@ public enum ServerListFeature {
     public var credentialPrompt: CredentialPromptState?
     public var credentialError: CredentialPresentationError?
     public var connectReady: ConnectReadyState?
+    public var pendingDraftDestination: PendingProfileDraftDestination?
     var pendingConnectRequest: PendingCredentialRequest?
     var pendingCredentialDeletionRequest: PendingCredentialRequest?
     var pendingProfileDeletionRequest: PendingCredentialRequest?
@@ -246,7 +269,8 @@ public enum ServerListFeature {
       credentialStatuses: [BrokerProfile.ID: CredentialStatus] = [:],
       credentialPrompt: CredentialPromptState? = nil,
       credentialError: CredentialPresentationError? = nil,
-      connectReady: ConnectReadyState? = nil
+      connectReady: ConnectReadyState? = nil,
+      pendingDraftDestination: PendingProfileDraftDestination? = nil
     ) {
       self.profiles = profiles
       self.selectedProfileID = selectedProfileID
@@ -261,11 +285,22 @@ public enum ServerListFeature {
       self.credentialPrompt = credentialPrompt
       self.credentialError = credentialError
       self.connectReady = connectReady
+      self.pendingDraftDestination = pendingDraftDestination
       self.pendingConnectRequest = nil
       self.pendingCredentialDeletionRequest = nil
       self.pendingProfileDeletionRequest = nil
       self.isProfileDeletionCommitPending = false
       self.nextCredentialRequestID = 0
+    }
+
+    public var editorHasUnsavedChanges: Bool {
+      guard let editor else { return false }
+      guard editor.mode == .edit,
+        let stored = profiles.first(where: { $0.id == editor.id })?.profile
+      else {
+        return true
+      }
+      return editor.profile != stored
     }
   }
 
@@ -273,8 +308,11 @@ public enum ServerListFeature {
     case load
     case select(BrokerProfile.ID?)
     case createProfile(id: UUID)
+    case createProfileInline(id: UUID)
     case editProfile(BrokerProfile.ID)
+    case editProfileInline(BrokerProfile.ID)
     case duplicateProfile(BrokerProfile.ID, newID: UUID)
+    case duplicateProfileInline(BrokerProfile.ID, newID: UUID)
     case requestDeleteProfile(BrokerProfile.ID)
     case cancelDeleteProfile
     case confirmDeleteProfile
@@ -299,7 +337,12 @@ public enum ServerListFeature {
     case setSubscriptionQoS(SubscriptionDefinition.ID, MQTTQualityOfService)
     case setSubscriptionEnabled(SubscriptionDefinition.ID, Bool)
     case cancelEditor
+    case revertEditor
     case saveEditor
+    case saveEditorKeepingOpen
+    case savePendingDraft
+    case discardPendingDraft
+    case continueEditingDraft
     case connect(BrokerProfile.ID)
     case submitCredential(TransientCredential)
     case cancelCredentialPrompt
@@ -338,6 +381,7 @@ public enum ServerListFeature {
   public enum Effect: Equatable, Sendable {
     case loadProfiles
     case persistProfiles([RankedBrokerProfile])
+    case persistProfilesAndConnect([RankedBrokerProfile], BrokerProfile)
     case checkCredential(BrokerProfile, requestID: UInt64)
     case saveCredential(
       profileID: BrokerProfile.ID,
@@ -364,47 +408,41 @@ public enum ServerListFeature {
       return .loadProfiles
 
     case .select(let id):
-      state.selectedProfileID = id
+      guard id != state.selectedProfileID else { return nil }
+      if state.editorHasUnsavedChanges {
+        state.pendingDraftDestination = .selection(id)
+      } else {
+        state.editor = nil
+        state.selectedProfileID = id
+      }
 
     case .createProfile(let id):
-      guard !state.isProfileMutationBlocked else { return nil }
-      state.editor = ProfileEditorState(
-        profile: .new(id: id),
-        mode: .create
-      )
+      return beginCreatingProfile(id, presentation: .modal, in: &state)
+
+    case .createProfileInline(let id):
+      return beginCreatingProfile(id, presentation: .inline, in: &state)
 
     case .editProfile(let id):
-      guard !state.isProfileMutationBlocked else { return nil }
-      guard let profile = state.profiles.first(where: { $0.id == id })?.profile else {
-        return nil
-      }
-      state.editor = ProfileEditorState(profile: profile, mode: .edit)
+      beginEditingProfile(id, presentation: .modal, in: &state)
+
+    case .editProfileInline(let id):
+      beginEditingProfile(id, presentation: .inline, in: &state)
 
     case .duplicateProfile(let id, let newID):
-      guard !state.isProfileMutationBlocked else { return nil }
-      guard let source = state.profiles.first(where: { $0.id == id })?.profile else {
-        return nil
-      }
-      let copy = BrokerProfile(
-        id: newID,
-        name: source.name,
-        host: source.host,
-        port: source.port,
-        transport: source.transport,
-        username: source.username,
-        clientIDPolicy: source.clientIDPolicy,
-        cleanSession: source.cleanSession,
-        keepAliveSeconds: source.keepAliveSeconds,
-        reconnectPolicy: source.reconnectPolicy,
-        subscriptions: source.subscriptions.map {
-          SubscriptionDefinition(
-            filter: $0.filter,
-            qos: $0.qos,
-            isEnabled: $0.isEnabled
-          )
-        }
+      return beginDuplicatingProfile(
+        id,
+        newID: newID,
+        presentation: .modal,
+        in: &state
       )
-      state.editor = ProfileEditorState(profile: copy, mode: .create)
+
+    case .duplicateProfileInline(let id, let newID):
+      return beginDuplicatingProfile(
+        id,
+        newID: newID,
+        presentation: .inline,
+        in: &state
+      )
 
     case .requestDeleteProfile(let id):
       guard !state.isProfileDeletionBusy else { return nil }
@@ -543,40 +581,54 @@ public enum ServerListFeature {
       }
 
     case .cancelEditor:
-      state.editor = nil
-
-    case .saveEditor:
-      guard !state.isProfileMutationBlocked else { return nil }
-      guard var editor = state.editor else { return nil }
-      let profile = editor.profile
-      let issues = profile.validationIssues
-      guard issues.isEmpty else {
-        editor.validationIssues = issues
-        state.editor = editor
-        return nil
-      }
-
-      if let index = state.profiles.firstIndex(where: { $0.id == profile.id }) {
-        let rank = state.profiles[index].reorderRank
-        state.profiles[index] = RankedBrokerProfile(
-          profile: profile,
-          reorderRank: rank
+      state.pendingDraftDestination = nil
+      if state.editor?.presentation == .inline,
+        state.editor?.mode == .create,
+        let selectedID = state.selectedProfileID,
+        let selectedProfile = state.profiles.first(where: { $0.id == selectedID })?.profile
+      {
+        state.editor = ProfileEditorState(
+          profile: selectedProfile,
+          mode: .edit,
+          presentation: .inline
         )
       } else {
-        state.profiles.append(
-          RankedBrokerProfile(
-            profile: profile,
-            reorderRank: nextRank(after: state.profiles)
-          )
-        )
+        state.editor = nil
       }
-      state.profiles = normalizedRanks(state.profiles)
-      state.selectedProfileID = profile.id
+
+    case .revertEditor:
+      guard let editor = state.editor,
+        let profile = state.profiles.first(where: { $0.id == editor.id })?.profile
+      else { return nil }
+      state.editor = ProfileEditorState(
+        profile: profile,
+        mode: .edit,
+        presentation: editor.presentation
+      )
+
+    case .saveEditor:
+      return saveEditor(keepEditing: false, in: &state)
+
+    case .saveEditorKeepingOpen:
+      return saveEditor(keepEditing: true, in: &state)
+
+    case .savePendingDraft:
+      return savePendingDraft(in: &state)
+
+    case .discardPendingDraft:
+      guard let destination = state.pendingDraftDestination else { return nil }
+      state.pendingDraftDestination = nil
       state.editor = nil
-      state.hasUnpersistedChanges = true
-      return .persistProfiles(state.profiles)
+      return continueTo(destination, in: &state)
+
+    case .continueEditingDraft:
+      state.pendingDraftDestination = nil
 
     case .connect(let id):
+      if state.editorHasUnsavedChanges {
+        state.pendingDraftDestination = .connection(id)
+        return nil
+      }
       guard let profile = state.profiles.first(where: { $0.id == id })?.profile else {
         return nil
       }
@@ -813,6 +865,216 @@ public enum ServerListFeature {
     state.editor?.subscriptions[index] = transform(current)
   }
 
+  private static func beginCreatingProfile(
+    _ id: BrokerProfile.ID,
+    presentation: ProfileEditorState.Presentation,
+    in state: inout State
+  ) -> Effect? {
+    guard !state.isProfileMutationBlocked else { return nil }
+    if state.editorHasUnsavedChanges {
+      state.pendingDraftDestination = .create(id, presentation)
+      return nil
+    }
+    state.editor = ProfileEditorState(
+      profile: .new(id: id),
+      mode: .create,
+      presentation: presentation
+    )
+    return nil
+  }
+
+  private static func beginEditingProfile(
+    _ id: BrokerProfile.ID,
+    presentation: ProfileEditorState.Presentation,
+    in state: inout State
+  ) {
+    guard !state.isProfileMutationBlocked else { return }
+    if state.editor?.id == id {
+      state.editor?.presentation = presentation
+      return
+    }
+    guard let profile = state.profiles.first(where: { $0.id == id })?.profile else {
+      return
+    }
+    state.editor = ProfileEditorState(
+      profile: profile,
+      mode: .edit,
+      presentation: presentation
+    )
+  }
+
+  private static func saveEditor(
+    keepEditing: Bool,
+    in state: inout State
+  ) -> Effect? {
+    guard !state.isProfileMutationBlocked else { return nil }
+    guard var editor = state.editor else { return nil }
+    let profile = editor.profile
+    let issues = profile.validationIssues
+    guard issues.isEmpty else {
+      editor.validationIssues = issues
+      state.editor = editor
+      return nil
+    }
+
+    replaceProfile(profile, in: &state)
+    state.selectedProfileID = profile.id
+    state.editor =
+      keepEditing
+      ? ProfileEditorState(
+        profile: profile,
+        mode: .edit,
+        presentation: editor.presentation
+      )
+      : nil
+    state.pendingDraftDestination = nil
+    state.hasUnpersistedChanges = true
+    return .persistProfiles(state.profiles)
+  }
+
+  private static func savePendingDraft(in state: inout State) -> Effect? {
+    guard !state.isProfileMutationBlocked,
+      let destination = state.pendingDraftDestination,
+      var editor = state.editor
+    else { return nil }
+    let profile = editor.profile
+    let issues = profile.validationIssues
+    guard issues.isEmpty else {
+      editor.validationIssues = issues
+      state.editor = editor
+      state.pendingDraftDestination = nil
+      return nil
+    }
+
+    replaceProfile(profile, in: &state)
+    state.hasUnpersistedChanges = true
+    state.pendingDraftDestination = nil
+    state.editor = nil
+
+    switch destination {
+    case .connection(let profileID):
+      state.selectedProfileID = profile.id
+      guard profileID == profile.id else {
+        state.selectedProfileID = profileID
+        return .persistProfiles(state.profiles)
+      }
+      return .persistProfilesAndConnect(state.profiles, profile)
+    case .selection(let profileID):
+      state.selectedProfileID = profileID
+      return .persistProfiles(state.profiles)
+    case .create(let id, let presentation):
+      state.selectedProfileID = profile.id
+      state.editor = ProfileEditorState(
+        profile: .new(id: id),
+        mode: .create,
+        presentation: presentation
+      )
+      return .persistProfiles(state.profiles)
+    case .duplicate(let sourceID, let newID, let presentation):
+      state.selectedProfileID = profile.id
+      _ = beginDuplicatingProfile(
+        sourceID,
+        newID: newID,
+        presentation: presentation,
+        in: &state
+      )
+      return .persistProfiles(state.profiles)
+    }
+  }
+
+  private static func continueTo(
+    _ destination: PendingProfileDraftDestination,
+    in state: inout State
+  ) -> Effect? {
+    switch destination {
+    case .selection(let id):
+      state.selectedProfileID = id
+      return nil
+    case .connection(let id):
+      return reduce(state: &state, intent: .connect(id))
+    case .create(let id, let presentation):
+      state.editor = ProfileEditorState(
+        profile: .new(id: id),
+        mode: .create,
+        presentation: presentation
+      )
+      return nil
+    case .duplicate(let sourceID, let newID, let presentation):
+      return beginDuplicatingProfile(
+        sourceID,
+        newID: newID,
+        presentation: presentation,
+        in: &state
+      )
+    }
+  }
+
+  private static func beginDuplicatingProfile(
+    _ sourceID: BrokerProfile.ID,
+    newID: BrokerProfile.ID,
+    presentation: ProfileEditorState.Presentation,
+    in state: inout State
+  ) -> Effect? {
+    guard !state.isProfileMutationBlocked else { return nil }
+    if state.editorHasUnsavedChanges {
+      state.pendingDraftDestination = .duplicate(
+        sourceID: sourceID,
+        newID: newID,
+        presentation
+      )
+      return nil
+    }
+    guard let source = state.profiles.first(where: { $0.id == sourceID })?.profile else {
+      return nil
+    }
+    let copy = BrokerProfile(
+      id: newID,
+      name: source.name,
+      host: source.host,
+      port: source.port,
+      transport: source.transport,
+      username: source.username,
+      clientIDPolicy: source.clientIDPolicy,
+      cleanSession: source.cleanSession,
+      keepAliveSeconds: source.keepAliveSeconds,
+      reconnectPolicy: source.reconnectPolicy,
+      subscriptions: source.subscriptions.map {
+        SubscriptionDefinition(
+          filter: $0.filter,
+          qos: $0.qos,
+          isEnabled: $0.isEnabled
+        )
+      }
+    )
+    state.editor = ProfileEditorState(
+      profile: copy,
+      mode: .create,
+      presentation: presentation
+    )
+    return nil
+  }
+
+  private static func replaceProfile(
+    _ profile: BrokerProfile,
+    in state: inout State
+  ) {
+    if let index = state.profiles.firstIndex(where: { $0.id == profile.id }) {
+      let rank = state.profiles[index].reorderRank
+      state.profiles[index] = RankedBrokerProfile(
+        profile: profile,
+        reorderRank: rank
+      )
+    } else {
+      state.profiles.append(
+        RankedBrokerProfile(
+          profile: profile,
+          reorderRank: nextRank(after: state.profiles)
+        )
+      )
+    }
+    state.profiles = normalizedRanks(state.profiles)
+  }
+
   private static func normalizedRanks(
     _ profiles: [RankedBrokerProfile]
   ) -> [RankedBrokerProfile] {
@@ -1000,42 +1262,16 @@ public final class ServerListStore {
       }
 
     case .persistProfiles(let profiles):
-      pendingPersistenceCount += 1
-      let previous = persistenceTail
-      let repository = repository
-      let brokerFeedGenerationCoordinator =
-        brokerFeedGenerationCoordinator
-      let task = Task<Result<Void, ProfileRepositoryFailure>, Never> {
-        if let previous {
-          _ = await previous.value
-        }
-        do {
-          try await repository.replaceAll(profiles)
-          await brokerFeedGenerationCoordinator.profilesDidChange(
-            profiles.map(\.profile)
-          )
-          return .success(())
-        } catch {
-          return .failure(ProfileRepositoryFailure())
-        }
-      }
-      persistenceTail = task
-      let result = await task.value
-      pendingPersistenceCount -= 1
+      _ = await persist(profiles)
 
-      switch result {
-      case .success where pendingPersistenceCount == 0:
-        _ = ServerListFeature.reduce(
-          state: &state,
-          action: .persisted(.success(()))
-        )
-      case .failure:
-        _ = ServerListFeature.reduce(
-          state: &state,
-          action: .persisted(.failure(ProfileRepositoryFailure()))
-        )
-      case .success:
-        break
+    case .persistProfilesAndConnect(let profiles, let profile):
+      let result = await persist(profiles)
+      guard case .success = result else { return }
+      if let effect = ServerListFeature.reduce(
+        state: &state,
+        intent: .connect(profile.id)
+      ) {
+        await execute(effect)
       }
 
     case .checkCredential(let profile, let requestID):
@@ -1354,6 +1590,48 @@ public final class ServerListStore {
     }
   }
 
+  private func persist(
+    _ profiles: [RankedBrokerProfile]
+  ) async -> Result<Void, ProfileRepositoryFailure> {
+    pendingPersistenceCount += 1
+    let previous = persistenceTail
+    let repository = repository
+    let brokerFeedGenerationCoordinator = brokerFeedGenerationCoordinator
+    let task = Task<Result<Void, ProfileRepositoryFailure>, Never> {
+      if let previous {
+        _ = await previous.value
+      }
+      do {
+        try await repository.replaceAll(profiles)
+        await brokerFeedGenerationCoordinator.profilesDidChange(
+          profiles.map(\.profile)
+        )
+        return .success(())
+      } catch {
+        return .failure(ProfileRepositoryFailure())
+      }
+    }
+    persistenceTail = task
+    let result = await task.value
+    pendingPersistenceCount -= 1
+
+    switch result {
+    case .success where pendingPersistenceCount == 0:
+      _ = ServerListFeature.reduce(
+        state: &state,
+        action: .persisted(.success(()))
+      )
+    case .failure:
+      _ = ServerListFeature.reduce(
+        state: &state,
+        action: .persisted(.failure(ProfileRepositoryFailure()))
+      )
+    case .success:
+      break
+    }
+    return result
+  }
+
   private func resumePendingDeletionCleanups() async {
     let entries: [BrokerDeletionCleanupEntry]
     do {
@@ -1580,12 +1858,25 @@ public final class ServerListStore {
   }
 
   public var editorPresented: Bool {
-    get { state.editor != nil }
+    get { state.editor?.presentation == .modal }
     set {
       if !newValue {
         sendImmediately(.cancelEditor)
       }
     }
+  }
+
+  public var pendingDraftDecisionPresented: Bool {
+    get { state.pendingDraftDestination != nil }
+    set {
+      if !newValue {
+        sendImmediately(.continueEditingDraft)
+      }
+    }
+  }
+
+  public var editorHasUnsavedChanges: Bool {
+    state.editorHasUnsavedChanges
   }
 
   public var deletionPresented: Bool {

@@ -11,6 +11,9 @@
     static let profileID = UUID(
       uuidString: "E9DE2914-EDB1-4774-BFE5-601A5D8C7C1A"
     )!
+    static let secondProfileID = UUID(
+      uuidString: "A1F9B0EF-D340-4F57-8E1A-4835CA73A1B2"
+    )!
 
     let workspaceID: WorkspaceID
     let dependencies: JollysMQTTAppDependencies
@@ -33,11 +36,31 @@
         name: "UI Test Broker",
         host: "fixture.invalid"
       )
-      let profiles =
-        ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_EMPTY_BROKER_LIST"]
-          == "1"
-        ? []
-        : [RankedBrokerProfile(profile: profile, reorderRank: 0)]
+      let profiles: [RankedBrokerProfile]
+      if ProcessInfo.processInfo.environment[
+        "JOLLYSMQTT_UI_EMPTY_BROKER_LIST"
+      ] == "1" {
+        profiles = []
+      } else {
+        var available = [
+          RankedBrokerProfile(profile: profile, reorderRank: 0)
+        ]
+        if ProcessInfo.processInfo.environment[
+          "JOLLYSMQTT_UI_TWO_BROKERS"
+        ] == "1" {
+          available.append(
+            RankedBrokerProfile(
+              profile: .new(
+                id: secondProfileID,
+                name: "UI Test Broker 2",
+                host: "second.fixture.invalid"
+              ),
+              reorderRank: 1_024
+            )
+          )
+        }
+        profiles = available
+      }
       let route: WorkspaceRoute =
         launchesBrokerList
         ? .serverList
@@ -117,11 +140,9 @@
 
   private actor JollysMQTTestFeed: BrokerFeedLeaseControlling {
     private let snapshotStream: AsyncStream<BrokerFeedSnapshot>
-    private let snapshotContinuation:
-      AsyncStream<BrokerFeedSnapshot>.Continuation
+    private let snapshotContinuation: AsyncStream<BrokerFeedSnapshot>.Continuation
     private let topicStream: AsyncStream<BrokerTopicTreeSnapshot>
-    private let topicContinuation:
-      AsyncStream<BrokerTopicTreeSnapshot>.Continuation
+    private let topicContinuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
 
     init() {
       (snapshotStream, snapshotContinuation) = AsyncStream.makeStream(

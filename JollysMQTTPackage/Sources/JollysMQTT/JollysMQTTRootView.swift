@@ -3069,23 +3069,25 @@ extension BrokerFeedFailure {
 }
 
 struct ServerListView: View {
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Bindable var store: ServerListStore
   @Bindable var sceneStore: WorkspaceSceneStore
 
   var body: some View {
     NavigationSplitView {
-      BrokerListSidebar(store: store, sceneStore: sceneStore)
+      BrokerListSidebar(store: store, presentation: presentation)
     } detail: {
       BrokerListDetail(
         profile: store.state.profiles.first {
-          $0.id == sceneStore.selectedProfileID
+          $0.id == store.state.selectedProfileID
         }?.profile,
         credentialAvailability:
-          sceneStore.selectedProfileID.flatMap {
+          store.state.selectedProfileID.flatMap {
             store.state.credentialStatuses[$0]?.availability
           },
         store: store,
-        historyMaintenanceStore: sceneStore.historyMaintenance
+        historyMaintenanceStore: sceneStore.historyMaintenance,
+        presentation: presentation
       )
     }
     .navigationTitle(
@@ -3102,6 +3104,13 @@ struct ServerListView: View {
     }
     .task {
       await sceneStore.profileSync.run()
+    }
+    .task(id: store.state.selectedProfileID) {
+      guard presentation == .regularEditor,
+        store.state.editor == nil,
+        let profileID = store.state.selectedProfileID
+      else { return }
+      await store.send(.editProfileInline(profileID))
     }
     .sheet(isPresented: $store.editorPresented) {
       if let editor = store.state.editor {
@@ -3258,6 +3267,78 @@ struct ServerListView: View {
     } message: {
       CredentialErrorMessage(error: store.state.credentialError)
     }
+    .confirmationDialog(
+      Text(
+        "Unsaved Broker Changes",
+        bundle: #bundle,
+        comment: "Title shown before navigation would leave an unsaved broker draft."
+      ),
+      isPresented: $store.pendingDraftDecisionPresented,
+      titleVisibility: .visible
+    ) {
+      Button {
+        Task { await store.send(.savePendingDraft) }
+      } label: {
+        Text(
+          "Save Changes",
+          bundle: #bundle,
+          comment: "Saves a broker draft before continuing the requested action."
+        )
+      }
+      Button(role: .destructive) {
+        Task { await store.send(.discardPendingDraft) }
+      } label: {
+        Text(
+          "Discard Changes",
+          bundle: #bundle,
+          comment: "Discards a broker draft before continuing the requested action."
+        )
+      }
+      Button(role: .cancel) {
+        store.sendImmediately(.continueEditingDraft)
+      } label: {
+        Text(
+          "Continue Editing",
+          bundle: #bundle,
+          comment: "Keeps the current broker draft and cancels navigation."
+        )
+      }
+    } message: {
+      Text(
+        store.state.pendingDraftDestination?.requiresSavedProfile == true
+          ? LocalizedStringResource(
+            "Save this draft before connecting, or discard it to connect with the stored profile.",
+            bundle: #bundle,
+            comment: "Explains that connecting never uses an unsaved broker draft."
+          )
+          : LocalizedStringResource(
+            "Save or discard this draft before changing brokers.",
+            bundle: #bundle,
+            comment: "Explains that changing broker selection never silently discards a draft."
+          )
+      )
+    }
+  }
+
+  private var presentation: BrokerListPresentation {
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("--ui-testing-broker-list"),
+        let rawValue = ProcessInfo.processInfo.environment[
+          "JOLLYSMQTT_UI_WIDTH_CLASS"
+        ]
+      {
+        return rawValue == "compact" ? .compactSummary : .regularEditor
+      }
+    #endif
+    return BrokerListPresentation.resolve(
+      widthClass: horizontalSizeClass == .compact ? .compact : .regular
+    )
+  }
+}
+
+extension PendingProfileDraftDestination {
+  fileprivate var requiresSavedProfile: Bool {
+    if case .connection = self { true } else { false }
   }
 }
 
@@ -3601,18 +3682,23 @@ extension BrokerDeletionOutcome {
 
 private struct BrokerListSidebar: View {
   @Bindable var store: ServerListStore
-  @Bindable var sceneStore: WorkspaceSceneStore
+  let presentation: BrokerListPresentation
 
   var body: some View {
-    List(selection: $sceneStore.selectedProfileID) {
+    List(selection: $store.selection) {
       ForEach(store.state.profiles) { ranked in
         BrokerProfileRow(
+          id: ranked.id,
           name: ranked.profile.name,
           endpoint: ranked.profile.endpointSummary
         )
         .tag(ranked.id)
         .contextMenu {
-          BrokerRowActions(profileID: ranked.id, store: store)
+          BrokerRowActions(
+            profileID: ranked.id,
+            store: store,
+            presentation: presentation
+          )
         }
       }
       .onMove { offsets, destination in
@@ -3641,17 +3727,23 @@ private struct BrokerListSidebar: View {
         BrokerListEmptyState()
       }
     }
-    .modifier(BrokerListActionsModifier(store: store))
+    .modifier(
+      BrokerListActionsModifier(
+        store: store,
+        presentation: presentation
+      )
+    )
   }
 }
 
 private struct BrokerListActionsModifier: ViewModifier {
   let store: ServerListStore
+  let presentation: BrokerListPresentation
 
   func body(content: Content) -> some View {
     #if os(macOS)
       content.safeAreaInset(edge: .bottom) {
-        AddBrokerButton(store: store)
+        AddBrokerButton(store: store, presentation: presentation)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 8)
           .padding(.vertical, 6)
@@ -3670,7 +3762,7 @@ private struct BrokerListActionsModifier: ViewModifier {
             )
         }
         ToolbarItem(placement: .primaryAction) {
-          AddBrokerButton(store: store)
+          AddBrokerButton(store: store, presentation: presentation)
         }
       }
     #endif
@@ -3679,6 +3771,7 @@ private struct BrokerListActionsModifier: ViewModifier {
 
 private struct AddBrokerButton: View {
   let store: ServerListStore
+  let presentation: BrokerListPresentation
 
   var body: some View {
     Button(action: addBroker) {
@@ -3704,11 +3797,19 @@ private struct AddBrokerButton: View {
   }
 
   private func addBroker() {
-    Task { await store.send(.createProfile(id: UUID())) }
+    Task {
+      switch presentation {
+      case .compactSummary:
+        await store.send(.createProfile(id: UUID()))
+      case .regularEditor:
+        await store.send(.createProfileInline(id: UUID()))
+      }
+    }
   }
 }
 
 private struct BrokerProfileRow: View {
+  let id: BrokerProfile.ID
   let name: String
   let endpoint: String
 
@@ -3721,16 +3822,25 @@ private struct BrokerProfileRow: View {
         .foregroundStyle(.secondary)
     }
     .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("server-list.profile.\(id.uuidString)")
   }
 }
 
 private struct BrokerRowActions: View {
   let profileID: BrokerProfile.ID
   let store: ServerListStore
+  let presentation: BrokerListPresentation
 
   var body: some View {
     Button {
-      Task { await store.send(.editProfile(profileID)) }
+      Task {
+        switch presentation {
+        case .compactSummary:
+          await store.send(.editProfile(profileID))
+        case .regularEditor:
+          await store.send(.select(profileID))
+        }
+      }
     } label: {
       Text(
         "Edit",
@@ -3741,7 +3851,12 @@ private struct BrokerRowActions: View {
     .disabled(store.state.isProfileMutationBlocked)
     Button {
       Task {
-        await store.send(.duplicateProfile(profileID, newID: UUID()))
+        switch presentation {
+        case .compactSummary:
+          await store.send(.duplicateProfile(profileID, newID: UUID()))
+        case .regularEditor:
+          await store.send(.duplicateProfileInline(profileID, newID: UUID()))
+        }
       }
     } label: {
       Text(
@@ -3765,6 +3880,33 @@ private struct BrokerRowActions: View {
 }
 
 private struct BrokerListDetail: View {
+  let profile: BrokerProfile?
+  let credentialAvailability: CredentialAvailability?
+  let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+  let presentation: BrokerListPresentation
+
+  var body: some View {
+    switch presentation {
+    case .compactSummary:
+      BrokerProfileSummary(
+        profile: profile,
+        credentialAvailability: credentialAvailability,
+        store: store,
+        historyMaintenanceStore: historyMaintenanceStore
+      )
+    case .regularEditor:
+      BrokerProfileInlineDetail(
+        profile: profile,
+        credentialAvailability: credentialAvailability,
+        store: store,
+        historyMaintenanceStore: historyMaintenanceStore
+      )
+    }
+  }
+}
+
+private struct BrokerProfileSummary: View {
   let profile: BrokerProfile?
   let credentialAvailability: CredentialAvailability?
   let store: ServerListStore
@@ -3820,6 +3962,206 @@ private struct BrokerListDetail: View {
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
       }
+    }
+    .padding()
+  }
+}
+
+private struct BrokerProfileInlineDetail: View {
+  let profile: BrokerProfile?
+  let credentialAvailability: CredentialAvailability?
+  let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+
+  var body: some View {
+    if let editor = store.state.editor,
+      editor.presentation == .inline
+    {
+      InlineProfileEditorView(
+        mode: editor.mode,
+        storedProfile: store.state.profiles.first {
+          $0.id == editor.id
+        }?.profile,
+        credentialAvailability: credentialAvailability,
+        store: store,
+        historyMaintenanceStore: historyMaintenanceStore
+      )
+      .id(editor.id)
+    } else if let profile {
+      ProgressView()
+        .accessibilityLabel(
+          Text(
+            "Loading broker profile editor",
+            bundle: #bundle,
+            comment: "Accessibility label while the selected broker editor is prepared."
+          )
+        )
+        .task(id: profile.id) {
+          await store.send(.editProfileInline(profile.id))
+        }
+    } else {
+      BrokerListEmptyState()
+    }
+  }
+}
+
+private struct InlineProfileEditorView: View {
+  let mode: ProfileEditorState.Mode
+  let storedProfile: BrokerProfile?
+  let credentialAvailability: CredentialAvailability?
+  let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+
+  var body: some View {
+    VStack(spacing: 0) {
+      InlineProfileEditorHeader(
+        mode: mode,
+        storedProfile: storedProfile,
+        credentialAvailability: credentialAvailability,
+        store: store,
+        historyMaintenanceStore: historyMaintenanceStore
+      )
+      Divider()
+      ProfileEditorForm(store: store)
+      Divider()
+      InlineProfileEditorFooter(mode: mode, store: store)
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("server-list.inline-editor")
+  }
+}
+
+private struct InlineProfileEditorHeader: View {
+  let mode: ProfileEditorState.Mode
+  let storedProfile: BrokerProfile?
+  let credentialAvailability: CredentialAvailability?
+  let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(
+          mode == .create
+            ? LocalizedStringResource(
+              "New Broker",
+              bundle: #bundle,
+              comment: "Heading for a new inline broker profile draft."
+            )
+            : LocalizedStringResource(
+              "Broker Profile",
+              bundle: #bundle,
+              comment: "Heading for the selected inline broker profile editor."
+            )
+        )
+        .font(.title2)
+        Spacer()
+        if let storedProfile {
+          BrokerInlineActions(
+            profileID: storedProfile.id,
+            store: store,
+            historyMaintenanceStore: historyMaintenanceStore
+          )
+        }
+      }
+
+      if storedProfile?.username == nil, storedProfile != nil {
+        AnonymousBrokerStatus()
+      } else if storedProfile != nil {
+        BrokerCredentialAvailability(availability: credentialAvailability)
+      }
+    }
+    .padding()
+  }
+}
+
+private struct BrokerInlineActions: View {
+  let profileID: BrokerProfile.ID
+  let store: ServerListStore
+  @Bindable var historyMaintenanceStore: HistoryMaintenanceStore
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack {
+        buttons
+      }
+      VStack(alignment: .trailing) {
+        buttons
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var buttons: some View {
+    Button {
+      Task { await store.send(.connect(profileID)) }
+    } label: {
+      Label {
+        Text(
+          "Connect",
+          bundle: #bundle,
+          comment: "Connects using the unchanged saved broker profile."
+        )
+      } icon: {
+        Image(systemName: "bolt.horizontal")
+      }
+    }
+    .buttonStyle(.borderedProminent)
+
+    Button {
+      historyMaintenanceStore.send(.setPresented(true))
+    } label: {
+      Text(
+        "Local History",
+        bundle: #bundle,
+        comment: "Opens local history controls for the selected broker."
+      )
+    }
+  }
+}
+
+private struct InlineProfileEditorFooter: View {
+  let mode: ProfileEditorState.Mode
+  let store: ServerListStore
+
+  var body: some View {
+    HStack {
+      if mode == .edit {
+        Button {
+          store.sendImmediately(.revertEditor)
+        } label: {
+          Text(
+            "Revert",
+            bundle: #bundle,
+            comment: "Restores the selected broker draft to its saved values."
+          )
+        }
+        .disabled(!store.editorHasUnsavedChanges)
+      } else {
+        Button {
+          store.sendImmediately(.cancelEditor)
+        } label: {
+          Text(
+            "Cancel",
+            bundle: #bundle,
+            comment: "Cancels creation of an inline broker profile."
+          )
+        }
+      }
+
+      Spacer()
+
+      Button {
+        Task { await store.send(.saveEditorKeepingOpen) }
+      } label: {
+        Text(
+          "Save",
+          bundle: #bundle,
+          comment: "Validates and saves the inline broker profile draft."
+        )
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(!store.editorHasUnsavedChanges)
     }
     .padding()
   }
@@ -4101,46 +4443,56 @@ private struct ProfileEditorView: View {
 
   var body: some View {
     NavigationStack {
-      Form {
-        ProfileEndpointSection(store: store)
-        ProfileAuthenticationSection(store: store)
-        ProfileAdvancedSection(store: store)
-        ProfileValidationSection(issues: store.state.editor?.validationIssues ?? [])
-      }
-      .navigationTitle(
-        Text(
-          "Broker Profile",
-          bundle: #bundle,
-          comment: "Title of the broker profile editor."
+      ProfileEditorForm(store: store)
+        .navigationTitle(
+          Text(
+            "Broker Profile",
+            bundle: #bundle,
+            comment: "Title of the broker profile editor."
+          )
         )
-      )
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button {
-            store.sendImmediately(.cancelEditor)
-          } label: {
-            Text(
-              "Cancel",
-              bundle: #bundle,
-              comment: "Action that closes the profile editor without saving."
-            )
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button {
+              store.sendImmediately(.cancelEditor)
+            } label: {
+              Text(
+                "Cancel",
+                bundle: #bundle,
+                comment: "Action that closes the profile editor without saving."
+              )
+            }
+          }
+          ToolbarItem(placement: .confirmationAction) {
+            Button {
+              Task { await store.send(.saveEditor) }
+            } label: {
+              Text(
+                "Save",
+                bundle: #bundle,
+                comment: "Action that validates and saves a broker profile."
+              )
+            }
           }
         }
-        ToolbarItem(placement: .confirmationAction) {
-          Button {
-            Task { await store.send(.saveEditor) }
-          } label: {
-            Text(
-              "Save",
-              bundle: #bundle,
-              comment: "Action that validates and saves a broker profile."
-            )
-          }
-        }
-      }
     }
     .id(profileID)
     .frame(minWidth: 360, idealWidth: 520, minHeight: 460)
+  }
+}
+
+private struct ProfileEditorForm: View {
+  let store: ServerListStore
+
+  var body: some View {
+    Form {
+      ProfileEndpointSection(store: store)
+      ProfileAuthenticationSection(store: store)
+      ProfileAdvancedSection(store: store)
+      ProfileValidationSection(
+        issues: store.state.editor?.validationIssues ?? []
+      )
+    }
   }
 }
 
@@ -4164,6 +4516,7 @@ private struct ProfileEndpointSection: View {
         )
       }
       .textContentType(.name)
+      .accessibilityIdentifier("profile-editor.name")
 
       TextField(text: $store[editorText: .host]) {
         Text(
@@ -4174,6 +4527,7 @@ private struct ProfileEndpointSection: View {
       }
       .textContentType(.URL)
       .autocorrectionDisabled()
+      .accessibilityIdentifier("profile-editor.host")
 
       TextField(
         value: $store[editorInteger: .port],

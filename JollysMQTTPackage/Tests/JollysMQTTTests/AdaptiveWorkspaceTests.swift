@@ -1,5 +1,5 @@
-import JollysMQTTCore
 import Foundation
+import JollysMQTTCore
 import Testing
 
 @testable import JollysMQTT
@@ -31,6 +31,20 @@ struct AdaptiveWorkspaceTests {
     )
   }
 
+  @Test(
+    "Broker profiles edit inline at regular width and retain a compact summary destination",
+    arguments: [
+      (WorkspaceWidthClass.compact, BrokerListPresentation.compactSummary),
+      (WorkspaceWidthClass.regular, BrokerListPresentation.regularEditor),
+    ]
+  )
+  func brokerListPresentation(
+    widthClass: WorkspaceWidthClass,
+    expected: BrokerListPresentation
+  ) {
+    #expect(BrokerListPresentation.resolve(widthClass: widthClass) == expected)
+  }
+
   @Test("Help covers every release-blocking behavior")
   func helpCoverage() {
     #expect(
@@ -45,7 +59,8 @@ struct AdaptiveWorkspaceTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let catalogURL = packageRoot
+    let catalogURL =
+      packageRoot
       .appending(path: "Sources/JollysMQTT/Resources/Localizable.xcstrings")
     let object = try #require(
       JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL))
@@ -66,6 +81,11 @@ struct AdaptiveWorkspaceTests {
       "Overload stops the connection safely",
       "History can contain visible gaps",
       "Profile sync can be local only",
+      "Unsaved Broker Changes",
+      "Save Changes",
+      "Discard Changes",
+      "Continue Editing",
+      "Revert",
     ]
     for key in releaseBlockingKeys {
       #expect(strings[key] != nil, "Missing release string: \(key)")

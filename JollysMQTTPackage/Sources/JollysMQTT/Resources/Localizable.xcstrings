@@ -1,6 +1,33 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Continue Editing" : {
+      "comment" : "Keeps the current broker draft and cancels navigation."
+    },
+    "Discard Changes" : {
+      "comment" : "Discards a broker draft before continuing the requested action."
+    },
+    "Loading broker profile editor" : {
+      "comment" : "Accessibility label while the selected broker editor is prepared."
+    },
+    "New Broker" : {
+      "comment" : "Heading for a new inline broker profile draft."
+    },
+    "Revert" : {
+      "comment" : "Restores the selected broker draft to its saved values."
+    },
+    "Save Changes" : {
+      "comment" : "Saves a broker draft before continuing the requested action."
+    },
+    "Save or discard this draft before changing brokers." : {
+      "comment" : "Explains that changing broker selection never silently discards a draft."
+    },
+    "Save this draft before connecting, or discard it to connect with the stored profile." : {
+      "comment" : "Explains that connecting never uses an unsaved broker draft."
+    },
+    "Unsaved Broker Changes" : {
+      "comment" : "Title shown before navigation would leave an unsaved broker draft."
+    },
     "%@ line %lld: %@" : {
       "comment" : "Accessible summary for one text payload difference.",
       "localizations" : {

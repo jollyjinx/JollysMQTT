@@ -40,6 +40,260 @@ struct ServerListFeatureTests {
     #expect(effect == .persistProfiles(state.profiles))
   }
 
+  @Test("Regular selection keeps its editor open after saving")
+  @MainActor
+  func inlineSaveKeepsEditorOpen() throws {
+    let existing = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [existing],
+      selectedProfileID: existing.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(existing.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setHost("new.example"))
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .saveEditorKeepingOpen
+    )
+
+    #expect(state.profiles.first?.profile.host == "new.example")
+    let editor = try #require(state.editor)
+    #expect(editor.presentation == .inline)
+    #expect(editor.mode == .edit)
+    #expect(!state.editorHasUnsavedChanges)
+    #expect(effect == .persistProfiles(state.profiles))
+  }
+
+  @Test("Changing editor presentation preserves an unsaved draft")
+  @MainActor
+  func editorPresentationTransitionPreservesDraft() throws {
+    let existing = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [existing],
+      selectedProfileID: existing.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(existing.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setName("Draft"))
+
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfile(existing.id)
+    )
+
+    let editor = try #require(state.editor)
+    #expect(editor.presentation == .modal)
+    #expect(editor.name == "Draft")
+    #expect(state.editorHasUnsavedChanges)
+  }
+
+  @Test("Cancelling inline creation restores the selected profile editor")
+  @MainActor
+  func cancelInlineCreationRestoresSelection() throws {
+    let existing = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [existing],
+      selectedProfileID: existing.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .createProfileInline(id: UUID())
+    )
+
+    _ = ServerListFeature.reduce(state: &state, intent: .cancelEditor)
+
+    let editor = try #require(state.editor)
+    #expect(editor.id == existing.id)
+    #expect(editor.mode == .edit)
+    #expect(editor.presentation == .inline)
+    #expect(!state.editorHasUnsavedChanges)
+  }
+
+  @Test("Changing selection never silently discards an inline draft")
+  @MainActor
+  func selectionRequiresDraftDecision() throws {
+    let first = uniqueRankedProfile(name: "First", rank: 10)
+    let second = uniqueRankedProfile(name: "Second", rank: 20)
+    var state = ServerListFeature.State(
+      profiles: [first, second],
+      selectedProfileID: first.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(first.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setName("Draft"))
+
+    _ = ServerListFeature.reduce(state: &state, intent: .select(second.id))
+
+    #expect(state.selectedProfileID == first.id)
+    #expect(state.editor?.name == "Draft")
+    #expect(state.pendingDraftDestination == .selection(second.id))
+
+    _ = ServerListFeature.reduce(state: &state, intent: .continueEditingDraft)
+    #expect(state.selectedProfileID == first.id)
+    #expect(state.editor?.name == "Draft")
+    #expect(state.pendingDraftDestination == nil)
+
+    _ = ServerListFeature.reduce(state: &state, intent: .select(second.id))
+    _ = ServerListFeature.reduce(state: &state, intent: .discardPendingDraft)
+    #expect(state.selectedProfileID == second.id)
+    #expect(state.editor == nil)
+    #expect(state.profiles.first?.profile.name == "First")
+  }
+
+  @Test("Saving before a selection change preserves the draft durably")
+  @MainActor
+  func saveDraftBeforeSelectionChange() {
+    let first = uniqueRankedProfile(name: "First", rank: 10)
+    let second = uniqueRankedProfile(name: "Second", rank: 20)
+    var state = ServerListFeature.State(
+      profiles: [first, second],
+      selectedProfileID: first.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(first.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setName("Saved"))
+    _ = ServerListFeature.reduce(state: &state, intent: .select(second.id))
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .savePendingDraft
+    )
+
+    #expect(state.profiles.first?.profile.name == "Saved")
+    #expect(state.selectedProfileID == second.id)
+    #expect(state.editor == nil)
+    #expect(effect == .persistProfiles(state.profiles))
+  }
+
+  @Test("A changed draft must be saved or discarded before connecting")
+  @MainActor
+  func connectRequiresSavedDraft() {
+    let profile = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [profile],
+      selectedProfileID: profile.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(profile.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setHost("changed.example"))
+
+    let blocked = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(profile.id)
+    )
+
+    #expect(blocked == nil)
+    #expect(state.connectReady == nil)
+    #expect(state.profiles.first?.profile.host != "changed.example")
+    #expect(state.pendingDraftDestination == .connection(profile.id))
+
+    let saveAndConnect = ServerListFeature.reduce(
+      state: &state,
+      intent: .savePendingDraft
+    )
+    #expect(
+      saveAndConnect
+        == .persistProfilesAndConnect(
+          state.profiles,
+          state.profiles[0].profile
+        )
+    )
+  }
+
+  @Test("Save and Connect persists before handing the edited generation to the workspace")
+  @MainActor
+  func saveAndConnectOrdersPersistenceBeforeHandoff() async {
+    let profile = rankedProfile(name: "Connected Elsewhere", rank: 10)
+    let coordinator = RecordingFeedGenerationCoordinator()
+    let store = ServerListStore(
+      initialState: .init(
+        profiles: [profile],
+        selectedProfileID: profile.id
+      ),
+      repository: MemoryProfileRepository(profiles: [profile]),
+      brokerFeedGenerationCoordinator: coordinator
+    )
+    await store.send(.editProfileInline(profile.id))
+    await store.send(.setHost("next-generation.example"))
+    await store.send(.connect(profile.id))
+
+    #expect(store.state.connectReady == nil)
+    #expect(store.state.pendingDraftDestination == .connection(profile.id))
+
+    await store.send(.savePendingDraft)
+
+    #expect(
+      await coordinator.latestProfile(profileID: profile.id)?.host
+        == "next-generation.example"
+    )
+    #expect(
+      store.state.connectReady?.profile.host
+        == "next-generation.example"
+    )
+    #expect(!store.state.hasUnpersistedChanges)
+  }
+
+  @Test("An invalid draft cannot replace storage or begin connecting")
+  @MainActor
+  func invalidDraftCannotConnect() throws {
+    let profile = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [profile],
+      selectedProfileID: profile.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(profile.id)
+    )
+    _ = ServerListFeature.reduce(state: &state, intent: .setHost(""))
+    _ = ServerListFeature.reduce(state: &state, intent: .connect(profile.id))
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .savePendingDraft
+    )
+
+    #expect(effect == nil)
+    #expect(state.profiles == [profile])
+    #expect(state.connectReady == nil)
+    #expect(state.pendingDraftDestination == nil)
+    #expect(try #require(state.editor).validationIssues.isEmpty == false)
+  }
+
+  @Test("An unchanged valid selected profile connects directly")
+  @MainActor
+  func unchangedProfileConnectsDirectly() {
+    let profile = rankedProfile(name: "Lab", rank: 10)
+    var state = ServerListFeature.State(
+      profiles: [profile],
+      selectedProfileID: profile.id
+    )
+    _ = ServerListFeature.reduce(
+      state: &state,
+      intent: .editProfileInline(profile.id)
+    )
+
+    let effect = ServerListFeature.reduce(
+      state: &state,
+      intent: .connect(profile.id)
+    )
+
+    #expect(effect == nil)
+    #expect(state.pendingDraftDestination == nil)
+    #expect(state.connectReady?.profile == profile.profile)
+  }
+
   @Test("The observable store persists a create and restores it on relaunch")
   @MainActor
   func storePersistsCreate() async throws {

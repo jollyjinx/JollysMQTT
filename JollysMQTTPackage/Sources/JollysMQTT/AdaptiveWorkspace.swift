@@ -23,6 +23,15 @@ public enum AdaptiveWorkspacePresentation: Equatable, Sendable {
   }
 }
 
+public enum BrokerListPresentation: Equatable, Sendable {
+  case compactSummary
+  case regularEditor
+
+  public static func resolve(widthClass: WorkspaceWidthClass) -> Self {
+    widthClass == .compact ? .compactSummary : .regularEditor
+  }
+}
+
 public enum JollysMQTTHelpConcept:
   String,
   CaseIterable,

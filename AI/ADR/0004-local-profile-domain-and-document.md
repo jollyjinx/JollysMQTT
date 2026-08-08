@@ -4,7 +4,7 @@ description: "Secret-free broker profile values, validation, ordered atomic loca
 area: "architecture"
 doc_type: "adr"
 status: "accepted"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-08"
 tags:
   - "profiles"
   - "privacy"
@@ -75,6 +75,17 @@ The UI store is `@MainActor` and `@Observable`. Editor bindings project through
 store subscripts that dispatch intents, so views do not mutate feature state or
 call storage directly. Persistence effects are serialized in intent order;
 optimistic state remains visibly marked undurable after a failed write.
+
+Regular-width iPad and macOS broker lists keep the selected saved profile's
+draft in the detail pane. Compact layouts retain a dedicated modal editor.
+Draft identity is the stable profile UUID, and changing selection or connecting
+while the draft differs from storage enters an explicit decision state. The
+user can save, discard, or continue editing; validation failure preserves the
+draft and cannot replace the stored profile or begin a connection. A
+Save-and-Connect continuation persists and notifies the feed-generation
+coordinator before handing the saved immutable profile to the workspace, so an
+existing live generation still requires the registry's explicit all-window
+reconnect boundary.
 
 ## Consequences
 

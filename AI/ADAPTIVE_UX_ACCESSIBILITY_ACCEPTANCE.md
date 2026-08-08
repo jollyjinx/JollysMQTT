@@ -38,6 +38,10 @@ that still require physical Apple devices.
 - Broker-list UI tests verify that macOS presents Add Broker as a visible,
   correctly named sidebar action, that Command-Shift-N invokes the same action,
   and that both paths work when the list is empty.
+- Broker-list reducer and UI tests verify that regular width restores the
+  selected broker directly into a persistent detail-pane editor, compact width
+  retains its dedicated editor, and selection or connection cannot silently
+  discard an unsaved draft.
 - macOS and generic iOS builds compile the same package UI and String Catalog.
 
 ## Keyboard, editing, and alternate input
