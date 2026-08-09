@@ -4,7 +4,7 @@ description: "Decision record for durable history ordering, WAL batching, bounde
 area: "storage"
 doc_type: "architecture-decision-record"
 status: "accepted"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-09"
 tags:
   - "sqlite"
   - "history"
@@ -34,8 +34,9 @@ and charts depend on it.
 - One actor owns each SQLite connection. Its public inputs, records, results,
   diagnostics, and file-policy protocol are immutable `Sendable` values.
 - One database represents one broker profile.
-- Schema version 1 is created in one transaction and recorded last in a
-  structurally single-row `schema_version` table.
+- New databases create the current schema version 5 in one transaction and
+  record it last in a structurally single-row `schema_version` table. Versions
+  1 through 4 remain supported transactional migration inputs.
 - `topics` normalizes `(historySourceID, exact topic)`. `messages` refers to a
   topic row and stores receive microseconds plus the payload as an exact BLOB.
 - Both tables use `INTEGER PRIMARY KEY AUTOINCREMENT`. Message IDs are the
@@ -78,6 +79,26 @@ and charts depend on it.
   Payloads over the later ingestion policy's 1 MiB default remain a separate
   feed-level decision; this storage layer preserves every accepted payload
   byte.
+
+## First-release schema baseline
+
+Version `0.1.0` is the first public release candidate. The SQLite schema is
+already at internal version 5 because pre-release feature work evolved the
+format while retaining migration coverage:
+
+| Version | Added state |
+|---------|-------------|
+| 1 | Normalized topics, durable message order, receive time, and exact payload bytes. |
+| 2 | Connection epoch and ordinal for stable transport ordering. |
+| 3 | Explicit history coverage gaps. |
+| 4 | Publish operation identity, direction, QoS, and retained metadata. |
+| 5 | Payload-storage disposition and original payload byte count. |
+
+The store migrates each version from 1 through 4 to version 5 transactionally.
+A parameterized release regression opens representative databases at every
+older version, verifies preserved history and current metadata defaults, and
+then writes a current coverage gap. These are pre-release compatibility
+formats, not claims of previously shipped public schemas.
 
 ## Reproducible fixture
 

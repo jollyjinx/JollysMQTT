@@ -4,7 +4,7 @@ description: "Persistent decisions for security-oriented Xcode build settings an
 area: "release"
 doc_type: "security-decision-record"
 status: "active"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-08-09"
 tags:
   - "xcode"
   - "security"
@@ -37,6 +37,14 @@ No additional Clang-only warning or analyzer setting was enabled by the
 2026-07-29 audit. JollysMQTT has no project-owned C, C++, or Objective-C source;
 `CSQLite` is a system-library module map. Dependency source remains covered by
 its own package settings.
+
+The 2026-08-09 R6 re-audit resolved Debug, Release, Official Development, and
+Official Release for macOS and generic iOS. All eight unsigned builds passed
+without project-source or concurrency warnings. `ENABLE_ENHANCED_SECURITY` and
+`ENABLE_POINTER_AUTHENTICATION` still resolve disabled, and no project-owned
+C, C++, Objective-C, opaque binary framework, or XCFramework has been added.
+This evidence preserves the deferred decision below; unsigned builds are not a
+substitute for its required signed hardware validation.
 
 ## Disabled settings
 

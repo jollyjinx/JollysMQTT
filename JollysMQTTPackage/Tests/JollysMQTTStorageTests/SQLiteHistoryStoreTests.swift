@@ -704,8 +704,11 @@ struct SQLiteHistoryStoreTests {
   }
 
   #if os(macOS)
-    @Test("A version-one database migrates without losing existing history")
-    func versionOneMigration() async throws {
+    @Test(
+      "Every pre-release history schema migrates without losing existing history",
+      arguments: [1, 2, 3, 4]
+    )
+    func historicalSchemaMigration(version: Int) async throws {
       let directory = FileManager.default.temporaryDirectory
         .appending(path: "JollysMQTTStorageTests-\(UUID().uuidString)", directoryHint: .isDirectory)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -734,7 +737,10 @@ struct SQLiteHistoryStoreTests {
           payload BLOB NOT NULL
         );
         CREATE INDEX messages_topic_order ON messages(topic_id, id DESC);
-        INSERT INTO schema_version(singleton, version) VALUES (1, 1);
+        \(version >= 2 ? "ALTER TABLE messages ADD COLUMN connection_epoch TEXT; ALTER TABLE messages ADD COLUMN connection_ordinal INTEGER;" : "")
+        \(version >= 3 ? "CREATE TABLE history_coverage_gaps (id INTEGER PRIMARY KEY AUTOINCREMENT, history_source_id TEXT NOT NULL, connection_epoch TEXT, started_at_microseconds INTEGER NOT NULL, ended_at_microseconds INTEGER, minimum_missing_message_count INTEGER NOT NULL CHECK (minimum_missing_message_count > 0), reason TEXT NOT NULL, is_open_ended INTEGER NOT NULL CHECK (is_open_ended IN (0, 1)), CHECK (ended_at_microseconds IS NULL OR ended_at_microseconds >= started_at_microseconds)); CREATE INDEX history_coverage_gaps_source_time ON history_coverage_gaps(history_source_id, started_at_microseconds, id);" : "")
+        \(version >= 4 ? "ALTER TABLE messages ADD COLUMN operation_id TEXT; ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'; ALTER TABLE messages ADD COLUMN qos INTEGER NOT NULL DEFAULT 0; ALTER TABLE messages ADD COLUMN retained INTEGER NOT NULL DEFAULT 0;" : "")
+        INSERT INTO schema_version(singleton, version) VALUES (1, \(version));
         INSERT INTO topics(history_source_id, topic) VALUES ('source-a', 'legacy');
         INSERT INTO messages(topic_id, received_at_microseconds, payload)
           SELECT id, 1, X'01' FROM topics;
@@ -761,6 +767,8 @@ struct SQLiteHistoryStoreTests {
       #expect(legacy.first?.direction == .received)
       #expect(legacy.first?.qos == .atMostOnce)
       #expect(legacy.first?.retained == false)
+      #expect(legacy.first?.payloadStorage == .stored)
+      #expect(legacy.first?.originalPayloadByteCount == 1)
       _ = try await store.recordCoverageGap(
         HistoryCoverageGapInput(
           historySourceID: "source-a",
