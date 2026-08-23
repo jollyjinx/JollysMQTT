@@ -4,7 +4,7 @@ description: "Detailed product, architecture, persistence, testing, and staged d
 area: "architecture"
 doc_type: "implementation-plan"
 status: "reviewed"
-last_reviewed: "2026-08-05"
+last_reviewed: "2026-08-23"
 tags:
   - "swift"
   - "swiftui"
@@ -72,11 +72,10 @@ Reference behavior:
 - The package and app compile in Swift 6 mode with complete concurrency checks.
 - "mqttnio version 3" means the mqtt-nio package's v3 API, not merely MQTT
   protocol 3.1.1.
-- JollysMQTT uses the `jollyjinx/mqtt-nio` fork at revision
-  `e670a69ee3122bd11ef04f668757ffc01c263468`. It is upstream
-  `3.0.0-alpha.2` plus a fix preventing MQTT task timeout double completion.
-  Pin that immutable revision until the fix is available in a newer upstream
-  release that passes JollysMQTT's compatibility suite.
+- JollysMQTT follows the `main` branch of the `jollyjinx/mqtt-nio` fork. Keep
+  the resolved branch revision in `Package.resolved` for reproducible ordinary
+  builds, and validate each dependency update with JollysMQTT's compatibility
+  suite.
 - MQTT 3.1.1 is the initial protocol default. The domain model leaves room for
   MQTT 5 because mqtt-nio supports both.
 - iPhone uses one active app scene. Multiwindow is a first-class requirement on
@@ -312,7 +311,7 @@ This is the only target that depends on:
 ```swift
 .package(
     url: "https://github.com/jollyjinx/mqtt-nio.git",
-    revision: "e670a69ee3122bd11ef04f668757ffc01c263468"
+    branch: "main"
 )
 ```
 
@@ -1235,12 +1234,13 @@ Every milestone must:
 
 - Create thin multiplatform Xcode app and local package.
 - Establish Swift 6.2.3 settings and deployment targets.
-- Add the exact `jollyjinx/mqtt-nio` revision pin only to the transport target.
+- Add the `jollyjinx/mqtt-nio` `main` branch dependency only to the transport
+  target and check in its resolved revision.
 - Add package/app build schemes and test plan.
 - Prove connect, subscribe, publish, cancellation, and TLS on macOS and iOS.
 - Prove the bounded-ingress adapter under a producer faster than its consumer;
-  record the pinned mqtt-nio subscription's unbounded buffering as an upstream
-  constraint and measure total-process peak memory through teardown.
+  record the resolved mqtt-nio `main` subscription's unbounded buffering as an
+  upstream constraint and measure total-process peak memory through teardown.
 - Benchmark the minimal SQLite batch writer and pruning strategy at the target
   message rate.
 - Record `MQTTSession`, overload, and SQLite decisions in ADRs.
@@ -1386,7 +1386,7 @@ Before merging each feature:
 
 | Risk | Mitigation / decision gate |
 |------|----------------------------|
-| mqtt-nio 3 API churn | Exact prerelease pin and single adapter target; upgrade only behind integration suite |
+| mqtt-nio 3 API churn | Fork `main` branch plus checked-in resolution and single adapter target; update only behind integration suite |
 | mqtt-nio 3 toolchain requirement | Establish Swift 6.2.3 in Milestone 0 before UI work |
 | mqtt-nio alpha.2 subscription uses an unbounded `AsyncThrowingStream` | Fast consumer, bounded app ingress, deterministic overload disconnect, sustained-load spike; upstream issue/patch if dependency buffering still defeats the memory target |
 | Very large wildcard subscriptions | Configurable filters, payload limits, actor aggregation, UI coalescing, bounded history |

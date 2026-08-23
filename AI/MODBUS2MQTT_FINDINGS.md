@@ -195,9 +195,11 @@ Relevant API behavior:
 - Apple TLS is configured with `TSTLSConfiguration`; full certificate
   verification is available and is the required default.
 
-JollysMQTT implications:
+Historical JollysMQTT implications at the time of this review:
 
-1. Pin alpha.2 exactly, not `from:`.
+1. The reviewed alpha.2 source required an exact dependency selection. The
+   current project policy instead follows `jollyjinx/mqtt-nio` `main`; see
+   `MQTT_NIO_FORK.md`.
 2. Pass `NIOTSEventLoopGroup.singleton.any()` explicitly on Apple platforms.
 3. Map clean-session mode to the appropriate mqtt-nio overload.
 4. Keep only one active connection per `MQTTSession`.

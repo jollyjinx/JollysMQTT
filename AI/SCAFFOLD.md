@@ -4,7 +4,7 @@ description: "Buildable app/package scaffold, dependency boundaries, project gen
 area: "build"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-23"
 tags:
   - "swift"
   - "swiftui"
@@ -47,10 +47,11 @@ JollysMQTTCore
 ```
 
 The application imports only SwiftUI and the package's `JollysMQTT` product.
-The MQTTNIO/NIO dependency is deliberately absent from this scaffold. Ticket
-#2 adds the exact mqtt-nio prerelease pin to `JollysMQTTTransport` and proves
-its Apple Transport Services lifecycle without exposing dependency types to
-other modules.
+The MQTTNIO/NIO dependency was deliberately absent from the initial scaffold.
+Ticket #2 added mqtt-nio only to `JollysMQTTTransport` and proved its Apple
+Transport Services lifecycle without exposing dependency types to other
+modules. The current dependency policy follows `jollyjinx/mqtt-nio` `main` and
+checks in the resolved revision.
 
 ## Validation
 

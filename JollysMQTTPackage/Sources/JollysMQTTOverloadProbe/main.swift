@@ -142,9 +142,9 @@ private func runProbe() async throws {
                 .operatingSystemVersionString,
             architecture: architectureName(),
             buildConfiguration: buildConfiguration,
-            mqttNIOVersion: "3.0.0-alpha.2",
+            mqttNIOVersion: "main",
             mqttNIORevision:
-                "e670a69ee3122bd11ef04f668757ffc01c263468",
+                "0d320511d859c0400b2886951996068fdb12be7a",
             attemptedMessages: arguments.messageCount,
             publisherSentMessages: sentMessages,
             publisherElapsedMilliseconds: publisherElapsed.milliseconds,

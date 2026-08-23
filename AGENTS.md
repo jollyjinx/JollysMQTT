@@ -105,18 +105,18 @@ declared by an application bundle.
 ## mqtt-nio dependency rule
 
 The requested mqtt-nio major version 3 is prerelease. Use the
-[`jollyjinx/mqtt-nio`](https://github.com/jollyjinx/mqtt-nio) fork pinned to
-revision `e670a69ee3122bd11ef04f668757ffc01c263468`. That revision is one commit
-on top of upstream `3.0.0-alpha.2` and prevents MQTT task timeout double
-completion. Do not depend on `main`; keep the immutable revision pin until the
-fix is available in a verified upstream release. See
-`AI/MQTT_NIO_FORK.md` for the exact delta and adoption notes. Changes to the
-pin require:
+[`jollyjinx/mqtt-nio`](https://github.com/jollyjinx/mqtt-nio) fork's `main`
+branch. Keep `Package.resolved` checked in so ordinary builds reproduce the
+resolved branch head. Do not restore the obsolete
+`e670a69ee3122bd11ef04f668757ffc01c263468` revision pin; `main` now carries
+the maintained timeout implementation. See `AI/MQTT_NIO_FORK.md` for branch
+tracking and adoption notes. Changes to the resolved branch revision require:
 
 1. reading the upstream release notes,
 2. building all package targets,
 3. running transport integration tests against Mosquitto, and
-4. recording API or behavioral changes in `AI/`.
+4. recording API or behavioral changes in `AI/` and updating dependency
+   identity emitted by the overload probe.
 
 The v3 API uses structured lifetimes for connections and subscriptions.
 Connection ownership must follow that structure instead of retaining an

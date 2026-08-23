@@ -35,7 +35,7 @@ let package = Package(
   dependencies: [
     .package(
       url: "https://github.com/jollyjinx/mqtt-nio.git",
-      revision: "e670a69ee3122bd11ef04f668757ffc01c263468"
+      branch: "main"
     )
   ],
   targets: [

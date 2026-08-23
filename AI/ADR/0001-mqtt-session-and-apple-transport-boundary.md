@@ -4,7 +4,7 @@ description: "Decision record for clean-session defaults, process-local mqtt-nio
 area: "transport"
 doc_type: "architecture-decision-record"
 status: "accepted"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-23"
 tags:
   - "mqtt"
   - "mqtt-nio"
@@ -17,10 +17,10 @@ tags:
 
 ## Context
 
-mqtt-nio `3.0.0-alpha.2` exposes connections and subscriptions as scoped
-operations. Its `MQTTSession` is a reference object containing inflight and
-subscription state, and the dependency permits only one connection at a time
-to borrow one session. Apple clients must explicitly use
+mqtt-nio's alpha.2-based `main` branch exposes connections and subscriptions as
+scoped operations. Its `MQTTSession` is a reference object containing inflight
+and subscription state, and the dependency permits only one connection at a
+time to borrow one session. Apple clients must explicitly use
 `NIOTSEventLoopGroup.singleton.any()`; mqtt-nio otherwise defaults to its
 POSIX event loop.
 
@@ -124,7 +124,7 @@ and non-TLS connection runs.
 - The feed registry has a clear single-owner invariant for `MQTTSession`.
 - App and core modules remain independent of mqtt-nio and NIO.
 - Active cancellation is prompt and observable at the broker, while
-  pre-connection cancellation remains bounded by the pinned dependency's
+  pre-connection cancellation remains bounded by the resolved dependency's
   timeout rather than being natively cancellation-aware.
 - System trust remains the production default without adding a custom-CA
   product feature.

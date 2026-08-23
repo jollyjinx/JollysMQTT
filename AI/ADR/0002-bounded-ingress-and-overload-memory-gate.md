@@ -4,7 +4,7 @@ description: "Decision record for fixed-capacity MQTT ingress, overload teardown
 area: "transport"
 doc_type: "architecture-decision-record"
 status: "accepted"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-08-23"
 tags:
   - "mqtt"
   - "mqtt-nio"
@@ -17,11 +17,12 @@ tags:
 
 ## Context
 
-mqtt-nio `3.0.0-alpha.2` builds each `MQTTSubscription` on an unbounded
-`AsyncThrowingStream`. A bounded application queue cannot retroactively bound
+mqtt-nio `3.0.0-alpha.2` built each `MQTTSubscription` on an unbounded
+`AsyncThrowingStream`, and the currently resolved fork `main` revision retains
+that implementation. A bounded application queue cannot retroactively bound
 messages already buffered by the dependency. JollysMQTT therefore needs both a
 deterministic local-overload contract and a measured total-process
-compatibility gate against the actual pinned dependency.
+compatibility gate against the resolved dependency.
 
 This decision is intentionally narrower than the future `BrokerFeed`. It
 establishes only the transport-to-consumer handoff, teardown semantics, and
@@ -116,12 +117,14 @@ across the repeated runs and far inside both memory budgets.
 
 ## Upstream decision
 
-The pinned mqtt-nio upstream edge stayed inside the proposed absolute, delta,
-and teardown budgets in all three release runs. The dependency blocker is not
-triggered, so this ticket requires neither an upstream patch nor an unverified
-upgrade. The exact alpha.2 pin and compatibility gate remain in place. Any
-future budget failure reopens the choice among an upstream fix, a narrow
-maintained patch, or a verified newer release.
+The alpha.2 baseline stayed inside the proposed absolute, delta, and teardown
+budgets in all three release runs. The 2026-08-23 move to fork `main` resolved
+revision `0d320511d859c0400b2886951996068fdb12be7a`; its candidate changes alter
+timeout handling and CI but retain the unbounded subscription stream. The
+serialized real-overload integration case passed after the move. The
+compatibility gate remains in place, and any future budget failure reopens the
+choice among an upstream fix, a narrow maintained patch, or a verified newer
+revision.
 
 ## Consequences
 

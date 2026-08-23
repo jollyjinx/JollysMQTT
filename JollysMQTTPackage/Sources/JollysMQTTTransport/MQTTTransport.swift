@@ -476,9 +476,10 @@ public struct MQTTTransportClient: Sendable {
         if Task.isCancelled {
           throw CancellationError()
         }
-        // mqtt-nio alpha.2 can discard the NIOTS trust status and surface only
-        // an ambiguous channel close/timeout. Confirm trust independently
-        // before assigning the certificate-specific failure.
+        // The currently resolved alpha.2-based mqtt-nio main revision can
+        // discard the NIOTS trust status and surface only an ambiguous channel
+        // close/timeout. Confirm trust independently before assigning the
+        // certificate-specific failure.
         let diagnosedTrust: TLSTrustDiagnosticResult?
         if endpoint.security.isTLS,
           Self.isAmbiguousTLSConnectionFailure(error)

@@ -4,7 +4,7 @@ description: "Redaction, TLS, file protection, entitlements, destructive deletio
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-08-23"
 tags:
   - "privacy"
   - "security"
@@ -48,11 +48,12 @@ insecure trust override, certificate exception, or silent downgrade to TCP.
 
 Explicit Network.framework and Security-framework trust statuses map to a
 typed, redacted trust rejection. A generic channel close or connection timeout
-does not prove that certificate validation failed. mqtt-nio `3.0.0-alpha.2`
-collapses a real system-default NIOTS trust rejection into a channel connect
-timeout without retaining the underlying status. Only for that ambiguous TLS
-failure, JollysMQTT performs a bounded Network.framework diagnostic handshake
-with the same server name, trust roots, and full certificate verification. An
+does not prove that certificate validation failed. The currently resolved,
+alpha.2-based mqtt-nio `main` revision collapses a real system-default NIOTS
+trust rejection into a channel connect timeout without retaining the
+underlying status. Only for that ambiguous TLS failure, JollysMQTT performs a
+bounded Network.framework diagnostic handshake with the same server name,
+trust roots, and full certificate verification. An
 explicitly rejected trust evaluation becomes the typed trust failure; accepted
 or inconclusive evaluation remains generic broker-unavailable. The diagnostic
 does not exchange MQTT credentials, topics, or payloads and emits no logs.
