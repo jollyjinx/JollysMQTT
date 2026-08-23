@@ -16,6 +16,7 @@ archive_only=false
 dry_run=false
 preflight_only=false
 output_directory=""
+output_directory_is_explicit=false
 
 usage() {
     cat <<'USAGE'
@@ -90,6 +91,7 @@ while (($# > 0)); do
         --output-dir)
             (($# >= 2)) || die "--output-dir requires a path"
             output_directory="$2"
+            output_directory_is_explicit=true
             shift 2
             ;;
         -h|--help)
@@ -141,8 +143,13 @@ readonly COMMIT_REVISION="$(git -C "${REPOSITORY_ROOT}" rev-parse --short HEAD)"
 readonly COMMIT_SHA="$(git -C "${REPOSITORY_ROOT}" rev-parse HEAD)"
 
 if [[ -z "${output_directory}" ]]; then
-    output_directory="${TMPDIR:-/tmp}"
-    output_directory="${output_directory%/}/jollysmqtt-testflight-${BUILD_VERSION}-${COMMIT_REVISION}"
+    readonly OUTPUT_DIRECTORY_BASE="${TMPDIR:-/tmp}"
+    output_directory="${OUTPUT_DIRECTORY_BASE%/}/jollysmqtt-testflight-${BUILD_VERSION}-${COMMIT_REVISION}"
+    retry_number=2
+    while [[ -e "${output_directory}" ]]; do
+        output_directory="${OUTPUT_DIRECTORY_BASE%/}/jollysmqtt-testflight-${BUILD_VERSION}-${COMMIT_REVISION}-retry-${retry_number}"
+        retry_number=$((retry_number + 1))
+    done
 elif [[ "${output_directory}" != /* ]]; then
     die "--output-dir must be an absolute path"
 fi
@@ -153,7 +160,7 @@ case "${output_directory}" in
         ;;
 esac
 
-if [[ -e "${output_directory}" ]]; then
+if [[ "${output_directory_is_explicit}" == true && -e "${output_directory}" ]]; then
     die "output path already exists: ${output_directory}"
 fi
 
@@ -237,6 +244,7 @@ archive_platform() {
         -archivePath "${archive_path}" \
         "${authentication_arguments[@]}" \
         CODE_SIGN_STYLE=Automatic \
+        CODE_SIGN_IDENTITY="Apple Development" \
         DEVELOPMENT_TEAM="${TEAM_ID}" \
         CURRENT_PROJECT_VERSION="${BUILD_VERSION}" \
         archive

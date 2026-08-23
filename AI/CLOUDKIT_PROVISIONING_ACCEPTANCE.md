@@ -4,7 +4,7 @@ description: "Build variants, recovery behavior, development schema, determinist
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-08-23"
 tags:
   - "cloudkit"
   - "provisioning"
@@ -24,6 +24,14 @@ The machine used for this implementation reported zero valid code-signing
 identities on 2026-07-29. No Apple account, signed build, CloudKit Dashboard
 container, or second signed device was available. Every such result is
 therefore explicitly pending below.
+
+A 2026-08-23 `Official Release` archive probe still reported zero valid local
+code-signing identities. Automatic signing progressed beyond the former
+automatic-signing/Apple-Distribution conflict after selecting Apple
+Development, then provisioning failed because team `5V8J7476Q9` could not
+register `eu.jinx.JollysMQTT` and its wildcard profile lacked the required Push
+Notifications and CloudKit entitlements. No signed archive was produced or
+uploaded.
 
 ## Build families
 

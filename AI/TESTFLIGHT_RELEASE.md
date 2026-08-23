@@ -35,6 +35,11 @@ environment, and official entitlements.
 - The script verifies that HEAD and the worktree did not change while
   archiving.
 - Archive and export output must remain outside the Git worktree.
+- Automatic signing archives with an Apple Development identity. App Store
+  export then re-signs the submitted products for distribution.
+- A retry for the same commit preserves previous output and selects the next
+  available `-retry-N` directory. An explicit `--output-dir` remains
+  non-overwriting and fails if its path already exists.
 - The script never promotes a CloudKit schema. Production schema readiness is
   still governed by `CLOUDKIT_PROVISIONING_ACCEPTANCE.md`.
 
@@ -63,6 +68,13 @@ options without building:
 
 ```bash
 Tools/build-and-upload-testflight.sh --preflight
+```
+
+Run the release-script regression tests after changing its signing, output,
+or safety behavior:
+
+```bash
+Tools/Tests/build-and-upload-testflight-tests.sh
 ```
 
 For API-key authentication, set all three values:
