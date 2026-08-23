@@ -28,3 +28,16 @@ patterns found in the existing bridge,
 [AI/MQTT_EXPLORER_FINDINGS.md](AI/MQTT_EXPLORER_FINDINGS.md) for behaviors
 derived from the checked-in product reference, and [AGENTS.md](AGENTS.md) for
 contributor constraints.
+
+## TestFlight
+
+To archive the committed official iOS and macOS builds and upload both to
+TestFlight, run:
+
+```bash
+Tools/build-and-upload-testflight.sh
+```
+
+Use `--archive-only`, `--preflight`, or `--dry-run` for non-uploading modes.
+See [AI/TESTFLIGHT_RELEASE.md](AI/TESTFLIGHT_RELEASE.md) for signing,
+authentication, versioning, and release-gate details.

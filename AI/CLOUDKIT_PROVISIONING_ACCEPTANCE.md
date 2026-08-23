@@ -54,9 +54,10 @@ Official configurations use platform-specific entitlement files:
   `com.apple.developer.icloud-services = CloudKit`, and
   `com.apple.developer.icloud-container-environment`
 
-No team identifier or provisioning profile is checked into the repository.
-The official identifier in source is an intention, not evidence of container
-ownership or access.
+No provisioning profile is checked into the repository. The TestFlight
+release script records the same default Apple team identifier used by
+SmartyBox and permits an explicit override; that identifier is not evidence of
+container ownership, profile availability, or access.
 
 ## Recovery contract
 

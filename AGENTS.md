@@ -175,6 +175,14 @@ Transport integration tests may start an isolated Mosquitto broker in a
 container. Do not point automated tests at a real broker or use real
 credentials.
 
+Use `Tools/build-and-upload-testflight.sh` for official iOS and macOS
+TestFlight archives. It requires a clean committed worktree, uses the
+`Official Release` configuration, assigns one Git-derived build number to both
+archives, and verifies them before upload. Prefer `--archive-only`,
+`--preflight`, or `--dry-run` while validating release changes. An actual
+upload is an explicit release operation; never perform one as part of ordinary
+implementation or testing.
+
 For documentation-only changes before the scaffold exists, run:
 
 ```bash
