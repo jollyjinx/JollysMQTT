@@ -81,6 +81,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
       configs:
         Debug:
+          "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": JollysMQTTApp/JollysMQTT.debug.macOS.entitlements
+          "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+          "CODE_SIGNING_ALLOWED[sdk=macosx*]": YES
           JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: ""
           JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: ""
           JOLLYS_MQTT_PROFILE_SYNC_MODE: localOnly

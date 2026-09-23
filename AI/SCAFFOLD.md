@@ -4,7 +4,7 @@ description: "Buildable app/package scaffold, dependency boundaries, project gen
 area: "build"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-09-23"
 tags:
   - "swift"
   - "swiftui"
@@ -30,10 +30,18 @@ The app target's Swift module is named `JollysMQTTApp`, while its product and
 scheme remain `JollysMQTT`. This prevents build-output collisions with the
 package's `JollysMQTT` composition module.
 
-Debug builds disable code signing so a fresh checkout and self-built variant
-can run the documented macOS and generic iOS validation commands without an
-Apple development team. Release builds retain normal signing behavior for the
-official capability and archive work in later tickets.
+macOS Debug builds use ad hoc signing with the network-client entitlement, so
+they can connect to local brokers without an Apple development team. They do
+not enable App Sandbox, preserving the existing local profile and history
+locations used by earlier unsigned Debug builds. Generic iOS validation builds
+remain unsigned. Official configurations retain their separately signed,
+sandboxed entitlements and CloudKit capabilities.
+
+An unsigned macOS Debug app launched through Launch Services timed out before
+opening a connection to a broker on the local subnet, while the same executable
+run directly from a terminal connected. The ad hoc signed Debug app with the
+network-client entitlement connected using the saved profile. Keep the Debug
+signing rule when regenerating the project from `project.yml`.
 
 ## Package boundaries
 

@@ -376,7 +376,8 @@ private struct ConnectedWorkspaceView: View {
         }
       }
       .foregroundStyle(
-        snapshot.lastFailure == nil ? Color.secondary : Color.red
+        snapshot.phase.connectionProgressDescription != nil
+          || snapshot.lastFailure == nil ? Color.secondary : Color.red
       )
       .accessibilityLabel(snapshot.phase.localizedTitle)
     }
@@ -403,8 +404,10 @@ private struct ConnectedWorkspaceView: View {
           .padding(.vertical, 8)
           Divider()
         }
-        if snapshot.lastFailure != nil || snapshot.retry != nil {
-          MacConnectionIssueBanner(snapshot: snapshot)
+        if snapshot.phase.connectionProgressDescription != nil
+          || snapshot.lastFailure != nil || snapshot.retry != nil
+        {
+          MacConnectionStatusBanner(snapshot: snapshot)
           Divider()
         }
         if !historyIsHealthy {
@@ -420,14 +423,23 @@ private struct ConnectedWorkspaceView: View {
     }
   }
 
-  private struct MacConnectionIssueBanner: View {
+  private struct MacConnectionStatusBanner: View {
     let snapshot: BrokerFeedSnapshot
 
     var body: some View {
       HStack(spacing: 8) {
-        Image(systemName: "exclamationmark.triangle")
-          .foregroundStyle(.red)
-        if let failure = snapshot.lastFailure {
+        Image(
+          systemName: snapshot.phase.connectionProgressDescription == nil
+            ? "exclamationmark.triangle" : "info.circle"
+        )
+        .foregroundStyle(
+          snapshot.phase.connectionProgressDescription == nil
+            ? Color.red : Color.secondary
+        )
+        if let progress = snapshot.phase.connectionProgressDescription {
+          Text(progress)
+            .lineLimit(2)
+        } else if let failure = snapshot.lastFailure {
           Text(failure.localizedDescription)
             .lineLimit(2)
         }
@@ -2819,9 +2831,13 @@ private struct TopicOutlineRowContent: View {
     #if os(macOS)
       HStack(spacing: 4) {
         primaryLabel
+          .lineLimit(1)
+          .layoutPriority(1)
         summary
+          .layoutPriority(-1)
         Spacer(minLength: 8)
         descendantCounts
+          .layoutPriority(-1)
       }
       .controlSize(.small)
       .frame(minHeight: 22)
@@ -2888,7 +2904,7 @@ private struct TopicOutlineRowContent: View {
             )
           )
       }
-      if let qos = row.qos {
+      if let qos = row.qos, qos != .atMostOnce {
         Text(
           "QoS \(qos.rawValue)",
           bundle: #bundle,
@@ -2938,36 +2954,36 @@ private struct TopicOutlineRowContent: View {
         comment:
           "Accessible stale MQTT topic metadata. Variables are descendant value-topic and message counts."
       )
-    } else if let qos = row.qos, let summary = row.payloadSummary {
+    } else if let summary = row.payloadSummary {
       if row.retained {
         return Text(
-          "Retained delivery, QoS \(qos.rawValue), current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          "Retained delivery, current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
           bundle: #bundle,
           comment:
-            "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count."
+            "Accessible MQTT topic metadata. Variables are the current payload summary, descendant value-topic count, and descendant message count."
         )
       } else {
         return Text(
-          "Latest delivery, QoS \(qos.rawValue), current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          "Latest delivery, current value \(summary.display), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
           bundle: #bundle,
           comment:
-            "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count."
+            "Accessible MQTT topic metadata. Variables are the current payload summary, descendant value-topic count, and descendant message count."
         )
       }
-    } else if let qos = row.qos {
+    } else if row.qos != nil {
       if row.retained {
         return Text(
-          "Retained delivery, QoS \(qos.rawValue), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          "Retained delivery, \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
           bundle: #bundle,
           comment:
-            "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count."
+            "Accessible MQTT topic metadata without a text summary. Variables are descendant value-topic and message counts."
         )
       } else {
         return Text(
-          "Latest delivery, QoS \(qos.rawValue), \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
+          "Latest delivery, \(row.descendantValueTopicCount) descendant topics, \(row.descendantMessageCount) descendant messages",
           bundle: #bundle,
           comment:
-            "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count."
+            "Accessible MQTT topic metadata without a text summary. Variables are descendant value-topic and message counts."
         )
       }
     } else {
@@ -3116,7 +3132,11 @@ private struct ConnectionStatusView: View {
       }
       .accessibilityLabel(snapshot.phase.localizedTitle)
 
-      if let failure = snapshot.lastFailure {
+      if let progress = snapshot.phase.connectionProgressDescription {
+        Text(progress)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      } else if let failure = snapshot.lastFailure {
         Text(failure.localizedDescription)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -3134,12 +3154,26 @@ private struct ConnectionStatusView: View {
 }
 
 extension BrokerFeedPhase {
+  fileprivate var connectionProgressDescription: LocalizedStringResource? {
+    switch self {
+    case .resolving:
+      LocalizedStringResource("Preparing broker connection…", bundle: #bundle)
+    case .connecting:
+      LocalizedStringResource("Establishing TCP and MQTT connection…", bundle: #bundle)
+    case .subscribing:
+      LocalizedStringResource("Subscribing to broker topics…", bundle: #bundle)
+    case .idle, .connected, .waitingToReconnect, .disconnecting, .suspended,
+      .failed, .overloaded:
+      nil
+    }
+  }
+
   fileprivate var localizedTitle: LocalizedStringResource {
     switch self {
     case .idle:
       LocalizedStringResource("Disconnected", bundle: #bundle)
     case .resolving:
-      LocalizedStringResource("Resolving broker", bundle: #bundle)
+      LocalizedStringResource("Preparing connection", bundle: #bundle)
     case .connecting:
       LocalizedStringResource("Connecting", bundle: #bundle)
     case .subscribing:
@@ -4701,6 +4735,11 @@ private struct ProfileEditorForm: View {
         issues: store.state.editor?.validationIssues ?? []
       )
     }
+    #if os(macOS)
+      // The default macOS form grows with its contents. A grouped form
+      // scrolls within the editor when advanced settings are expanded.
+      .formStyle(.grouped)
+    #endif
   }
 }
 
@@ -4739,7 +4778,7 @@ private struct ProfileEndpointSection: View {
 
       TextField(
         value: $store[editorInteger: .port],
-        format: .number
+        format: .number.grouping(.never)
       ) {
         Text(
           "Port",
@@ -4747,6 +4786,7 @@ private struct ProfileEndpointSection: View {
           comment: "Label for the broker network port."
         )
       }
+      .accessibilityIdentifier("profile-editor.port")
 
       Picker(selection: $store.editorTransport) {
         Text(

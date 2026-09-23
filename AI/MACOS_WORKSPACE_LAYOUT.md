@@ -4,7 +4,7 @@ description: "Desktop-specific information density, toolbar placement, split-vie
 area: "ui"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-08-08"
+last_reviewed: "2026-09-23"
 tags:
   - "macos"
   - "swiftui"
@@ -19,9 +19,10 @@ starts immediately below the window toolbar. Broker identity, connection state,
 disconnect/retry, broker-list navigation, and Help belong in the titlebar
 toolbar rather than in a large header inside the document.
 
-Routine connected state consumes no content-height banner. Exceptional state
-may insert a compact banner below the toolbar for a connection failure or
-retry, changed broker generation, or degraded durable history. Removing the
+Routine connected state consumes no content-height banner. A compact banner
+below the toolbar shows the current preparation, connection, or subscription
+stage while a connection attempt is active. It also shows a connection failure
+or retry, changed broker generation, or degraded durable history. Removing the
 condition removes the banner and returns the space to the workspace.
 
 The primary layout remains a native adjustable `NavigationSplitView`:
@@ -61,6 +62,17 @@ live in a Retained Values menu; confirmation still explains the exact MQTT
 semantics and destructive scope, and active or completed operation feedback
 appears inline only while it is relevant.
 
+## Broker profile editor
+
+The shared profile form explicitly uses the grouped form style on macOS so it
+scrolls within the available editor height. The default macOS form sizes to its
+contents; expanding Advanced Settings or adding subscriptions must not increase
+the window's minimum height beyond the screen. Keep the inline editor header
+and Save/Revert footer outside the scrolling form.
+
+Port fields disable numeric grouping: display `1883`, never `1.883` or `1,883`,
+regardless of the locale's thousands separator.
+
 ## Acceptance
 
 - A healthy connected macOS workspace shows no in-content broker/status header.
@@ -76,6 +88,7 @@ appears inline only while it is relevant.
   regions in topic-outline, topic-information, and dashboard order. Chart cards
   preserve identity, order, pause state, settings, and clear boundaries while
   topic selection changes.
-- Failure, generation-change, and history-degradation banners appear only while
-  their exceptional state exists.
+- Connection-stage banners appear during an active connection attempt. Failure,
+  generation-change, and history-degradation banners appear only while their
+  exceptional state exists.
 - Compact iPhone/iPad navigation and touch target sizing are unchanged.

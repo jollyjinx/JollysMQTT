@@ -528,6 +528,9 @@
     "Enumerates the current local snapshot and asks you to confirm the exact topic count." : {
       "comment" : "Accessible hint explaining recursive retained-value target enumeration."
     },
+    "Establishing TCP and MQTT connection…" : {
+      "comment" : "Connection progress while opening the TCP socket and awaiting MQTT connection acceptance."
+    },
     "Expand %@" : {
       "comment" : "Accessible and Voice Control action that expands an MQTT topic branch. The variable is the exact topic path."
     },
@@ -701,24 +704,24 @@
     "Keepalive: %lld seconds" : {
       "comment" : "MQTT keepalive value. The variable is a number of seconds."
     },
-    "Latest delivery, QoS %lld, %lld descendant topics, %llu descendant messages" : {
-      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count.",
+    "Latest delivery, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are descendant value-topic and message counts.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Latest delivery, QoS %1$lld, %2$lld descendant topics, %3$llu descendant messages"
+            "value" : "Latest delivery, %1$lld descendant topics, %2$llu descendant messages"
           }
         }
       }
     },
-    "Latest delivery, QoS %lld, current value %@, %lld descendant topics, %llu descendant messages" : {
-      "comment" : "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count.",
+    "Latest delivery, current value %@, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata. Variables are the current payload summary, descendant value-topic count, and descendant message count.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Latest delivery, QoS %1$lld, current value %2$@, %3$lld descendant topics, %4$llu descendant messages"
+            "value" : "Latest delivery, current value %1$@, %2$lld descendant topics, %3$llu descendant messages"
           }
         }
       }
@@ -942,6 +945,12 @@
     "Port" : {
       "comment" : "Label for the broker network port."
     },
+    "Preparing broker connection…" : {
+      "comment" : "Connection progress while validating the profile and retrieving device credentials."
+    },
+    "Preparing connection" : {
+      "comment" : "Broker connection phase before opening the transport."
+    },
     "Preview truncated at the bounded inspection limit. Use Copy Raw Bytes for the complete payload." : {
       "comment" : "Explains that oversized selected text is preview-only and exact bytes remain copyable."
     },
@@ -1032,9 +1041,6 @@
     "Requires confirmation, then attempts to clear this topic’s broker-retained value." : {
       "comment" : "Accessible hint explaining the single retained-value deletion action."
     },
-    "Resolving broker" : {
-      "comment" : "Broker connection phase shown before opening the transport."
-    },
     "Restoring Chart History" : {
       "comment" : "Progress label while numeric chart history is restored."
     },
@@ -1056,24 +1062,24 @@
     "Retained delivery is packet metadata. A retained flag commonly marks a broker-stored value delivered to a new subscription; an unmarked live message does not prove that the broker stores no retained value." : {
       "comment" : "Help explaining precise MQTT retained-delivery semantics."
     },
-    "Retained delivery, QoS %lld, %lld descendant topics, %llu descendant messages" : {
-      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are QoS, descendant value-topic count, and descendant message count.",
+    "Retained delivery, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata without a text summary. Variables are descendant value-topic and message counts.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Retained delivery, QoS %1$lld, %2$lld descendant topics, %3$llu descendant messages"
+            "value" : "Retained delivery, %1$lld descendant topics, %2$llu descendant messages"
           }
         }
       }
     },
-    "Retained delivery, QoS %lld, current value %@, %lld descendant topics, %llu descendant messages" : {
-      "comment" : "Accessible MQTT topic metadata. Variables are QoS, current payload summary, descendant value-topic count, and descendant message count.",
+    "Retained delivery, current value %@, %lld descendant topics, %llu descendant messages" : {
+      "comment" : "Accessible MQTT topic metadata. Variables are the current payload summary, descendant value-topic count, and descendant message count.",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Retained delivery, QoS %1$lld, current value %2$@, %3$lld descendant topics, %4$llu descendant messages"
+            "value" : "Retained delivery, current value %1$@, %2$lld descendant topics, %3$llu descendant messages"
           }
         }
       }
@@ -1252,6 +1258,9 @@
     },
     "Subscribing" : {
       "comment" : "Broker connection phase shown while MQTT subscriptions start."
+    },
+    "Subscribing to broker topics…" : {
+      "comment" : "Connection progress while awaiting MQTT subscription acknowledgement."
     },
     "Subscriptions" : {
       "comment" : "Header for MQTT subscription filters."
