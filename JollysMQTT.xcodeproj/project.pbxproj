@@ -30,13 +30,13 @@
 		26E575F41174BC545DA26A05 /* JollysMQTTUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JollysMQTTUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2B12E1292D086A83C4169D68 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		306CD6619583D1D87C35A39D /* AdaptiveWorkspaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveWorkspaceUITests.swift; sourceTree = "<group>"; };
-		39A4BC8D19F4A232D7D93C8B /* JollysMQTT.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JollysMQTT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		39A4BC8D19F4A232D7D93C8B /* JollysMQTT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JollysMQTT.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		41F0423A39F1C3926E8E3021 /* JollysMQTTUITestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JollysMQTTUITestFixture.swift; sourceTree = "<group>"; };
 		52888C8543951D354558781F /* JollysMQTT.macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.macOS.entitlements; sourceTree = "<group>"; };
 		77E5412FB34BD85B43453D9A /* JollysMQTT.debug.macOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JollysMQTT.debug.macOS.entitlements; sourceTree = "<group>"; };
 		8CB2842078DF258C24CCC117 /* JollysMQTTApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JollysMQTTApp.swift; sourceTree = "<group>"; };
 		91CEEED0AF188E0C86C5A322 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		CF66477B4EF0FBDB87EB2444 /* JollysMQTTPackage */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JollysMQTTPackage; path = JollysMQTTPackage; sourceTree = SOURCE_ROOT; };
+		CF66477B4EF0FBDB87EB2444 /* JollysMQTTPackage */ = {isa = PBXFileReference; lastKnownFileType = folder; path = JollysMQTTPackage; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -456,9 +456,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				"CODE_SIGNING_ALLOWED[sdk=macosx*]" = YES;
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.debug.macOS.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5V8J7476Q9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
 				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = "";
@@ -472,6 +473,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.JollysMQTT;
 				PRODUCT_MODULE_NAME = JollysMQTTApp;
 				PRODUCT_NAME = JollysMQTT;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -490,6 +492,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.macOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5V8J7476Q9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
 				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = "";
@@ -523,6 +526,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = JollysMQTTApp/JollysMQTT.official.macOS.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5V8J7476Q9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
 				JOLLYS_MQTT_APS_ENVIRONMENT = development;
