@@ -51,7 +51,9 @@ how to select a numeric or Boolean payload and pin it.
 
 macOS topic rows are intentionally denser than touch-platform rows. Disclosure
 targets are 20 points, indentation advances by 12 points, and current payload
-summaries stay inline with the topic segment. iPhone and iPad retain 44-point
+summaries stay inline with the topic segment. Indexed summaries flatten payload
+line breaks into one display line, and the row gives that line the available
+width before its alignment spacer. iPhone and iPad retain 44-point
 custom interaction targets and the more spacious two-line row. Structural JSON
 rows use the same platform distinction: compact desktop rows and 44-point touch
 rows.

@@ -239,6 +239,40 @@ struct BrokerFeedIngestionTests {
     #expect(node.payloadSummary?.isTruncated == true)
   }
 
+  @Test("Formatted JSON remains readable in a one-line topic preview")
+  func formattedJSONPayloadSummaryIsOneLine() async throws {
+    let ingestion = BrokerFeedIngestion(
+      brokerID: UUID(),
+      historySourceID: "source",
+      historyWriter: RecordingHistoryWriter()
+    )
+    let payload = """
+      {
+        "connectedAt": "2026-09-20T16:54:19Z",
+        "name": "teenagerzimmer 97:c1",
+        "type": "WIRELESS"
+      }
+      """
+
+    await ingestion.ingest(
+      .fixture(
+        epoch: ConnectionEpochID(),
+        ordinal: 1,
+        topic: "unifi/hostsbymac/58:d3:49:2f:97:c1",
+        payload: Data(payload.utf8)
+      )
+    )
+    let snapshot = await ingestion.flush()
+    let summary = try #require(snapshot.roots.first?.children.first?
+      .children.first?.payloadSummary)
+
+    #expect(summary.kind == .json)
+    #expect(summary.display.contains("connectedAt"))
+    #expect(summary.display.contains("teenagerzimmer 97:c1"))
+    #expect(!summary.display.contains("\n"))
+    #expect(summary.isTruncated == false)
+  }
+
   @Test("A message burst emits one revision and slow consumers retain only newest")
   func coalescedNewestWinsSnapshots() async throws {
     let sleeper = IngestionManualSleeper()

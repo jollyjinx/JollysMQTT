@@ -1296,9 +1296,13 @@ public actor BrokerFeedIngestion {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     let kind: BrokerTopicPayloadSummary.Kind =
       trimmed.first == "{" || trimmed.first == "[" ? .json : .scalar
+    let singleLine = trimmed.split(whereSeparator: \.isNewline)
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
     let isTruncated =
-      trimmed.count > characterLimit || payload.count > decodedByteCount
-    let display = String(trimmed.prefix(characterLimit))
+      singleLine.count > characterLimit || payload.count > decodedByteCount
+    let display = String(singleLine.prefix(characterLimit))
     return BrokerTopicPayloadSummary(
       kind: kind,
       display: display,

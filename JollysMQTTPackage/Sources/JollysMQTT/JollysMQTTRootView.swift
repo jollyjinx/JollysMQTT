@@ -2834,10 +2834,9 @@ private struct TopicOutlineRowContent: View {
           .lineLimit(1)
           .layoutPriority(1)
         summary
-          .layoutPriority(-1)
         Spacer(minLength: 8)
-        descendantCounts
           .layoutPriority(-1)
+        descendantCounts
       }
       .controlSize(.small)
       .frame(minHeight: 22)
@@ -2919,16 +2918,10 @@ private struct TopicOutlineRowContent: View {
   @ViewBuilder
   private var summary: some View {
     if let summary = row.payloadSummary, !summary.display.isEmpty {
-      HStack(spacing: 4) {
-        Text(verbatim: "=")
-        Text(verbatim: summary.display)
-        if summary.isTruncated {
-          Text(verbatim: "…")
-        }
-      }
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .lineLimit(1)
+      Text(verbatim: "= \(summary.display)\(summary.isTruncated ? "…" : "")")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
   }
 
