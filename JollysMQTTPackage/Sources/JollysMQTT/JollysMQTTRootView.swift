@@ -2120,7 +2120,7 @@ private struct TopicExplorerView: View {
 private struct TopicColumnWidth: ViewModifier {
   func body(content: Content) -> some View {
     #if os(macOS)
-      content.navigationSplitViewColumnWidth(min: 320, ideal: 480, max: 680)
+      content.navigationSplitViewColumnWidth(min: 320, ideal: 480, max: 8192)
     #else
       content.navigationSplitViewColumnWidth(min: 280, ideal: 360)
     #endif

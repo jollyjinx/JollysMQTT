@@ -4,7 +4,7 @@ description: "Clean-commit archive, versioning, signing, verification, and App S
 area: "release"
 doc_type: "release-runbook"
 status: "active"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-09-23"
 tags:
   - "testflight"
   - "app-store-connect"
@@ -15,10 +15,10 @@ tags:
 
 # TestFlight Release Workflow
 
-`Tools/build-and-upload-testflight.sh` follows the established SmartyBox
-release workflow. It archives the same committed source for iOS and macOS,
-verifies that both archives contain the same deterministic build number, then
-submits both archives to App Store Connect/TestFlight.
+`Tools/build-and-upload-testflight.sh` follows the JollysFastVNC2
+archive-then-upload workflow. It archives the same committed source for iOS and
+macOS, verifies both version fields in both archives, then submits both
+archives to App Store Connect/TestFlight.
 
 The script always uses `Official Release` unless explicitly overridden. This
 is required because ordinary `Release` is the local-only open-source build;
@@ -28,6 +28,11 @@ environment, and official entitlements.
 ## Safety contract
 
 - The worktree, including untracked files, must be clean.
+- The default marketing version comes from the app target's Official Release
+  `MARKETING_VERSION` setting (`0.1.0` currently). `--version X.Y.Z` chooses a
+  version for both archives without editing the project; `--version auto`
+  derives `YYYY.MM.DD` from the commit date. The chosen version is passed to
+  both archives and verified in their `CFBundleShortVersionString` fields.
 - Build numbers use the JNX commit timestamp format
   `YYYYMMDD.HHMMSS.TYPE`, where `main`/`master` is type 3, `develop` is type 2,
   and another clean branch is type 1. Dirty type-0 builds are rejected.
@@ -50,6 +55,15 @@ Use Xcode's configured App Store Connect account:
 ```bash
 Tools/build-and-upload-testflight.sh
 ```
+
+Choose a new marketing version in the same command that builds and uploads:
+
+```bash
+Tools/build-and-upload-testflight.sh --version 0.2.0
+```
+
+Use `--version auto` for a date-based marketing version. Run `--preflight` or
+`--dry-run` with either version choice to inspect it without uploading.
 
 Create and verify archives without uploading:
 

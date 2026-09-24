@@ -39,5 +39,8 @@ Tools/build-and-upload-testflight.sh
 ```
 
 Use `--archive-only`, `--preflight`, or `--dry-run` for non-uploading modes.
+Pass `--version X.Y.Z` to set the marketing version for both uploads in this
+command, or `--version auto` to derive it from the commit date. Without this
+option, the script uses the Xcode project's marketing version.
 See [AI/TESTFLIGHT_RELEASE.md](AI/TESTFLIGHT_RELEASE.md) for signing,
 authentication, versioning, and release-gate details.

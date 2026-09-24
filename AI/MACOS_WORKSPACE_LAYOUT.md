@@ -27,8 +27,9 @@ condition removes the banner and returns the space to the workspace.
 
 The primary layout remains a native adjustable `NavigationSplitView`:
 
-- the topic outline has a 320-point minimum, 480-point ideal, and 680-point
-  maximum initial column width;
+- the topic outline has a 320-point minimum and 480-point ideal width. Its
+  maximum is beyond practical window widths so the divider can give it the
+  additional space available when the window grows;
 - the outline and the active Details, Publish, or Charts destination occupy the
   full content height;
 - the user can resize or collapse the topic column through native macOS split
@@ -84,6 +85,8 @@ regardless of the locale's thousands separator.
   broker-list navigation, and Help.
 - Topic payload summaries are inline on macOS, and substantially more topic rows
   fit in the same height than in the touch presentation.
+- Widening the window lets the topic column grow past 680 points so long
+  payload previews can use the extra width.
 - Copy and retained-value actions remain reachable without permanent vertical
   button stacks.
 - Charts at a fitting regular width presents three independently resizable
