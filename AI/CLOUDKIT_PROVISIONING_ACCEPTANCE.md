@@ -4,7 +4,7 @@ description: "Build variants, recovery behavior, development schema, determinist
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-09-24"
 tags:
   - "cloudkit"
   - "provisioning"
@@ -32,6 +32,18 @@ Development, then provisioning failed because team `5V8J7476Q9` could not
 register `eu.jinx.JollysMQTT` and its wildcard profile lacked the required Push
 Notifications and CloudKit entitlements. No signed archive was produced or
 uploaded.
+
+The 2026-09-24 TestFlight attempt from commit `e201396` stopped at the same
+iOS archive provisioning errors. The Apple Developer identifier list for team
+`5V8J7476Q9` did not contain `eu.jinx.JollysMQTT`, and the locally installed
+profiles for that team contained a wildcard iOS profile but no exact
+JollysMQTT profile. A keychain query inside the Codex filesystem sandbox
+reported zero identities; the same read-only query outside that sandbox
+reported twelve valid identities, but no Apple Development or Apple
+Distribution identity for team `5V8J7476Q9`. The sandboxed zero count is not
+evidence that the Mac has no certificates. Registration of the exact App ID
+with iCloud/CloudKit and Push Notifications is pending user confirmation. The
+intended iCloud container has not yet been verified in the developer account.
 
 ## Build families
 

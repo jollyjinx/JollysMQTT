@@ -84,6 +84,15 @@ options without building:
 Tools/build-and-upload-testflight.sh --preflight
 ```
 
+Preflight does not contact the Apple Developer portal or prove that the team
+owns the explicit App ID, iCloud container, signing certificates, or matching
+provisioning profiles. `Official Release` requires the explicit
+`eu.jinx.JollysMQTT` App ID with iCloud/CloudKit and Push Notifications, plus
+the intended `iCloud.eu.jinx.JollysMQTT` container. A wildcard provisioning
+profile cannot satisfy those entitlements. See
+[CLOUDKIT_PROVISIONING_ACCEPTANCE.md](CLOUDKIT_PROVISIONING_ACCEPTANCE.md) for
+the current signed-release gate.
+
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:
 
