@@ -47,6 +47,15 @@ bundle ID as the registration problem and selected the lowercase App ID
 the identifier configured by the app and release tooling; Apple Developer
 registration and matching provisioning remain pending verification.
 
+A further 2026-09-24 archive attempt from commit `58af7dc` confirms the
+lowercase identifier is used by the project, but Xcode still cannot register
+`eu.jinx.jollysmqtt` to team `5V8J7476Q9` because the identifier is not
+available to that team. Xcode then selects the wildcard iOS provisioning
+profile, which lacks Push Notifications and the configured CloudKit
+entitlements/container. The iOS archive failed before export or upload. The
+App ID must be available to the signing team, and an explicit profile with the
+required capabilities must be provisioned before TestFlight can proceed.
+
 ## Build families
 
 | Configuration | Profile adapter | CloudKit container | CloudKit environment | Push environment |
