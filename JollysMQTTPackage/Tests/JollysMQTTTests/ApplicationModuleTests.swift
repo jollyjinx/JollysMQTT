@@ -35,7 +35,7 @@ struct ApplicationModuleTests {
         values: [
           "JollysMQTTProfileSyncMode": "cloudKit",
           "JollysMQTTCloudKitContainerIdentifier":
-            "iCloud.eu.jinx.JollysMQTT",
+            "iCloud.eu.jinx.jollysmqtt",
         ]
       ) == .localOnly
     )
@@ -44,7 +44,7 @@ struct ApplicationModuleTests {
         values: [
           "JollysMQTTProfileSyncMode": "localOnly",
           "JollysMQTTCloudKitContainerIdentifier":
-            "iCloud.eu.jinx.JollysMQTT",
+            "iCloud.eu.jinx.jollysmqtt",
           "JollysMQTTCloudKitZoneName":
             "EncryptedBrokerProfiles",
         ]

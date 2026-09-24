@@ -303,7 +303,7 @@ verify_archive_versions() {
             plutil -extract CFBundleIdentifier raw -o - "${info_plist}" 2>/dev/null || true
         )"
         case "${bundle_identifier}" in
-            eu.jinx.JollysMQTT|eu.jinx.JollysMQTT.*)
+            eu.jinx.jollysmqtt|eu.jinx.jollysmqtt.*)
                 archived_version="$(
                     plutil -extract CFBundleVersion raw -o - "${info_plist}" 2>/dev/null || true
                 )"

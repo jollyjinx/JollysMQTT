@@ -34,16 +34,18 @@ Notifications and CloudKit entitlements. No signed archive was produced or
 uploaded.
 
 The 2026-09-24 TestFlight attempt from commit `e201396` stopped at the same
-iOS archive provisioning errors. The Apple Developer identifier list for team
-`5V8J7476Q9` did not contain `eu.jinx.JollysMQTT`, and the locally installed
-profiles for that team contained a wildcard iOS profile but no exact
+iOS archive provisioning errors. At the time, the Apple Developer identifier
+list for team `5V8J7476Q9` did not contain `eu.jinx.JollysMQTT`, and the locally
+installed profiles for that team contained a wildcard iOS profile but no exact
 JollysMQTT profile. A keychain query inside the Codex filesystem sandbox
 reported zero identities; the same read-only query outside that sandbox
 reported twelve valid identities, but no Apple Development or Apple
 Distribution identity for team `5V8J7476Q9`. The sandboxed zero count is not
-evidence that the Mac has no certificates. Registration of the exact App ID
-with iCloud/CloudKit and Push Notifications is pending user confirmation. The
-intended iCloud container has not yet been verified in the developer account.
+evidence that the Mac has no certificates. The user identified the mixed-case
+bundle ID as the registration problem and selected the lowercase App ID
+`eu.jinx.jollysmqtt`, with container `iCloud.eu.jinx.jollysmqtt`. This is now
+the identifier configured by the app and release tooling; Apple Developer
+registration and matching provisioning remain pending verification.
 
 ## Build families
 
@@ -51,8 +53,8 @@ intended iCloud container has not yet been verified in the developer account.
 |---|---|---|---|---|
 | `Debug` | `LocalOnlyProfileSync` | none | none | none |
 | `Release` | `LocalOnlyProfileSync` | none | none | none |
-| `Official Development` | `CloudKitProfileSync` | intended `iCloud.eu.jinx.JollysMQTT` | Development | development |
-| `Official Release` | `CloudKitProfileSync` | intended `iCloud.eu.jinx.JollysMQTT` | Production | production |
+| `Official Development` | `CloudKitProfileSync` | intended `iCloud.eu.jinx.jollysmqtt` | Development | development |
+| `Official Release` | `CloudKitProfileSync` | intended `iCloud.eu.jinx.jollysmqtt` | Production | production |
 
 Ordinary Debug and Release are the default open-source/self-build
 configurations. Their resolved Info.plist selects `localOnly`, they have no
@@ -178,7 +180,7 @@ rewritten as part of provisioning work.
 
 ### Human Development schema acceptance
 
-1. Confirm the Apple team owns `iCloud.eu.jinx.JollysMQTT`; create it if
+1. Confirm the Apple team owns `iCloud.eu.jinx.jollysmqtt`; create it if
    necessary. Do not substitute another team's production container.
 2. Enable iCloud/CloudKit and remote notifications for the official app ID on
    iOS/iPadOS and macOS. Create matching development provisioning profiles.
