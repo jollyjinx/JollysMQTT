@@ -289,7 +289,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt.uitests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -311,7 +311,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt.uitests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -470,7 +470,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt;
 				PRODUCT_MODULE_NAME = JollysMQTTApp;
 				PRODUCT_NAME = JollysMQTT;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -503,7 +503,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt;
 				PRODUCT_MODULE_NAME = JollysMQTTApp;
 				PRODUCT_NAME = JollysMQTT;
 				SDKROOT = auto;
@@ -530,7 +530,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
 				JOLLYS_MQTT_APS_ENVIRONMENT = development;
-				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.jollysmqtt;
+				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.jollymqtt;
 				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Development;
 				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
 				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
@@ -539,7 +539,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt;
 				PRODUCT_MODULE_NAME = JollysMQTTApp;
 				PRODUCT_NAME = JollysMQTT;
 				SDKROOT = auto;
@@ -563,7 +563,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt.uitests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -587,7 +587,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JollysMQTTApp/Info.plist;
 				JOLLYS_MQTT_APS_ENVIRONMENT = production;
-				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.jollysmqtt;
+				JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER = iCloud.eu.jinx.jollymqtt;
 				JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT = Production;
 				JOLLYS_MQTT_CLOUDKIT_ZONE_NAME = EncryptedBrokerProfiles;
 				JOLLYS_MQTT_PROFILE_SYNC_MODE = cloudKit;
@@ -596,7 +596,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt;
 				PRODUCT_MODULE_NAME = JollysMQTTApp;
 				PRODUCT_NAME = JollysMQTT;
 				SDKROOT = auto;
@@ -620,7 +620,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollysmqtt.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = eu.jinx.jollymqtt.uitests;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;

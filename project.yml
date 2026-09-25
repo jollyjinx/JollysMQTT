@@ -73,7 +73,7 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         GENERATE_INFOPLIST_FILE: NO
         MARKETING_VERSION: 0.1.0
-        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.jollysmqtt
+        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.jollymqtt
         PRODUCT_MODULE_NAME: JollysMQTTApp
         PRODUCT_NAME: JollysMQTT
         SUPPORTS_MACCATALYST: NO
@@ -97,7 +97,7 @@ targets:
           "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": JollysMQTTApp/JollysMQTT.official.macOS.entitlements
           CODE_SIGN_IDENTITY: Apple Development
           JOLLYS_MQTT_APS_ENVIRONMENT: development
-          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.jollysmqtt
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.jollymqtt
           JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT: Development
           JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: EncryptedBrokerProfiles
           JOLLYS_MQTT_PROFILE_SYNC_MODE: cloudKit
@@ -107,7 +107,7 @@ targets:
           "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": JollysMQTTApp/JollysMQTT.official.macOS.entitlements
           CODE_SIGN_IDENTITY: Apple Distribution
           JOLLYS_MQTT_APS_ENVIRONMENT: production
-          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.jollysmqtt
+          JOLLYS_MQTT_CLOUDKIT_CONTAINER_IDENTIFIER: iCloud.eu.jinx.jollymqtt
           JOLLYS_MQTT_CLOUDKIT_ENVIRONMENT: Production
           JOLLYS_MQTT_CLOUDKIT_ZONE_NAME: EncryptedBrokerProfiles
           JOLLYS_MQTT_PROFILE_SYNC_MODE: cloudKit
@@ -126,7 +126,7 @@ targets:
         BUNDLE_LOADER: ""
         CODE_SIGNING_ALLOWED: NO
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.jollysmqtt.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: eu.jinx.jollymqtt.uitests
 
 schemes:
   JollysMQTT:
