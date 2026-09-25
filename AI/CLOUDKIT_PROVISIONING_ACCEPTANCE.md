@@ -62,6 +62,15 @@ candidate). The app and release configuration now use that exact ID. The
 matching CloudKit container `iCloud.eu.jinx.jollymqtt` still needs portal
 verification and association with the App ID.
 
+A subsequent iOS `Official Release` archive reached the explicit profile for
+`eu.jinx.jollymqtt`, confirming the bundle ID is now recognized. The selected
+`iOS Team Provisioning Profile: eu.jinx.jollymqtt` lacks the
+`com.apple.developer.icloud-container-environment` entitlement and does not
+authorize the configured CloudKit container identifier. The archive failed
+before export or upload. Enable iCloud with CloudKit support for this App ID,
+assign the configured container, then regenerate or refresh the provisioning
+profile before retrying.
+
 ## Build families
 
 | Configuration | Profile adapter | CloudKit container | CloudKit environment | Push environment |
