@@ -71,6 +71,11 @@ before export or upload. Enable iCloud with CloudKit support for this App ID,
 assign the configured container, then regenerate or refresh the provisioning
 profile before retrying.
 
+The next 2026-09-25 archive attempt reports the same two CloudKit profile
+errors. This confirms the profile refresh or App ID/container configuration
+has not yet taken effect; the bundle identifier itself is no longer the
+blocker.
+
 ## Build families
 
 | Configuration | Profile adapter | CloudKit container | CloudKit environment | Push environment |
