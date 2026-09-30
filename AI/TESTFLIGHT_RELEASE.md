@@ -4,7 +4,7 @@ description: "Clean-commit archive, versioning, signing, verification, and App S
 area: "release"
 doc_type: "release-runbook"
 status: "active"
-last_reviewed: "2026-09-25"
+last_reviewed: "2026-09-30"
 tags:
   - "testflight"
   - "app-store-connect"
@@ -92,6 +92,23 @@ the intended `iCloud.eu.jinx.jollymqtt` container. A wildcard provisioning
 profile cannot satisfy those entitlements. See
 [CLOUDKIT_PROVISIONING_ACCEPTANCE.md](CLOUDKIT_PROVISIONING_ACCEPTANCE.md) for
 the current signed-release gate.
+
+Before exporting or uploading, create an App Store Connect app record for the
+exact bundle ID `eu.jinx.jollymqtt`. The Developer portal App ID and iCloud
+container do not create this App Store Connect record. If shipping both iOS
+and macOS through TestFlight, add both platforms to the matching app record.
+The account needs a role that can create app records, and the Account Holder
+must have accepted any required agreements. An archive can succeed while this
+separate App Store Connect prerequisite is still missing. See Apple's
+[add-a-new-app instructions](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app)
+and [add-platforms instructions](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-platforms).
+
+The script uses Xcode's configured App Store Connect account by default. The
+2026-09-30 release attempt logged a missing `Xcode-Token` credential for
+`pst@estos.de`, then failed export because the app record did not exist. If
+the credential warning remains after creating the record, refresh that account
+in Xcode Settings > Accounts or provide the complete API-key tuple described
+below.
 
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:

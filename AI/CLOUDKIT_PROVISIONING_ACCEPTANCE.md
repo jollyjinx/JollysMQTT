@@ -4,7 +4,7 @@ description: "Build variants, recovery behavior, development schema, determinist
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-09-25"
+last_reviewed: "2026-09-30"
 tags:
   - "cloudkit"
   - "provisioning"
@@ -75,6 +75,17 @@ The next 2026-09-25 archive attempt reports the same two CloudKit profile
 errors. This confirms the profile refresh or App ID/container configuration
 has not yet taken effect; the bundle identifier itself is no longer the
 blocker.
+
+On 2026-09-30, the user supplied Apple Developer screenshots showing the
+registered `eu.jinx.jollymqtt` App ID and the `JollyMqtt Container` assignment
+to `iCloud.eu.jinx.jollymqtt`. The subsequent `Official Release` run archived
+both iOS and macOS successfully and verified one bundle version in each
+archive. This advances past the earlier CloudKit provisioning failure. Export
+then stopped because App Store Connect has no app record for
+`eu.jinx.jollymqtt`; no upload occurred. The log also reported an Xcode account
+credential warning for `pst@estos.de` (missing `Xcode-Token`). That warning is
+separate from the explicit missing-app-record error and may need its own
+credential refresh if it persists after the record is created.
 
 ## Build families
 
