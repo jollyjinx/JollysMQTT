@@ -98,16 +98,19 @@ exact bundle ID `eu.jinx.jollymqtt`. The Developer portal App ID and iCloud
 container do not create this App Store Connect record. If shipping both iOS
 and macOS through TestFlight, add both platforms to the matching app record.
 The account needs a role that can create app records, and the Account Holder
-must have accepted any required agreements. An archive can succeed while this
-separate App Store Connect prerequisite is still missing. See Apple's
+must have accepted any required agreements. An archive can succeed while the
+export account cannot see the matching App Store Connect app record. See Apple's
 [add-a-new-app instructions](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app)
 and [add-platforms instructions](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-platforms).
 
 The script uses Xcode's configured App Store Connect account by default. The
-2026-09-30 release attempt logged a missing `Xcode-Token` credential for
-`pst@estos.de`, then failed export because the app record did not exist. If
-the credential warning remains after creating the record, refresh that account
-in Xcode Settings > Accounts or provide the complete API-key tuple described
+2026-09-30 release attempt could not find an app record visible to the export
+credentials and logged a cached-credential lookup failure for `pst@estos.de`
+(`Xcode-Token` missing). The user clarified that the intended account is
+`patrick.stein@jinx.eu`; the log line does not establish which account export
+used. If the app record already exists under the intended account, check
+Xcode's configured account/team or use an API key belonging to that App Store
+Connect provider. The script accepts the complete API-key tuple described
 below.
 
 Run the release-script regression tests after changing its signing, output,
