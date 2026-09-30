@@ -111,11 +111,10 @@ dry_run_output="$(
     XCODEBUILD_BIN="${MOCK_XCODEBUILD}" "${RELEASE_SCRIPT}" --dry-run \
         --output-dir "${OUTPUT_ROOT}/dry-run"
 )"
-signing_argument_count="$(
-    grep -F -c 'CODE_SIGN_IDENTITY=Apple\ Development' <<<"${dry_run_output}"
-)"
-[[ "${signing_argument_count}" == 2 ]] ||
-    fail "expected Apple Development signing on both archive commands"
+ios_archive_command="$(grep -F 'generic/platform=iOS' <<<"${dry_run_output}")"
+macos_archive_command="$(grep -F 'generic/platform=macOS' <<<"${dry_run_output}")"
+assert_contains "${ios_archive_command}" 'CODE_SIGN_IDENTITY=Apple\ Development'
+assert_contains "${macos_archive_command}" 'CODE_SIGN_IDENTITY=Apple\ Distribution'
 assert_contains "${dry_run_output}" "CODE_SIGN_STYLE=Automatic"
 marketing_argument_count="$(
     grep -F -c 'MARKETING_VERSION=0.1.0' <<<"${dry_run_output}"

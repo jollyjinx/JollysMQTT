@@ -40,8 +40,10 @@ environment, and official entitlements.
 - The script verifies that HEAD and the worktree did not change while
   archiving.
 - Archive and export output must remain outside the Git worktree.
-- Automatic signing archives with an Apple Development identity. App Store
-  export then re-signs the submitted products for distribution.
+- The iOS archive uses Apple Development. The macOS archive uses Apple
+  Distribution because Xcode's Mac App Store export preserves SwiftPM
+  resource-bundle signatures; they must match the distribution certificate in
+  the embedded Mac App Store provisioning profile.
 - A retry for the same commit preserves previous output and selects the next
   available `-retry-N` directory. An explicit `--output-dir` remains
   non-overwriting and fails if its path already exists.
@@ -120,6 +122,17 @@ image files. The app now includes a 1024-pixel iOS marketing icon, populated
 macOS icon variants, and `CFBundleIconName = AppIcon` in its explicit
 `Info.plist`. Rerun the release script to confirm package validation accepts
 the new assets.
+
+The same build's macOS upload was later rejected with `ITMS-90284` for the
+SwiftPM resource bundles `JollysMQTTPackage_JollysMQTT.bundle`,
+`swift-nio-ssl_NIOSSL.bundle`, and `swift-nio_NIOPosix.bundle`. The archive
+contains a Mac Team Development profile. Xcode's Mac App Store distribution
+log copies those nested `_CodeSignature` directories into the submission and
+remotely signs the outer app with Apple Distribution, which leaves the nested
+resource-bundle signatures tied to the archive identity. The release script
+now archives macOS with Apple Distribution while leaving iOS on Apple
+Development. Validate a new macOS archive's nested signatures against its
+embedded profile before uploading a replacement build.
 
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:

@@ -178,7 +178,11 @@ credentials.
 Use `Tools/build-and-upload-testflight.sh` for official iOS and macOS
 TestFlight archives. It requires a clean committed worktree, uses the
 `Official Release` configuration, assigns one Git-derived build number to both
-archives, and verifies them before upload. Prefer `--archive-only`,
+archives, and verifies them before upload. It signs the iOS archive with Apple
+Development and the macOS archive with Apple Distribution: Xcode's Mac App
+Store export preserves SwiftPM resource-bundle signatures, which must match
+the distribution certificate in the Mac App Store provisioning profile.
+Prefer `--archive-only`,
 `--preflight`, or `--dry-run` while validating release changes. An actual
 upload is an explicit release operation; never perform one as part of ordinary
 implementation or testing.

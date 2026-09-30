@@ -272,6 +272,22 @@ fi
 archive_platform() {
     local platform="$1"
     local archive_path="$2"
+    local code_sign_identity
+
+    case "${platform}" in
+        iOS)
+            code_sign_identity="Apple Development"
+            ;;
+        macOS)
+            # Xcode's Mac App Store export preserves SwiftPM resource-bundle
+            # signatures while re-signing the containing app. Archive those
+            # bundles with the distribution identity they must retain.
+            code_sign_identity="Apple Distribution"
+            ;;
+        *)
+            die "unsupported archive platform: ${platform}"
+            ;;
+    esac
 
     run env \
         PATH="${XCODE_TOOL_PATH}" \
@@ -283,7 +299,7 @@ archive_platform() {
         -archivePath "${archive_path}" \
         "${authentication_arguments[@]}" \
         CODE_SIGN_STYLE=Automatic \
-        CODE_SIGN_IDENTITY="Apple Development" \
+        CODE_SIGN_IDENTITY="${code_sign_identity}" \
         DEVELOPMENT_TEAM="${TEAM_ID}" \
         MARKETING_VERSION="${MARKETING_VERSION}" \
         CURRENT_PROJECT_VERSION="${BUILD_VERSION}" \
