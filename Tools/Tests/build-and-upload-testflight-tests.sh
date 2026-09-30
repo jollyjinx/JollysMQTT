@@ -47,6 +47,7 @@ set -euo pipefail
 archive_path=""
 marketing_version=""
 build_version=""
+destination=""
 show_build_settings=false
 while (($# > 0)); do
     case "$1" in
@@ -56,6 +57,10 @@ while (($# > 0)); do
             ;;
         -archivePath)
             archive_path="$2"
+            shift 2
+            ;;
+        -destination)
+            destination="$2"
             shift 2
             ;;
         MARKETING_VERSION=*)
@@ -86,6 +91,28 @@ elif [[ -n "${archive_path}" ]]; then
 <key>CFBundleVersion</key><string>${build_version}</string>
 </dict></plist>
 PLIST
+    if [[ "${destination}" == "generic/platform=macOS" ]]; then
+        for bundle_name in \
+            JollysMQTTPackage_JollysMQTT.bundle \
+            swift-nio-ssl_NIOSSL.bundle \
+            swift-nio_NIOPosix.bundle
+        do
+            bundle_directory="${app_directory}/Contents/Resources/${bundle_name}"
+            mkdir -p "${bundle_directory}/Contents"
+            cat >"${bundle_directory}/Contents/Info.plist" <<BUNDLE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>test.${bundle_name}</string>
+<key>CFBundlePackageType</key><string>BNDL</string>
+</dict></plist>
+BUNDLE_PLIST
+            if [[ "${MOCK_SIGN_MACOS_RESOURCE_BUNDLES:-false}" == true ]]; then
+                mkdir -p "${bundle_directory}/Contents/_CodeSignature"
+                : >"${bundle_directory}/Contents/_CodeSignature/CodeResources"
+            fi
+        done
+    fi
 fi
 MOCK
 chmod +x "${MOCK_XCODEBUILD}"
@@ -114,7 +141,11 @@ dry_run_output="$(
 ios_archive_command="$(grep -F 'generic/platform=iOS' <<<"${dry_run_output}")"
 macos_archive_command="$(grep -F 'generic/platform=macOS' <<<"${dry_run_output}")"
 assert_contains "${ios_archive_command}" 'CODE_SIGN_IDENTITY=Apple\ Development'
-assert_contains "${macos_archive_command}" 'CODE_SIGN_IDENTITY=Apple\ Distribution'
+assert_contains "${ios_archive_command}" 'CODE_SIGN_STYLE=Automatic'
+assert_contains "${macos_archive_command}" 'CODE_SIGNING_ALLOWED=NO'
+if [[ "${macos_archive_command}" == *'CODE_SIGN_IDENTITY='* ]]; then
+    fail "macOS archive must leave signing to App Store export"
+fi
 assert_contains "${dry_run_output}" "CODE_SIGN_STYLE=Automatic"
 marketing_argument_count="$(
     grep -F -c 'MARKETING_VERSION=0.1.0' <<<"${dry_run_output}"
@@ -141,7 +172,19 @@ archive_only_output="$(
         --version 0.2.0 --output-dir "${OUTPUT_ROOT}/archive-only"
 )"
 assert_contains "${archive_only_output}" "Verified 1 JollysMQTT bundle version(s)"
+assert_contains "${archive_only_output}" \
+    "Verified 3 codeless macOS resource bundle(s) have no nested signatures"
 assert_contains "${archive_only_output}" "Archives ready; upload skipped."
+
+if MOCK_SIGN_MACOS_RESOURCE_BUNDLES=true \
+    XCODEBUILD_BIN="${MOCK_XCODEBUILD}" "${RELEASE_SCRIPT}" --archive-only \
+    --version 0.2.0 --output-dir "${OUTPUT_ROOT}/signed-resource-bundles" \
+    >"${OUTPUT_ROOT}/signed-resource-bundles.log" 2>&1
+then
+    fail "macOS archive with signed package resource bundles was accepted"
+fi
+assert_contains "$(<"${OUTPUT_ROOT}/signed-resource-bundles.log")" \
+    "has a nested code signature"
 
 if MOCK_ARCHIVE_MARKETING_VERSION=0.1.0 \
     XCODEBUILD_BIN="${MOCK_XCODEBUILD}" "${RELEASE_SCRIPT}" --archive-only \

@@ -125,14 +125,17 @@ the new assets.
 
 The same build's macOS upload was later rejected with `ITMS-90284` for the
 SwiftPM resource bundles `JollysMQTTPackage_JollysMQTT.bundle`,
-`swift-nio-ssl_NIOSSL.bundle`, and `swift-nio_NIOPosix.bundle`. The archive
-contains a Mac Team Development profile. Xcode's Mac App Store distribution
-log copies those nested `_CodeSignature` directories into the submission and
-remotely signs the outer app with Apple Distribution, which leaves the nested
-resource-bundle signatures tied to the archive identity. The release script
-now archives macOS with Apple Distribution while leaving iOS on Apple
-Development. Validate a new macOS archive's nested signatures against its
-embedded profile before uploading a replacement build.
+`swift-nio-ssl_NIOSSL.bundle`, and `swift-nio_NIOPosix.bundle`. They are
+codeless resource bundles, but the macOS archive signed them with Apple
+Development. Xcode's Mac App Store export preserved their nested
+`_CodeSignature` directories while remotely signing the containing app with
+Apple Distribution, so the nested signatures did not match the Store profile.
+The release script now disables code signing for the macOS archive. Xcode's
+Mac App Store export then signs the app and seals the codeless package bundles
+as resources. Before any export, the script verifies that each package bundle
+has no executable and no nested signature; a new executable bundle needs a
+separate distribution-signing solution. The iOS archive continues to use
+Apple Development.
 
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:

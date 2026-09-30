@@ -272,17 +272,23 @@ fi
 archive_platform() {
     local platform="$1"
     local archive_path="$2"
-    local code_sign_identity
+    local signing_arguments=()
 
     case "${platform}" in
         iOS)
-            code_sign_identity="Apple Development"
+            signing_arguments=(
+                CODE_SIGN_STYLE=Automatic
+                CODE_SIGN_IDENTITY="Apple Development"
+            )
             ;;
         macOS)
-            # Xcode's Mac App Store export preserves SwiftPM resource-bundle
-            # signatures while re-signing the containing app. Archive those
-            # bundles with the distribution identity they must retain.
-            code_sign_identity="Apple Distribution"
+            # SwiftPM's codeless resource bundles are otherwise signed with
+            # Apple Development during the archive. Mac App Store export
+            # preserves those nested signatures while remotely signing the
+            # containing app, which causes ITMS-90284. Leave the archive
+            # unsigned so export signs the app and seals these bundles as
+            # resources.
+            signing_arguments=(CODE_SIGNING_ALLOWED=NO)
             ;;
         *)
             die "unsupported archive platform: ${platform}"
@@ -298,12 +304,41 @@ archive_platform() {
         -destination "generic/platform=${platform}" \
         -archivePath "${archive_path}" \
         "${authentication_arguments[@]}" \
-        CODE_SIGN_STYLE=Automatic \
-        CODE_SIGN_IDENTITY="${code_sign_identity}" \
+        "${signing_arguments[@]}" \
         DEVELOPMENT_TEAM="${TEAM_ID}" \
         MARKETING_VERSION="${MARKETING_VERSION}" \
         CURRENT_PROJECT_VERSION="${BUILD_VERSION}" \
         archive
+}
+
+verify_macos_resource_bundles() {
+    local archive_path="$1"
+    local app_path
+    local resource_bundle
+    local info_plist
+    local resource_bundle_count=0
+
+    app_path="$(find "${archive_path}/Products/Applications" \
+        -maxdepth 1 -type d -name '*.app' -print -quit)"
+    [[ -n "${app_path}" ]] ||
+        die "no macOS app bundle found in archive: ${archive_path}"
+
+    while IFS= read -r -d '' resource_bundle; do
+        resource_bundle_count=$((resource_bundle_count + 1))
+        info_plist="${resource_bundle}/Contents/Info.plist"
+        [[ -f "${info_plist}" ]] ||
+            die "macOS resource bundle is missing Contents/Info.plist: ${resource_bundle}"
+        if plutil -extract CFBundleExecutable raw -o - "${info_plist}" \
+            >/dev/null 2>&1; then
+            die "macOS Swift package resource bundle contains an executable and needs distribution signing: ${resource_bundle}"
+        fi
+        [[ ! -e "${resource_bundle}/Contents/_CodeSignature" ]] ||
+            die "macOS Swift package resource bundle has a nested code signature; it must be unsigned for Mac App Store export: ${resource_bundle}"
+    done < <(find "${app_path}/Contents/Resources" -maxdepth 1 \
+        -type d -name '*.bundle' -print0)
+
+    printf 'Verified %d codeless macOS resource bundle(s) have no nested signatures in %s\n' \
+        "${resource_bundle_count}" "${archive_path}"
 }
 
 verify_archive_versions() {
@@ -354,6 +389,7 @@ archive_platform macOS "${MACOS_ARCHIVE}"
 if [[ "${dry_run}" == false ]]; then
     verify_archive_versions "${IOS_ARCHIVE}"
     verify_archive_versions "${MACOS_ARCHIVE}"
+    verify_macos_resource_bundles "${MACOS_ARCHIVE}"
     verify_source_unchanged
 fi
 
