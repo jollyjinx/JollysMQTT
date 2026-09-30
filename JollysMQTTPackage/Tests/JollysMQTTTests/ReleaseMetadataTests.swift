@@ -23,6 +23,7 @@ struct ReleaseMetadataTests {
 
     #expect(info["CFBundleShortVersionString"] as? String == "$(MARKETING_VERSION)")
     #expect(info["CFBundleVersion"] as? String == "$(CURRENT_PROJECT_VERSION)")
+    #expect(info["ITSAppUsesNonExemptEncryption"] as? Bool == false)
     #expect(
       info["NSLocalNetworkUsageDescription"] as? String
         == "JollysMQTT uses the local network to connect to MQTT brokers you configure."

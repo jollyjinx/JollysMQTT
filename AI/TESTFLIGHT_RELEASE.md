@@ -137,6 +137,16 @@ has no executable and no nested signature; a new executable bundle needs a
 separate distribution-signing solution. The iOS archive continues to use
 Apple Development.
 
+The shared app `Info.plist` sets `ITSAppUsesNonExemptEncryption` to `false` so
+App Store Connect does not repeat the export-compliance questionnaire for each
+new build. The production MQTT TLS configuration uses Apple's
+Network.framework transport with full certificate verification; `CryptoKit` is
+used for SHA-256-derived identifiers. Reassess this declaration before adding
+custom encryption or changing the production transport. Apple defines `false`
+as no encryption or encryption that is exempt from export-compliance
+documentation, including encryption used by linked third-party libraries; see
+[ITSAppUsesNonExemptEncryption](https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption).
+
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:
 
