@@ -104,14 +104,22 @@ export account cannot see the matching App Store Connect app record. See Apple's
 and [add-platforms instructions](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-platforms).
 
 The script uses Xcode's configured App Store Connect account by default. The
-2026-09-30 release attempt could not find an app record visible to the export
-credentials and logged a cached-credential lookup failure for `pst@estos.de`
-(`Xcode-Token` missing). The user clarified that the intended account is
-`patrick.stein@jinx.eu`; the log line does not establish which account export
-used. If the app record already exists under the intended account, check
-Xcode's configured account/team or use an API key belonging to that App Store
-Connect provider. The script accepts the complete API-key tuple described
-below.
+2026-09-30 14:26 attempt could not find an app record visible to the export
+credentials. On a later retry, the same cached-credential lookup warning for
+`pst@estos.de` (`Xcode-Token` missing) appeared, but Xcode still reached App
+Store Connect package validation. Treat that warning as non-fatal for that
+retry; the log does not identify which account the export authenticated as.
+If a future export again cannot find the app record, check Xcode's configured
+account/team or use an API key belonging to the intended App Store Connect
+provider. The script accepts the complete API-key tuple described below.
+
+The 2026-09-30 retry reached App Store Connect's package validation, which
+rejected the iOS app for missing `CFBundleIconName` and the required iPhone and
+iPad icon sizes. The project had an `AppIcon.appiconset` with no referenced
+image files. The app now includes a 1024-pixel iOS marketing icon, populated
+macOS icon variants, and `CFBundleIconName = AppIcon` in its explicit
+`Info.plist`. Rerun the release script to confirm package validation accepts
+the new assets.
 
 Run the release-script regression tests after changing its signing, output,
 or safety behavior:

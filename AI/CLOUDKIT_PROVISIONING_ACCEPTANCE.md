@@ -80,17 +80,13 @@ On 2026-09-30, the user supplied Apple Developer screenshots showing the
 registered `eu.jinx.jollymqtt` App ID and the `JollyMqtt Container` assignment
 to `iCloud.eu.jinx.jollymqtt`. The subsequent `Official Release` run archived
 both iOS and macOS successfully and verified one bundle version in each
-archive. This advances past the earlier CloudKit provisioning failure. Export
-then stopped because App Store Connect could not find an app record visible to
-the export credentials for `eu.jinx.jollymqtt`; no upload occurred. The log
-also reported an Xcode account
-credential lookup warning for the cached `pst@estos.de` account (missing
-`Xcode-Token`). The user clarified that the intended account is
-`patrick.stein@jinx.eu`; the warning does not establish which account was used
-for the export or prove that the intended account lacks access. Confirm that
-the app record is visible under the intended account in App Store Connect. If
-it is visible there, verify that export authentication is using that account
-and team rather than relying on a stale or inaccessible Xcode credential.
+archive. This advances past the earlier CloudKit provisioning failure. The
+14:26 export attempt could not find an App Store Connect app record visible to
+its credentials. A later 14:54 retry reached App Store Connect package
+validation, despite logging the same cached-credential lookup warning for
+`pst@estos.de` (missing `Xcode-Token`); that warning was non-fatal for this
+retry. Package validation rejected the iOS app for missing icon metadata and
+sizes. No successful TestFlight upload is recorded yet.
 
 ## Build families
 
