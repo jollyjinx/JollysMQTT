@@ -2120,9 +2120,9 @@ private struct TopicExplorerView: View {
 private struct TopicColumnWidth: ViewModifier {
   func body(content: Content) -> some View {
     #if os(macOS)
-      content.navigationSplitViewColumnWidth(min: 320, ideal: 480, max: 8192)
+      content.navigationSplitViewColumnWidth(min: 320, ideal: 640, max: 8192)
     #else
-      content.navigationSplitViewColumnWidth(min: 280, ideal: 360)
+      content.navigationSplitViewColumnWidth(min: 280, ideal: 480)
     #endif
   }
 }
@@ -2130,9 +2130,22 @@ private struct TopicColumnWidth: ViewModifier {
 private struct TopicOutlineListStyle: ViewModifier {
   func body(content: Content) -> some View {
     #if os(macOS)
-      content.listStyle(.sidebar)
+      content
+        .listStyle(.inset)
+        .environment(\.defaultMinListRowHeight, minimumRowHeight)
     #else
       content
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, minimumRowHeight)
+        .listRowSpacing(0)
+    #endif
+  }
+
+  private var minimumRowHeight: CGFloat {
+    #if os(macOS)
+      24
+    #else
+      44
     #endif
   }
 }
@@ -2144,7 +2157,9 @@ private struct TopicOutlineListRowStyle: ViewModifier {
         EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4)
       )
     #else
-      content
+      content.listRowInsets(
+        EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
+      )
     #endif
   }
 }
@@ -2804,6 +2819,7 @@ private struct TopicOutlineRow: View {
       TopicOutlineRowContent(row: row)
         .accessibilityIdentifier("topic-row.\(row.fullTopic)")
     }
+    .foregroundStyle(.primary)
     .padding(.leading, CGFloat(min(row.depth, 12)) * indentation)
   }
 
@@ -2913,6 +2929,8 @@ private struct TopicOutlineRowContent: View {
         .foregroundStyle(.secondary)
       }
     }
+    .lineLimit(1)
+    .foregroundStyle(.primary)
   }
 
   @ViewBuilder
@@ -2920,7 +2938,7 @@ private struct TopicOutlineRowContent: View {
     if let summary = row.payloadSummary, !summary.display.isEmpty {
       Text(verbatim: "= \(summary.display)\(summary.isTruncated ? "…" : "")")
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.primary)
         .lineLimit(1)
     }
   }
@@ -2935,7 +2953,8 @@ private struct TopicOutlineRowContent: View {
           "Topic branch descendant counters. The variables are descendant value-topic and message counts."
       )
       .font(.caption)
-      .foregroundStyle(.secondary)
+      .foregroundStyle(.primary)
+      .lineLimit(1)
     }
   }
 

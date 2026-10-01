@@ -4,7 +4,7 @@ description: "Desktop-specific information density, toolbar placement, split-vie
 area: "ui"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-09-23"
+last_reviewed: "2026-09-30"
 tags:
   - "macos"
   - "swiftui"
@@ -27,7 +27,7 @@ condition removes the banner and returns the space to the workspace.
 
 The primary layout remains a native adjustable `NavigationSplitView`:
 
-- the topic outline has a 320-point minimum and 480-point ideal width. Its
+- the topic outline has a 320-point minimum and 640-point ideal width. Its
   maximum is beyond practical window widths so the divider can give it the
   additional space available when the window grows;
 - the outline and the active Details, Publish, or Charts destination occupy the
@@ -50,14 +50,20 @@ or rebuild chart cards. Pinning from topic information updates the already
 visible dashboard. An empty dashboard keeps its region visible and explains
 how to select a numeric or Boolean payload and pin it.
 
-macOS topic rows are intentionally denser than touch-platform rows. Disclosure
-targets are 20 points, indentation advances by 12 points, and current payload
-summaries stay inline with the topic segment. Indexed summaries flatten payload
+macOS topic rows are intentionally denser than touch-platform rows. The outline
+uses an inset native list with zero vertical row insets and a
+24-point minimum row height. Topic names, payload summaries, and descendant counts use
+the primary semantic foreground for black text in light appearance and readable
+text in dark appearance. Topic labels and counts stay on one line rather than
+increasing row height as the pane narrows. Disclosure targets are 20 points,
+indentation advances by 12 points, and current payload summaries stay inline
+with the topic segment. Indexed summaries flatten payload
 line breaks into one display line, and the row gives that line the available
 width before its alignment spacer. iPhone and iPad retain 44-point
-custom interaction targets and the more spacious two-line row. Structural JSON
-rows use the same platform distinction: compact desktop rows and 44-point touch
-rows.
+custom interaction targets and the two-line row, with zero vertical row insets
+and row spacing. The iPad topic pane prefers 480 points instead of 360.
+Structural JSON rows use the same platform distinction: compact desktop rows
+and 44-point touch rows.
 
 Secondary commands do not remain expanded in the reading flow. Payload copy
 variants live in one Copy menu. Single-topic and subtree retained-value deletion
@@ -85,6 +91,8 @@ regardless of the locale's thousands separator.
   broker-list navigation, and Help.
 - Topic payload summaries are inline on macOS, and substantially more topic rows
   fit in the same height than in the touch presentation.
+- At normal text sizes, macOS topic rows use a 24-point minimum without
+  additional list spacing; topic text retains full contrast when inactive.
 - Widening the window lets the topic column grow past 680 points so long
   payload previews can use the extra width.
 - Copy and retained-value actions remain reachable without permanent vertical
@@ -96,4 +104,18 @@ regardless of the locale's thousands separator.
 - Connection-stage banners appear during an active connection attempt. Failure,
   generation-change, and history-degradation banners appear only while their
   exceptional state exists.
-- Compact iPhone/iPad navigation and touch target sizing are unchanged.
+- Compact iPhone/iPad navigation and 44-point touch targets are preserved.
+
+## Verification notes
+
+On 2026-09-30, an isolated light-appearance macOS UI fixture confirmed the
+640-point preferred topic pane, 24-point row spacing, black topic names and
+counts even in an inactive window, and inline current payload summaries.
+Disclosure controls expanded both nested topic levels successfully.
+
+Accessibility inspection after selecting a value-bearing row crashed in
+recursive SwiftUI/AppKit accessibility-label resolution on macOS 27.2 / Xcode
+27.2. The same inspection crashed an isolated build of the unchanged original
+sidebar implementation, so this is a pre-existing limitation of this check,
+not evidence of a layout regression. It remains unresolved; the visual fixture
+does not establish selected-row accessibility acceptance.
