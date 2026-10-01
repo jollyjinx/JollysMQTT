@@ -11,6 +11,11 @@ public enum BrokerTransport: String, Codable, CaseIterable, Hashable, Sendable {
   case tls
 }
 
+public enum BrokerConnectionProtocol: String, Codable, CaseIterable, Hashable, Sendable {
+  case mqtt
+  case webSocket
+}
+
 public enum MQTTQualityOfService: Int, Codable, CaseIterable, Hashable, Sendable {
   case atMostOnce = 0
   case atLeastOnce = 1
@@ -58,6 +63,8 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
   public let host: String
   public let port: Int
   public let transport: BrokerTransport
+  public let connectionProtocol: BrokerConnectionProtocol
+  public let webSocketPath: String
   public let username: String?
   public let clientIDPolicy: ClientIDPolicy
   public let cleanSession: Bool
@@ -71,6 +78,8 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
     host: String,
     port: Int,
     transport: BrokerTransport,
+    connectionProtocol: BrokerConnectionProtocol = .mqtt,
+    webSocketPath: String = "/mqtt",
     username: String?,
     clientIDPolicy: ClientIDPolicy,
     cleanSession: Bool,
@@ -83,6 +92,8 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
     self.host = host
     self.port = port
     self.transport = transport
+    self.connectionProtocol = connectionProtocol
+    self.webSocketPath = webSocketPath
     self.username = username
     self.clientIDPolicy = clientIDPolicy
     self.cleanSession = cleanSession
@@ -95,7 +106,9 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
     id: UUID = UUID(),
     name: String = "",
     host: String = "",
-    port: Int = 1_883
+    port: Int = 1_883,
+    connectionProtocol: BrokerConnectionProtocol = .mqtt,
+    webSocketPath: String = "/mqtt"
   ) -> Self {
     Self(
       id: id,
@@ -103,6 +116,8 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
       host: host,
       port: port,
       transport: .tcp,
+      connectionProtocol: connectionProtocol,
+      webSocketPath: webSocketPath,
       username: nil,
       clientIDPolicy: .stableGenerated,
       cleanSession: true,
@@ -116,7 +131,38 @@ public struct BrokerProfile: Codable, Hashable, Identifiable, Sendable {
   }
 
   public var endpointSummary: String {
-    "\(transport.rawValue)://\(host):\(port)"
+    if connectionProtocol == .webSocket {
+      let scheme = transport == .tls ? "wss" : "ws"
+      return "\(scheme)://\(host):\(port)\(webSocketPath)"
+    }
+    return "\(transport.rawValue)://\(host):\(port)"
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, name, host, port, transport, connectionProtocol, webSocketPath
+    case username, clientIDPolicy, cleanSession, keepAliveSeconds
+    case reconnectPolicy, subscriptions
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decode(UUID.self, forKey: .id),
+      name: try values.decode(String.self, forKey: .name),
+      host: try values.decode(String.self, forKey: .host),
+      port: try values.decode(Int.self, forKey: .port),
+      transport: try values.decode(BrokerTransport.self, forKey: .transport),
+      connectionProtocol: try values.decodeIfPresent(
+        BrokerConnectionProtocol.self, forKey: .connectionProtocol
+      ) ?? .mqtt,
+      webSocketPath: try values.decodeIfPresent(String.self, forKey: .webSocketPath) ?? "/mqtt",
+      username: try values.decodeIfPresent(String.self, forKey: .username),
+      clientIDPolicy: try values.decode(ClientIDPolicy.self, forKey: .clientIDPolicy),
+      cleanSession: try values.decode(Bool.self, forKey: .cleanSession),
+      keepAliveSeconds: try values.decode(Int.self, forKey: .keepAliveSeconds),
+      reconnectPolicy: try values.decode(ReconnectPolicy.self, forKey: .reconnectPolicy),
+      subscriptions: try values.decode([SubscriptionDefinition].self, forKey: .subscriptions)
+    )
   }
 
   public var hasBroadSubscriptionWarning: Bool {
@@ -135,6 +181,7 @@ public struct BrokerProfileValidationIssue: Error, Codable, Hashable, Sendable {
     case name
     case host
     case port
+    case webSocketPath
     case username
     case clientID
     case session
@@ -173,6 +220,11 @@ public enum BrokerProfileValidator {
     if !(1...65_535).contains(profile.port) {
       issues.append(.init(field: .port, reason: .outOfRange))
     }
+    if profile.connectionProtocol == .webSocket,
+      !isValidWebSocketPath(profile.webSocketPath)
+    {
+      issues.append(.init(field: .webSocketPath, reason: .invalid))
+    }
     if let username = profile.username,
       username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || !MQTTTopicValidator.isValidUTF8MQTTString(username)
@@ -208,6 +260,13 @@ public enum BrokerProfileValidator {
     }
 
     return issues
+  }
+
+  public static func isValidWebSocketPath(_ path: String) -> Bool {
+    path.hasPrefix("/")
+      && !path.hasPrefix("//")
+      && !path.contains("#")
+      && path.utf8.allSatisfy { (0x21...0x7E).contains($0) }
   }
 }
 

@@ -272,7 +272,9 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     let endpoint = MQTTBrokerEndpoint(
       host: profile.host,
       port: profile.port,
-      security: security
+      security: security,
+      connectionProtocol: profile.connectionProtocol,
+      webSocketPath: profile.webSocketPath
     )
     let sessionPolicy = sessionPolicy(for: profile)
     let filters: [JollysMQTTTransport.MQTTSubscriptionFilter] =
@@ -518,13 +520,17 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   }
 
   static func historySourceID(for profile: BrokerProfile) -> String {
-    let source = [
+    var components = [
       canonicalHistoryHost(profile.host),
       String(profile.port),
       profile.transport.rawValue,
       profile.username ?? "",
       "mqtt-3.1.1",
-    ].joined(separator: "\u{1F}")
+    ]
+    if profile.connectionProtocol == .webSocket {
+      components.append(contentsOf: ["webSocket", profile.webSocketPath])
+    }
+    let source = components.joined(separator: "\u{1F}")
     return SHA256.hash(data: Data(source.utf8)).map {
       String(format: "%02x", $0)
     }.joined()

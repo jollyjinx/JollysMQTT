@@ -7,12 +7,14 @@ actor MosquittoFixture {
     let directory: URL
     let plainEndpoint: MQTTBrokerEndpoint
     let tlsEndpoint: MQTTBrokerEndpoint
+    let webSocketEndpoint: MQTTBrokerEndpoint?
+    let secureWebSocketEndpoint: MQTTBrokerEndpoint?
     let rootCertificateDER: URL
 
     private let process: Process
     private let logURL: URL
 
-    static func start() async throws -> MosquittoFixture {
+    static func start(webSockets: Bool = false) async throws -> MosquittoFixture {
         let directory = FileManager.default.temporaryDirectory
             .appending(component: "jollysmqtt-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
@@ -22,6 +24,8 @@ actor MosquittoFixture {
 
         let plainPort = try reserveTCPPort()
         let tlsPort = try reserveTCPPort()
+        let webSocketPort = webSockets ? try reserveTCPPort() : nil
+        let secureWebSocketPort = webSockets ? try reserveTCPPort() : nil
         let rootCertificateDER = directory.appending(component: "root.der")
         try generateCertificates(
             in: directory,
@@ -30,7 +34,7 @@ actor MosquittoFixture {
 
         let logURL = directory.appending(component: "mosquitto.log")
         let configURL = directory.appending(component: "mosquitto.conf")
-        let configuration = """
+        var configuration = """
         user \(NSUserName())
         per_listener_settings true
         sys_interval 1
@@ -49,6 +53,23 @@ actor MosquittoFixture {
         keyfile \(directory.appending(component: "server.key").path)
         require_certificate false
         """
+        if let webSocketPort, let secureWebSocketPort {
+            configuration += """
+
+
+            listener \(webSocketPort) 127.0.0.1
+            protocol websockets
+            allow_anonymous true
+
+            listener \(secureWebSocketPort) 127.0.0.1
+            protocol websockets
+            allow_anonymous true
+            cafile \(directory.appending(component: "root.pem").path)
+            certfile \(directory.appending(component: "server.pem").path)
+            keyfile \(directory.appending(component: "server.key").path)
+            require_certificate false
+            """
+        }
         try configuration.write(
             to: configURL,
             atomically: true,
@@ -73,6 +94,15 @@ actor MosquittoFixture {
                 port: Int(tlsPort),
                 security: .systemTrustTLS(serverName: "localhost")
             ),
+            webSocketEndpoint: webSocketPort.map {
+                MQTTBrokerEndpoint(host: "127.0.0.1", port: Int($0),
+                    connectionProtocol: .webSocket, webSocketPath: "/custom/mqtt")
+            },
+            secureWebSocketEndpoint: secureWebSocketPort.map {
+                MQTTBrokerEndpoint(host: "127.0.0.1", port: Int($0),
+                    security: .systemTrustTLS(serverName: "localhost"),
+                    connectionProtocol: .webSocket, webSocketPath: "/custom/mqtt")
+            },
             rootCertificateDER: rootCertificateDER,
             process: process,
             logURL: logURL
@@ -90,6 +120,8 @@ actor MosquittoFixture {
         directory: URL,
         plainEndpoint: MQTTBrokerEndpoint,
         tlsEndpoint: MQTTBrokerEndpoint,
+        webSocketEndpoint: MQTTBrokerEndpoint?,
+        secureWebSocketEndpoint: MQTTBrokerEndpoint?,
         rootCertificateDER: URL,
         process: Process,
         logURL: URL
@@ -97,6 +129,8 @@ actor MosquittoFixture {
         self.directory = directory
         self.plainEndpoint = plainEndpoint
         self.tlsEndpoint = tlsEndpoint
+        self.webSocketEndpoint = webSocketEndpoint
+        self.secureWebSocketEndpoint = secureWebSocketEndpoint
         self.rootCertificateDER = rootCertificateDER
         self.process = process
         self.logURL = logURL
@@ -121,8 +155,18 @@ actor MosquittoFixture {
         }
         if process.isRunning {
             kill(process.processIdentifier, SIGKILL)
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(2))
+            while process.isRunning, clock.now < deadline {
+                try? await clock.sleep(for: .milliseconds(20))
+            }
         }
-        process.waitUntilExit()
+        guard !process.isRunning else {
+            Issue.record("Mosquitto fixture did not terminate promptly")
+            return
+        }
+        // waitUntilExit can strand the Swift Testing helper in Foundation's
+        // run-loop wait after the child process has exited on macOS 27.2.
         try? FileManager.default.removeItem(at: directory)
     }
 

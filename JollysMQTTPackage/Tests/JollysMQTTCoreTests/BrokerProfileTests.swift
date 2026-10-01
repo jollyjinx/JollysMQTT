@@ -10,10 +10,52 @@ struct BrokerProfileTests {
     let profile = BrokerProfile.new(id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!)
 
     #expect(profile.transport == .tcp)
+    #expect(profile.connectionProtocol == .mqtt)
+    #expect(profile.webSocketPath == "/mqtt")
     #expect(profile.port == 1_883)
     #expect(profile.subscriptions.map(\.filter) == ["#", "$SYS/#"])
     #expect(profile.subscriptions.allSatisfy { $0.qos == .atMostOnce && $0.isEnabled })
     #expect(profile.hasBroadSubscriptionWarning)
+  }
+
+  @Test("Profiles written before protocol selection decode as MQTT")
+  func legacyProtocolDefaults() throws {
+    let profile = BrokerProfile.new(name: "Legacy", host: "broker.example")
+    let encoded = try JSONEncoder().encode(profile)
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "connectionProtocol")
+    object.removeValue(forKey: "webSocketPath")
+    let legacy = try JSONSerialization.data(withJSONObject: object)
+
+    #expect(try JSONDecoder().decode(BrokerProfile.self, from: legacy) == profile)
+  }
+
+  @Test("WebSocket protocol and custom path survive profile serialization")
+  func webSocketSerialization() throws {
+    let profile = BrokerProfile.new(
+      name: "WebSocket Broker", host: "broker.example", port: 9_001,
+      connectionProtocol: .webSocket, webSocketPath: "/custom/mqtt?client=explorer"
+    )
+    let restored = try JSONDecoder().decode(
+      BrokerProfile.self, from: JSONEncoder().encode(profile)
+    )
+
+    #expect(restored == profile)
+    #expect(profile.validationIssues.isEmpty)
+    #expect(profile.endpointSummary == "ws://broker.example:9001/custom/mqtt?client=explorer")
+  }
+
+  @Test(
+    "WebSocket paths reject malformed HTTP request targets",
+    arguments: ["", "mqtt", "//broker.example/mqtt", "/has space", "/mqtt#fragment", "/mqtt\r\nInjected: value", "/mütt"]
+  )
+  func invalidWebSocketPath(path: String) {
+    let profile = BrokerProfile.new(
+      name: "WebSocket Broker", host: "broker.example",
+      connectionProtocol: .webSocket, webSocketPath: path
+    )
+    #expect(profile.validationIssues.contains { $0.field == .webSocketPath })
+    #expect(BrokerProfile.new(name: "MQTT", host: "broker.example", webSocketPath: path).validationIssues.isEmpty)
   }
 
   @Test(

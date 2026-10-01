@@ -5,6 +5,22 @@ import Testing
 
 @Suite("Broker feed registry")
 struct BrokerFeedRegistryTests {
+  @Test("Protocol and active WebSocket path changes require a new effective connection")
+  func protocolAndPathConnectionIdentity() {
+    let id = UUID()
+    func key(_ connectionProtocol: BrokerConnectionProtocol, path: String) -> BrokerConnectionKey {
+      BrokerConnectionKey(BrokerFeedConfiguration(
+        profile: .new(id: id, name: "Broker", host: "broker.example",
+          connectionProtocol: connectionProtocol, webSocketPath: path),
+        credentialRevision: 0
+      ))
+    }
+
+    #expect(key(.mqtt, path: "/mqtt") == key(.mqtt, path: "/ignored"))
+    #expect(key(.mqtt, path: "/mqtt") != key(.webSocket, path: "/mqtt"))
+    #expect(key(.webSocket, path: "/mqtt") != key(.webSocket, path: "/other"))
+  }
+
   @Test("Registry rejects a destructive request authorized for another broker")
   func publishBrokerAuthorization() async {
     let factory = RegistryRawFeedFactory()

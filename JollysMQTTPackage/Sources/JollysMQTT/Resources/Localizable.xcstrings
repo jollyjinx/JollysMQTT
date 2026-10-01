@@ -519,6 +519,9 @@
     "Enter a valid username." : {
       "comment" : "Validation error for an invalid MQTT username."
     },
+    "Enter a WebSocket path starting with /, without spaces or a fragment." : {
+      "comment" : "Validation error for an invalid WebSocket request path."
+    },
     "Enter hexadecimal byte pairs separated only by whitespace." : {
       "comment" : "Validation error for malformed hexadecimal publish input."
     },
@@ -780,6 +783,9 @@
     "Move Later" : {
       "comment" : "Moves one chart card later in dashboard order."
     },
+    "MQTT" : {
+      "comment" : "Default MQTT connection protocol using a direct broker connection."
+    },
     "Name" : {
       "comment" : "Label for a broker profile display name.\nSorts topic siblings alphabetically by segment name."
     },
@@ -962,6 +968,9 @@
     },
     "Profile sync can be local only" : {
       "comment" : "Help heading about local-only profile synchronization."
+    },
+    "Protocol" : {
+      "comment" : "Label for selecting MQTT or WebSocket in a broker profile."
     },
     "Publish" : {
       "comment" : "Compact connected-workspace publish destination.\nHeading for the MQTT publish composer.\nSends the composed MQTT publication.\nWide connected-workspace publish destination."
@@ -1277,9 +1286,6 @@
     "System" : {
       "comment" : "System-default numeric chart color."
     },
-    "TCP" : {
-      "comment" : "Unencrypted TCP broker transport."
-    },
     "Teal" : {
       "comment" : "Teal numeric chart card color."
     },
@@ -1429,9 +1435,6 @@
     "This publishes zero-byte retained messages to exactly %lld unique, non-stale, locally known value-bearing topics in the selected subtree. This is not the broker’s complete retained-message inventory." : {
       "comment" : "Explains recursive retained deletion scope. The variable is the exact snapshotted target count."
     },
-    "TLS" : {
-      "comment" : "System-trust TLS broker transport."
-    },
     "Topic" : {
       "comment" : "Label for the exact MQTT publication topic.\nLabel for the topic affected by a topic-history clear."
     },
@@ -1449,9 +1452,6 @@
     },
     "Topics" : {
       "comment" : "Compact connected-workspace topic destination.\nWide connected-workspace topic-column title."
-    },
-    "Transport" : {
-      "comment" : "Label for the broker transport picker."
     },
     "Try a different topic path or current value." : {
       "comment" : "Description shown when no indexed topic or payload summary matches search."
@@ -1471,6 +1471,9 @@
     "Use Selected Topic" : {
       "comment" : "Re-enables publish-topic prefill from outline selection."
     },
+    "Use TLS" : {
+      "comment" : "Enables system-trust TLS for either MQTT or WebSocket connections."
+    },
     "Username" : {
       "comment" : "Label for the optional MQTT username."
     },
@@ -1488,6 +1491,12 @@
     },
     "Waiting to reconnect" : {
       "comment" : "Broker connection phase shown during automatic backoff."
+    },
+    "WebSocket" : {
+      "comment" : "MQTT connection protocol using a WebSocket connection."
+    },
+    "WebSocket Path" : {
+      "comment" : "Label for the broker WebSocket request path, defaulting to /mqtt."
     },
     "Workspace state could not be restored or saved. Existing data was left unchanged." : {
       "comment" : "Explains a workspace restoration or persistence failure."

@@ -4800,26 +4800,51 @@ private struct ProfileEndpointSection: View {
       }
       .accessibilityIdentifier("profile-editor.port")
 
-      Picker(selection: $store.editorTransport) {
+      Picker(selection: $store.editorConnectionProtocol) {
         Text(
-          "TCP",
+          "MQTT",
           bundle: #bundle,
-          comment: "Unencrypted TCP broker transport."
+          comment: "Default MQTT connection protocol using a direct broker connection."
         )
-        .tag(BrokerTransport.tcp)
+        .tag(BrokerConnectionProtocol.mqtt)
         Text(
-          "TLS",
+          "WebSocket",
           bundle: #bundle,
-          comment: "System-trust TLS broker transport."
+          comment: "MQTT connection protocol using a WebSocket connection."
         )
-        .tag(BrokerTransport.tls)
+        .tag(BrokerConnectionProtocol.webSocket)
       } label: {
         Text(
-          "Transport",
+          "Protocol",
           bundle: #bundle,
-          comment: "Label for the broker transport picker."
+          comment: "Label for selecting MQTT or WebSocket in a broker profile."
         )
       }
+      .accessibilityIdentifier("profile-editor.protocol")
+
+      if store.editorConnectionProtocol == .webSocket {
+        TextField(text: $store[editorText: .webSocketPath]) {
+          Text(
+            "WebSocket Path",
+            bundle: #bundle,
+            comment: "Label for the broker WebSocket request path, defaulting to /mqtt."
+          )
+        }
+        .autocorrectionDisabled()
+        #if !os(macOS)
+          .textInputAutocapitalization(.never)
+        #endif
+        .accessibilityIdentifier("profile-editor.websocket-path")
+      }
+
+      Toggle(isOn: $store.editorUsesTLS) {
+        Text(
+          "Use TLS",
+          bundle: #bundle,
+          comment: "Enables system-trust TLS for either MQTT or WebSocket connections."
+        )
+      }
+      .accessibilityIdentifier("profile-editor.tls")
     } header: {
       Text(
         "Connection",
@@ -5158,6 +5183,12 @@ private struct ProfileValidationIssueText: View {
           "Enter a port from 1 through 65535.",
           bundle: #bundle,
           comment: "Validation error for an invalid broker port."
+        )
+      case .webSocketPath:
+        Text(
+          "Enter a WebSocket path starting with /, without spaces or a fragment.",
+          bundle: #bundle,
+          comment: "Validation error for an invalid WebSocket request path."
         )
       case .username:
         Text(

@@ -10,6 +10,18 @@ import struct JollysMQTTCore.ConnectionEpochID
 
 @Suite("Transport boundary")
 struct TransportModuleTests {
+  @Test("Malformed WebSocket request paths fail before opening a connection")
+  func invalidWebSocketConfiguration() {
+    #expect(throws: MQTTTransportFailure.invalidConfiguration) {
+      try MQTTTransportClient().configuration(
+        for: MQTTBrokerEndpoint(host: "broker.example", port: 9_001,
+          connectionProtocol: .webSocket, webSocketPath: "/mqtt\r\nInjected: value"),
+        authentication: nil,
+        keepAliveInterval: .seconds(60)
+      )
+    }
+  }
+
   @Test("Transport exposes only the domain module as an internal layer")
   func moduleBoundaries() {
     #expect(TransportModule.dependencies == ["JollysMQTTCore"])
@@ -243,18 +255,55 @@ private enum CallerOperationFailure: Error {
   .enabled(if: ProcessInfo.processInfo.environment["JOLLYSMQTT_MQTT_INTEGRATION"] == "1")
 )
 struct MQTTTransportIntegrationTests {
+  @Test("WebSocket and verified TLS WebSocket carry MQTT payloads larger than 16 KiB",
+    .timeLimit(.minutes(1)), arguments: [false, true])
+  func webSocketPublishAndReceive(secure: Bool) async throws {
+    let fixture = try await MosquittoFixture.start(webSockets: true)
+    do {
+      let endpoint = try #require(secure ? fixture.secureWebSocketEndpoint : fixture.webSocketEndpoint)
+      let client = secure
+        ? MQTTTransportClient(trustPolicy: .testRootDER(path: fixture.rootCertificateDER.path))
+        : MQTTTransportClient()
+      let payload = Data(repeating: 0x41, count: 32_000)
+      let clientID = secure ? "jolly-websocket-tls" : "jolly-websocket"
+      let message = try await client.withConnection(
+        to: endpoint, sessionPolicy: .clean(clientID: clientID)
+      ) { connection in
+        try await connection.withSubscription(
+          to: [MQTTSubscriptionFilter(topicFilter: "websocket/#", qos: .atLeastOnce)]
+        ) { subscription in
+          try await connection.publish(topic: "websocket/value", payload: payload, qos: .atLeastOnce)
+          for try await message in subscription {
+            return message
+          }
+          throw MQTTTransportFailure.connectionClosed
+        }
+      }
+      #expect(message.topic == "websocket/value")
+      #expect(message.payload == payload)
+      #expect(message.qos == .atLeastOnce)
+      try await fixture.waitForLog(containing: "Client \(clientID) [")
+      await fixture.stop()
+    } catch {
+      await fixture.stop()
+      throw error
+    }
+  }
+
   @Test(
     "Real mqtt-nio wildcard intake closes on bounded local overload",
-    .timeLimit(.minutes(1))
+    .timeLimit(.minutes(1)),
+    arguments: [false, true]
   )
-  func realSubscriptionOverload() async throws {
-    let fixture = try await MosquittoFixture.start()
+  func realSubscriptionOverload(webSocket: Bool) async throws {
+    let fixture = try await MosquittoFixture.start(webSockets: webSocket)
     do {
+      let endpoint = try #require(webSocket ? fixture.webSocketEndpoint : fixture.plainEndpoint)
       let clientID = "jolly-ticket3-overload"
       let processingGate = CancellableAsyncGate()
       let connectionTask = Task {
         try await MQTTTransportClient().withConnection(
-          to: fixture.plainEndpoint,
+          to: endpoint,
           sessionPolicy: .clean(clientID: clientID)
         ) { connection in
           try await connection.consumeBoundedSubscription(
@@ -429,16 +478,17 @@ struct MQTTTransportIntegrationTests {
     }
   }
 
-  @Test("Untrusted certificate is a typed redacted failure")
-  func untrustedTLSFixture() async throws {
-    let fixture = try await MosquittoFixture.start()
+  @Test("Untrusted certificate is a typed redacted failure", arguments: [false, true])
+  func untrustedTLSFixture(webSocket: Bool) async throws {
+    let fixture = try await MosquittoFixture.start(webSockets: webSocket)
+    let endpoint = try #require(webSocket ? fixture.secureWebSocketEndpoint : fixture.tlsEndpoint)
     let client = MQTTTransportClient(
       connectTimeout: .seconds(1),
       responseTimeout: .seconds(1)
     )
     let error = await #expect(throws: MQTTTransportFailure.self) {
       try await client.withConnection(
-        to: fixture.tlsEndpoint,
+        to: endpoint,
         sessionPolicy: .clean(clientID: "jolly-ticket2-untrusted-tls")
       ) { _ in }
     }

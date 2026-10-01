@@ -6,6 +6,24 @@ import Testing
 
 @Suite("Local profile document repository")
 struct LocalProfileRepositoryTests {
+  @Test("A WebSocket broker retains its protocol and request path after relaunch")
+  func restoresWebSocketProfile() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+    let fileURL = directory.appending(component: "profiles.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let profile = RankedBrokerProfile(
+      profile: .new(name: "WebSocket Broker", host: "broker.example", port: 9_001,
+        connectionProtocol: .webSocket, webSocketPath: "/custom/mqtt"),
+      reorderRank: 0
+    )
+    try await LocalProfileRepository(fileURL: fileURL, installationID: stableTestInstallationID)
+      .replaceAll([profile])
+    let restored = try await LocalProfileRepository(fileURL: fileURL, installationID: stableTestInstallationID)
+      .load()
+
+    #expect(restored == [profile])
+  }
+
   @Test("A versioned document restores profiles and explicit reorder rank after relaunch")
   func restoresProfilesAndRanks() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -311,6 +329,7 @@ struct LocalProfileRepositoryTests {
       recursiveJSONKeys(in: object) == [
         "clientIDPolicy",
         "cleanSession",
+        "connectionProtocol",
         "content",
         "counter",
         "exponential",
@@ -335,6 +354,7 @@ struct LocalProfileRepositoryTests {
         "username",
         "value",
         "version",
+        "webSocketPath",
       ]
     )
   }

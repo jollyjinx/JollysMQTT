@@ -21,6 +21,8 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
   public var host: String
   public var port: Int
   public var transport: BrokerTransport
+  public var connectionProtocol: BrokerConnectionProtocol
+  public var webSocketPath: String
   public var username: String
   public var clientIDPolicy: ClientIDPolicy
   public var cleanSession: Bool
@@ -41,6 +43,8 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
     self.host = profile.host
     self.port = profile.port
     self.transport = profile.transport
+    self.connectionProtocol = profile.connectionProtocol
+    self.webSocketPath = profile.webSocketPath
     self.username = profile.username ?? ""
     self.clientIDPolicy = profile.clientIDPolicy
     self.cleanSession = profile.cleanSession
@@ -63,6 +67,8 @@ public struct ProfileEditorState: Equatable, Identifiable, Sendable {
       host: host,
       port: port,
       transport: transport,
+      connectionProtocol: connectionProtocol,
+      webSocketPath: webSocketPath,
       username: username.isEmpty ? nil : username,
       clientIDPolicy: clientIDPolicy,
       cleanSession: cleanSession,
@@ -334,6 +340,8 @@ public enum ServerListFeature {
     case setHost(String)
     case setPort(Int)
     case setTransport(BrokerTransport)
+    case setConnectionProtocol(BrokerConnectionProtocol)
+    case setWebSocketPath(String)
     case setUsername(String)
     case setClientIDPolicy(ClientIDPolicy)
     case setCleanSession(Bool)
@@ -535,6 +543,10 @@ public enum ServerListFeature {
       state.editor?.port = value
     case .setTransport(let value):
       state.editor?.transport = value
+    case .setConnectionProtocol(let value):
+      state.editor?.connectionProtocol = value
+    case .setWebSocketPath(let value):
+      state.editor?.webSocketPath = value
     case .setUsername(let value):
       state.editor?.username = value
     case .setClientIDPolicy(let value):
@@ -1042,6 +1054,8 @@ public enum ServerListFeature {
       host: source.host,
       port: source.port,
       transport: source.transport,
+      connectionProtocol: source.connectionProtocol,
+      webSocketPath: source.webSocketPath,
       username: source.username,
       clientIDPolicy: source.clientIDPolicy,
       cleanSession: source.cleanSession,
@@ -1190,6 +1204,7 @@ public final class ServerListStore {
   public enum EditorTextField: Sendable {
     case name
     case host
+    case webSocketPath
     case username
     case explicitClientID
   }
@@ -1745,6 +1760,8 @@ public final class ServerListStore {
         editor.name
       case .host:
         editor.host
+      case .webSocketPath:
+        editor.webSocketPath
       case .username:
         editor.username
       case .explicitClientID:
@@ -1757,6 +1774,8 @@ public final class ServerListStore {
         sendImmediately(.setName(newValue))
       case .host:
         sendImmediately(.setHost(newValue))
+      case .webSocketPath:
+        sendImmediately(.setWebSocketPath(newValue))
       case .username:
         sendImmediately(.setUsername(newValue))
       case .explicitClientID:
@@ -1820,6 +1839,16 @@ public final class ServerListStore {
   public var editorTransport: BrokerTransport {
     get { state.editor?.transport ?? .tcp }
     set { sendImmediately(.setTransport(newValue)) }
+  }
+
+  public var editorUsesTLS: Bool {
+    get { editorTransport == .tls }
+    set { editorTransport = newValue ? .tls : .tcp }
+  }
+
+  public var editorConnectionProtocol: BrokerConnectionProtocol {
+    get { state.editor?.connectionProtocol ?? .mqtt }
+    set { sendImmediately(.setConnectionProtocol(newValue)) }
   }
 
   public var editorClientIDMode: EditorClientIDMode {

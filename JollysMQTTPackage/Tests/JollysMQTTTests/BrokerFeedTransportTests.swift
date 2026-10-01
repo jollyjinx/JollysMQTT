@@ -8,6 +8,21 @@ import Testing
 
 @Suite("Broker feed transport composition")
 struct BrokerFeedTransportTests {
+  @Test("History separates WebSocket paths without changing existing MQTT source identities")
+  func webSocketHistorySourceIdentity() {
+    let id = UUID()
+    func source(_ connectionProtocol: BrokerConnectionProtocol, path: String) -> String {
+      MQTTBrokerFeedAttempt.historySourceID(for: .new(
+        id: id, name: "Broker", host: "broker.example",
+        connectionProtocol: connectionProtocol, webSocketPath: path
+      ))
+    }
+
+    #expect(source(.mqtt, path: "/mqtt") == source(.mqtt, path: "/ignored"))
+    #expect(source(.mqtt, path: "/mqtt") != source(.webSocket, path: "/mqtt"))
+    #expect(source(.webSocket, path: "/mqtt") != source(.webSocket, path: "/other"))
+  }
+
   @Test("Generated client IDs are deterministic and MQTT 3.1.1 portable")
   func stableClientID() {
     let installationID = UUID(

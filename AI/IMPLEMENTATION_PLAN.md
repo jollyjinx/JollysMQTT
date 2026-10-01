@@ -423,6 +423,8 @@ and injects them into feature effect runners.
 - display name
 - hostname and port
 - transport: TCP or TLS
+- connection protocol: MQTT (default) or WebSocket, with a WebSocket request
+  path defaulting to `/mqtt` (see `AI/WEBSOCKET_CONNECTIONS.md`)
 - MQTT protocol version
 - optional username; password presence is resolved separately by the
   device-local credential repository

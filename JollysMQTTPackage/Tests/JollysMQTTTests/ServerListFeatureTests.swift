@@ -7,6 +7,29 @@ import Testing
 
 @Suite("Server-list profile workflow")
 struct ServerListFeatureTests {
+  @Test("Saving and duplicating WebSocket profiles preserve protocol, TLS, and path")
+  @MainActor
+  func saveAndDuplicateWebSocketProfile() throws {
+    let original = rankedProfile(name: "Broker", rank: 10)
+    var state = ServerListFeature.State(profiles: [original])
+    _ = ServerListFeature.reduce(state: &state, intent: .editProfile(original.id))
+    _ = ServerListFeature.reduce(state: &state, intent: .setConnectionProtocol(.webSocket))
+    _ = ServerListFeature.reduce(state: &state, intent: .setTransport(.tls))
+    _ = ServerListFeature.reduce(state: &state, intent: .setWebSocketPath("/custom/mqtt"))
+    #expect(state.editorHasUnsavedChanges)
+    _ = ServerListFeature.reduce(state: &state, intent: .saveEditor)
+    let saved = try #require(state.profiles.first?.profile)
+    #expect(saved.connectionProtocol == .webSocket)
+    #expect(saved.transport == .tls)
+    #expect(saved.webSocketPath == "/custom/mqtt")
+
+    _ = ServerListFeature.reduce(state: &state, intent: .duplicateProfile(saved.id, newID: UUID()))
+    let duplicate = try #require(state.editor?.profile)
+    #expect(duplicate.connectionProtocol == .webSocket)
+    #expect(duplicate.transport == .tls)
+    #expect(duplicate.webSocketPath == "/custom/mqtt")
+  }
+
   @Test("Create opens an editor with safe broad-subscription defaults")
   @MainActor
   func createProfile() throws {

@@ -50,6 +50,8 @@ public struct BrokerConnectionKey: Hashable, Sendable {
   private let host: BrokerHostIdentity
   private let port: Int
   private let transport: BrokerTransport
+  private let connectionProtocol: BrokerConnectionProtocol
+  private let webSocketPath: String?
   private let username: String?
   private let clientIDPolicy: ClientIDPolicy
   private let cleanSession: Bool
@@ -63,6 +65,8 @@ public struct BrokerConnectionKey: Hashable, Sendable {
     self.host = BrokerHostIdentity(profile.host)
     self.port = profile.port
     self.transport = profile.transport
+    self.connectionProtocol = profile.connectionProtocol
+    self.webSocketPath = profile.connectionProtocol == .webSocket ? profile.webSocketPath : nil
     self.username = profile.username
     self.clientIDPolicy = profile.clientIDPolicy
     self.cleanSession = profile.cleanSession
@@ -115,11 +119,15 @@ public actor BrokerFeedRegistry: BrokerFeedGenerationCoordinating {
     let host: BrokerHostIdentity
     let port: Int
     let transport: BrokerTransport
+    let connectionProtocol: BrokerConnectionProtocol
+    let webSocketPath: String?
 
     init(_ profile: BrokerProfile) {
       self.host = BrokerHostIdentity(profile.host)
       self.port = profile.port
       self.transport = profile.transport
+      self.connectionProtocol = profile.connectionProtocol
+      self.webSocketPath = profile.connectionProtocol == .webSocket ? profile.webSocketPath : nil
     }
   }
 

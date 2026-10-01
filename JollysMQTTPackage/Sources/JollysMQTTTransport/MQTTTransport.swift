@@ -33,11 +33,21 @@ public struct MQTTBrokerEndpoint: Equatable, Sendable {
   public let host: String
   public let port: Int
   public let security: Security
+  public let connectionProtocol: BrokerConnectionProtocol
+  public let webSocketPath: String
 
-  public init(host: String, port: Int, security: Security = .plainTCP) {
+  public init(
+    host: String,
+    port: Int,
+    security: Security = .plainTCP,
+    connectionProtocol: BrokerConnectionProtocol = .mqtt,
+    webSocketPath: String = "/mqtt"
+  ) {
     self.host = host
     self.port = port
     self.security = security
+    self.connectionProtocol = connectionProtocol
+    self.webSocketPath = webSocketPath
   }
 }
 
@@ -508,10 +518,10 @@ public struct MQTTTransportClient: Sendable {
     authentication: MQTTAuthentication?,
     keepAliveInterval: Duration
   ) throws -> MQTTConnectionConfiguration {
-    let transport: MQTTConnectionConfiguration.Transport
+    let tls: MQTTConnectionConfiguration.Transport.TLS
     switch endpoint.security {
     case .plainTCP:
-      transport = .tcp()
+      tls = .disable
 
     case .systemTrustTLS(let serverName):
       let tlsConfiguration: TSTLSConfiguration
@@ -538,11 +548,28 @@ public struct MQTTTransportClient: Sendable {
           certificateVerification: .fullVerification
         )
       }
-      transport = .tcp(
-        tls: .enable(
-          .ts(tlsConfiguration),
-          tlsServerName: serverName
-        )
+      tls = .enable(
+        .ts(tlsConfiguration),
+        tlsServerName: serverName
+      )
+    }
+
+    let transport: MQTTConnectionConfiguration.Transport
+    switch endpoint.connectionProtocol {
+    case .mqtt:
+      transport = .tcp(tls: tls)
+    case .webSocket:
+      guard BrokerProfileValidator.isValidWebSocketPath(endpoint.webSocketPath) else {
+        throw MQTTTransportFailure.invalidConfiguration
+      }
+      transport = .webSocket(
+        .init(
+          urlPath: endpoint.webSocketPath,
+          // Match the default payload boundary plus the maximum MQTT topic
+          // and packet headers, rather than the upstream 16 KiB frame limit.
+          maxFrameSize: MQTTInboundBoundaryPolicy().maximumPayloadBytes + 65_536 + 16
+        ),
+        tls: tls
       )
     }
 
