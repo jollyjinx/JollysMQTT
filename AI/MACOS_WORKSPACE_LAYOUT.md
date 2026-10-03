@@ -73,11 +73,15 @@ falls back to the root; a nonnumeric replacement disables chart pinning.
 
 macOS topic rows are intentionally denser than touch-platform rows. The outline
 uses a plain native list with no separators or vertical row insets and a
-22-point minimum row height. Topic names, payload summaries, and descendant counts use
+17-point minimum row height. Topic names, payload summaries, and descendant counts use
 the primary semantic foreground for black text in light appearance and readable
 text in dark appearance. Topic labels and counts stay on one line rather than
-increasing row height as the pane narrows. Disclosure targets are 16 points,
-indentation advances by 12 points, and current payload summaries stay inline
+increasing row height as the pane narrows. Every row reserves the same fixed
+12-point disclosure column, including leaves and search-forced branches. There
+is no gap after this column, and indentation advances by the same 12 points,
+so sibling names align and each child's disclosure column starts directly under
+its parent's name. The column's outer frame constrains button-style sizing as
+well as the empty leaf placeholder. Current payload summaries stay inline
 with the topic segment. Indexed summaries flatten payload
 line breaks into one display line, and the row gives that line the available
 width before its alignment spacer. Branch counts sit immediately after the
@@ -136,8 +140,10 @@ regardless of the locale's thousands separator.
   broker-list navigation, and Help.
 - Topic payload summaries are inline on macOS, and substantially more topic rows
   fit in the same height than in the touch presentation.
-- At normal text sizes, macOS topic rows use a 22-point minimum without
+- At normal text sizes, macOS topic rows use a 17-point minimum without
   additional list spacing; topic text retains full contrast when inactive.
+- Leaf and branch names at the same depth have identical leading alignment,
+  including after expansion, collapse, selection, and search.
 - Widening the window lets the topic column grow past 680 points so long
   payload previews can use the extra width.
 - Copy and retained-value actions remain reachable without permanent vertical
@@ -209,3 +215,13 @@ those persistence and geometry paths are covered by package tests. UI tests
 were compiled but not executed. `JOLLYSMQTT_UI_PREVIEW=brokers` (Debug only) and
 `JOLLYSMQTT_UI_CHART_DIRECTORY` support isolated persistence verification without
 real brokers or credentials.
+
+The subsequent 2026-10-03 density adjustment passed `swift build`, the full
+parallel package suite, the macOS Debug build, and the unsigned generic iOS
+build. An isolated `JollysMQTT Compact Preview` confirmed 17-point rows (34
+pixels at 2x scale), unchanged 13-point text, and identical leading positions
+for sibling leaves and an expanded value-bearing branch. Selecting that branch
+and repeatedly collapsing/reopening it preserved alignment and its nested leaf.
+The dense fixture now includes `factory/line/sensor02/unit`, with `sensor02`
+initially expanded, so the same mixed hierarchy is available for future visual
+checks. No real broker or credentials were used.

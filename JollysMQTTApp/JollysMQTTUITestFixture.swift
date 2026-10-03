@@ -191,7 +191,7 @@
         route: route,
         selectedProfileID: selectedProfileID,
         expandedTopics: ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_DENSE_TOPICS"] == "1"
-          ? ["factory", "factory/line"] : [],
+          ? ["factory", "factory/line", "factory/line/sensor02"] : [],
         destination: initialDestination
       )
     }
@@ -246,6 +246,8 @@
           ("factory/other/status", "ready"),
         ]
         if ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_DENSE_TOPICS"] == "1" {
+          // Mix a value-bearing branch with sibling leaves to inspect indentation.
+          topics.append(("factory/line/sensor02/unit", "°C"))
           topics += (1...45).map { index in
             (
               String(format: "factory/line/sensor%02d", index),

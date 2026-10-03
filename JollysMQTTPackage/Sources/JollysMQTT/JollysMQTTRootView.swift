@@ -2306,6 +2306,11 @@ private struct TopicColumnWidth: ViewModifier {
   }
 }
 
+private enum TopicOutlineDesktopLayout {
+  static let rowHeight: CGFloat = 17
+  static let indentation: CGFloat = 12
+}
+
 private struct TopicOutlineListStyle: ViewModifier {
   func body(content: Content) -> some View {
     #if os(macOS)
@@ -2323,7 +2328,7 @@ private struct TopicOutlineListStyle: ViewModifier {
 
   private var minimumRowHeight: CGFloat {
     #if os(macOS)
-      22
+      TopicOutlineDesktopLayout.rowHeight
     #else
       44
     #endif
@@ -2965,43 +2970,48 @@ private struct TopicOutlineRow: View {
 
   var body: some View {
     HStack(spacing: rowSpacing) {
-      if row.allowsExpansionToggle {
-        Button(action: onToggleExpansion) {
-          Image(
-            systemName:
-              row.isExpanded ? "chevron.down" : "chevron.right"
+      // Reserve exactly one column for both a disclosure and an empty leaf slot.
+      // The button style must not change where the topic's text begins.
+      ZStack {
+        if row.allowsExpansionToggle {
+          Button(action: onToggleExpansion) {
+            Image(
+              systemName:
+                row.isExpanded ? "chevron.down" : "chevron.right"
+            )
+            .frame(width: disclosureSize, height: disclosureSize)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel(
+            row.isExpanded
+              ? LocalizedStringResource(
+                "Collapse \(row.fullTopic)",
+                bundle: #bundle,
+                comment:
+                  "Accessible and Voice Control action that collapses an MQTT topic branch. The variable is the exact topic path."
+              )
+              : LocalizedStringResource(
+                "Expand \(row.fullTopic)",
+                bundle: #bundle,
+                comment:
+                  "Accessible and Voice Control action that expands an MQTT topic branch. The variable is the exact topic path."
+              )
           )
-          .frame(width: disclosureSize, height: disclosureSize)
+          .accessibilityHint(
+            Text(
+              "Changes visibility of descendants under \(row.fullTopic).",
+              bundle: #bundle,
+              comment:
+                "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
+            )
+          )
+          .accessibilityIdentifier("topic-disclosure.\(row.fullTopic)")
+        } else {
+          Color.clear
+            .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-          row.isExpanded
-            ? LocalizedStringResource(
-              "Collapse \(row.fullTopic)",
-              bundle: #bundle,
-              comment:
-                "Accessible and Voice Control action that collapses an MQTT topic branch. The variable is the exact topic path."
-            )
-            : LocalizedStringResource(
-              "Expand \(row.fullTopic)",
-              bundle: #bundle,
-              comment:
-                "Accessible and Voice Control action that expands an MQTT topic branch. The variable is the exact topic path."
-            )
-        )
-        .accessibilityHint(
-          Text(
-            "Changes visibility of descendants under \(row.fullTopic).",
-            bundle: #bundle,
-            comment:
-              "Hint for a topic disclosure control. The variable is the exact MQTT topic path."
-          )
-        )
-        .accessibilityIdentifier("topic-disclosure.\(row.fullTopic)")
-      } else {
-        Color.clear.frame(width: disclosureSize, height: disclosureSize)
-          .accessibilityHidden(true)
       }
+      .frame(width: disclosureSize, height: disclosureSize)
       TopicOutlineRowContent(row: row)
         .onTapGesture(perform: onActivate)
         .accessibilityAction { onActivate() }
@@ -3013,7 +3023,7 @@ private struct TopicOutlineRow: View {
 
   private var rowSpacing: CGFloat {
     #if os(macOS)
-      3
+      0
     #else
       8
     #endif
@@ -3021,7 +3031,7 @@ private struct TopicOutlineRow: View {
 
   private var disclosureSize: CGFloat {
     #if os(macOS)
-      16
+      TopicOutlineDesktopLayout.indentation
     #else
       44
     #endif
@@ -3029,7 +3039,7 @@ private struct TopicOutlineRow: View {
 
   private var indentation: CGFloat {
     #if os(macOS)
-      12
+      TopicOutlineDesktopLayout.indentation
     #else
       16
     #endif
@@ -3052,7 +3062,7 @@ private struct TopicOutlineRowContent: View {
       }
       .font(.system(size: 13))
       .controlSize(.small)
-      .frame(minHeight: 22)
+      .frame(minHeight: TopicOutlineDesktopLayout.rowHeight)
       .contentShape(.rect)
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(Text(verbatim: row.fullTopic))
