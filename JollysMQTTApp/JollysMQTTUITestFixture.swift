@@ -181,6 +181,8 @@
         id: id,
         route: route,
         selectedProfileID: selectedProfileID,
+        expandedTopics: ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_DENSE_TOPICS"] == "1"
+          ? ["factory", "factory/line"] : [],
         destination: initialDestination
       )
     }
@@ -204,6 +206,7 @@
     private let snapshotContinuation: AsyncStream<BrokerFeedSnapshot>.Continuation
     private let topicStream: AsyncStream<BrokerTopicTreeSnapshot>
     private let topicContinuation: AsyncStream<BrokerTopicTreeSnapshot>.Continuation
+    private let ingestionTask: Task<Void, Never>
 
     init() {
       (snapshotStream, snapshotContinuation) = AsyncStream.makeStream(
@@ -217,7 +220,7 @@
       snapshotContinuation.yield(BrokerFeedSnapshot(phase: .connected))
       topicContinuation.yield(.empty)
       let topicContinuation = topicContinuation
-      Task {
+      ingestionTask = Task {
         let ingestion = BrokerFeedIngestion(
           brokerID: JollysMQTTUITestFixture.profileID,
           historySourceID: "ui-test-source",
@@ -228,11 +231,19 @@
             uuidString: "28BD99D5-E270-46B0-9753-E30CD5A274E8"
           )!
         )
-        let topics = [
+        var topics = [
           ("factory/line/temperature", "21.5"),
           ("factory/line/pressure", "101.3"),
           ("factory/other/status", "ready"),
         ]
+        if ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_DENSE_TOPICS"] == "1" {
+          topics += (1...45).map { index in
+            (
+              String(format: "factory/line/sensor%02d", index),
+              "{\"temperature\":\(20 + index),\"humidity\":48,\"status\":\"online\"}"
+            )
+          }
+        }
         for (offset, fixture) in topics.enumerated() {
           await ingestion.ingest(
             BrokerInboundMessage(
@@ -248,8 +259,30 @@
           )
         }
         topicContinuation.yield(await ingestion.flush())
+        if ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_ACTIVITY"] == "1" {
+          for tick in 1...60 {
+            do {
+              try await Task.sleep(for: .seconds(2))
+            } catch { return }
+            await ingestion.ingest(
+              BrokerInboundMessage(
+                connectionEpoch: epoch,
+                ordinal: UInt64(topics.count + tick),
+                topic: "factory/line/sensor01",
+                payload: Data("{\"temperature\":21,\"humidity\":48,\"status\":\"online\"}".utf8),
+                qos: .atMostOnce,
+                retained: false,
+                duplicate: false,
+                receivedAtMicroseconds: Int64(Date().timeIntervalSince1970 * 1_000_000)
+              )
+            )
+            topicContinuation.yield(await ingestion.flush())
+          }
+        }
       }
     }
+
+    deinit { ingestionTask.cancel() }
 
     func snapshots() -> AsyncStream<BrokerFeedSnapshot> {
       snapshotStream
@@ -289,6 +322,7 @@
     }
 
     func release() {
+      ingestionTask.cancel()
       snapshotContinuation.yield(.idle)
     }
   }

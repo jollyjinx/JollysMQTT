@@ -445,6 +445,30 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
           .waitForExistence(timeout: 5)
       )
       XCTAssertTrue(app.staticTexts["UI Test Broker 2"].exists)
+      XCTAssertEqual(app.windows.count, 2)
+      XCTAssertTrue(secondBroker.exists, "The broker list must stay open")
+      app.buttons["workspace.show-brokers"].click()
+      XCTAssertEqual(app.windows.count, 2)
+      XCTAssertTrue(app.descendants(matching: .any)["workspace.wide.split"].exists)
+    }
+
+    @MainActor
+    func testConnectButtonOpensIndependentWindowsAndKeepsBrokerList() {
+      let app = launchBrokerList(widthClass: "regular")
+      let connect = app.buttons["Connect"]
+      XCTAssertTrue(connect.waitForExistence(timeout: 5))
+      connect.click()
+      let workspace = app.descendants(matching: .any)["workspace.wide.split"]
+      XCTAssertTrue(workspace.waitForExistence(timeout: 5))
+      XCTAssertEqual(app.windows.count, 2)
+      app.buttons["workspace.show-brokers"].click()
+      XCTAssertTrue(connect.exists)
+      connect.click()
+      XCTAssertTrue(app.windows.element(boundBy: 2).waitForExistence(timeout: 5))
+      XCTAssertEqual(app.windows.count, 3)
+      app.typeKey("w", modifierFlags: .command)
+      XCTAssertEqual(app.windows.count, 2)
+      XCTAssertTrue(app.descendants(matching: .any)["workspace.wide.split"].exists)
     }
 
     @MainActor

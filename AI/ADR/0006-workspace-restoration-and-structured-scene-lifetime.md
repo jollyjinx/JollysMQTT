@@ -4,7 +4,7 @@ description: "Typed scene identity, versioned local workspace records, process-w
 area: "architecture"
 doc_type: "adr"
 status: "accepted"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-10-03"
 tags:
   - "workspace"
   - "restoration"
@@ -30,8 +30,10 @@ awaitable correctness boundary for persistence and release.
 
 The app declares `WindowGroup(for: WorkspaceID.self)` with a default-value
 closure. `WorkspaceID` is a lightweight UUID-backed `Codable`, `Hashable`,
-`Sendable` value. The New Window command always passes a newly generated
-identity. SwiftUI supplies the scene closure a nonoptional
+`Sendable` value. On macOS a separate singleton Brokers `Window` owns a stable workspace
+identity. Connect saves a fresh connected record and passes its new identity to
+`openWindow(value:)`; Command-N shows the Brokers window. On iPad the New Window
+command passes a newly generated identity. SwiftUI supplies the scene closure a nonoptional
 `Binding<WorkspaceID>`; the default-value closure creates a fresh identity when
 there is no restored value or a presentation value cannot be decoded.
 
@@ -79,8 +81,8 @@ lifecycle semantics.
 
 ## Consequences
 
-- Connecting transforms only the current scene record; it does not open
-  another window.
+- On macOS, Connect opens a new connected scene and leaves the broker list
+  available. On iOS/iPadOS it transforms the current scene record.
 - Two windows can show the same profile while retaining independent routing
   and selection.
 - Normal quit/relaunch restores placeholder connected state and clears the

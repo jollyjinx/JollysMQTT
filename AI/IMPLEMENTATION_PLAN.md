@@ -4,7 +4,7 @@ description: "Detailed product, architecture, persistence, testing, and staged d
 area: "architecture"
 doc_type: "implementation-plan"
 status: "reviewed"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-10-03"
 tags:
   - "swift"
   - "swiftui"
@@ -22,10 +22,10 @@ Build a native MQTT exploration and debugging client with these defining
 behaviors:
 
 1. It runs from one shared SwiftUI codebase on iPhone, iPad, and Mac.
-2. A window starts as a broker list. Connecting replaces that window's content
-   with a live broker workspace.
-3. macOS `Command-N` opens another broker-list window. iPadOS supports the
-   equivalent multi-scene workflow. Each window has independent presentation
+2. macOS keeps a Brokers window visible. Double-click or Connect opens a new
+   connection workspace. iOS/iPadOS Connect replaces the current scene content.
+3. macOS `Command-N` shows the Brokers window. iPadOS supports multiple scenes
+   that each start at the broker list. Each workspace has independent presentation
    state; windows viewing the same effective profile normally share one broker
    feed.
 4. Connected workspaces present topics as a live hierarchy, modeled after the
@@ -757,8 +757,8 @@ New windows show:
 
 On macOS:
 
-- `Command-N`: new window at broker list
-- `Command-O` or Return: connect selected broker in current window
+- `Command-N`: show the Brokers window on macOS; new broker-list scene on iPad
+- `Command-O` or Return: connect the selected broker in a new macOS workspace
 - `Command-Shift-N`: add broker
 - `Command-W`: close current window and release its feed lease
 
@@ -948,16 +948,18 @@ tool, not an authoritative telemetry database.
 
 Declare `WindowGroup(for: WorkspaceID.self)` with a default-value closure.
 `WorkspaceID` is lightweight, `Hashable`, and `Codable`; SwiftUI persists its
-binding for state restoration. Every New Window action generates a fresh ID,
+binding for state restoration. Every macOS Connect action generates a fresh ID,
 because `openWindow(value:)` brings an already presented equal value forward
 instead of creating a duplicate.
 
 Expected scene flow:
 
-1. `Command-N` calls `openWindow(value: WorkspaceID())`.
-2. The default workspace record is `.serverList`.
-3. Connect updates the record to `.connected(profileID)` and renders the
-   connected workspace in the same scene.
+1. On macOS a singleton Brokers `Window` opens at launch. `Command-N` brings
+   it forward without affecting connections.
+2. Its default workspace record is `.serverList`.
+3. macOS Connect saves a fresh `.connected(profileID)` workspace record and
+   opens it with `openWindow(value:)`. iOS/iPadOS Connect updates the current
+   record and renders the workspace in the same scene.
 4. Each window creates its own feature store and acquires a lease from the
    broker-feed registry. The same effective profile reuses an existing feed.
 5. Scene state changes are debounced, but important transitions
@@ -1180,8 +1182,9 @@ No integration test uses a real personal broker.
 ### 13.4 UI and restoration tests
 
 - new window starts at broker list
-- connecting transforms only current window
-- `Command-N` creates an independent workspace
+- macOS Connect opens a fresh workspace and preserves the broker list
+- macOS `Command-N` and Brokers navigation preserve existing connections
+- iOS/iPadOS Connect transforms the current scene
 - same profile can appear in two windows with shared feed data but independent
   selection, expansion, publish draft, and graph dashboard
 - closing one of two attached windows does not close the shared feed
@@ -1261,7 +1264,7 @@ budget before teardown, resolve that dependency-level blocker before Milestone
   behind protocols; CloudKit sync remains a later adapter.
 - Build broker list/editor.
 - Add typed `WindowGroup`, `WorkspaceID`, and `Command-N`.
-- Connect action transforms current scene into a placeholder workspace.
+- Connect opens a separate macOS workspace; iOS/iPadOS transforms its current scene.
 - Add initial state restoration tests.
 
 Exit: profiles can be managed, two windows have independent presentation state,

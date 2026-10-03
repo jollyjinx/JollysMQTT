@@ -17,6 +17,8 @@ public struct TopicOutlineRowState: Equatable, Identifiable, Sendable {
   public let retained: Bool
   public let qos: MQTTQualityOfService?
   public let latestOrdinal: UInt64?
+  public let subtreeMessageCount: UInt64
+  public let subtreeLatestReceivedAtMicroseconds: Int64?
   public let descendantValueTopicCount: Int
   public let descendantMessageCount: UInt64
   public let payloadSummary: BrokerTopicPayloadSummary?
@@ -246,6 +248,8 @@ public enum TopicOutlineFeature {
             !node.isStale && node.latest?.retained == true,
           qos: node.isStale ? nil : node.latest?.qos,
           latestOrdinal: node.isStale ? nil : node.latest?.ordinal,
+          subtreeMessageCount: node.subtreeMessageCount,
+          subtreeLatestReceivedAtMicroseconds: node.subtreeLatestReceivedAtMicroseconds,
           descendantValueTopicCount:
             node.subtreeValueTopicCount - ownValueCount,
           descendantMessageCount:

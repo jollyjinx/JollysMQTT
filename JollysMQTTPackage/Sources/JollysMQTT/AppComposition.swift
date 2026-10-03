@@ -360,6 +360,7 @@ public final class WorkspaceSceneStore {
   private let lifecycle: WorkspaceLifecycleOwner
   private var hasStarted = false
   private var hasRun = false
+  private var isPreparingConnectionWindow = false
 
   public init(
     id: WorkspaceID,
@@ -669,6 +670,32 @@ public final class WorkspaceSceneStore {
       selectedProfileID = resolvedSelection
       updateHistoryMaintenanceBrokerContext(resolvedSelection)
       await workspace.flush()
+    }
+  }
+
+  /// Persists a fresh scene before SwiftUI opens it. The broker-list scene never
+  /// acquires a feed; the new scene connects through its normal restoration path.
+  public func prepareConnectionWindow(_ ready: ConnectReadyState) async -> WorkspaceID? {
+    guard workspace.state.isLoaded,
+      !isPreparingConnectionWindow,
+      serverList.state.connectReady?.requestID == ready.requestID
+    else { return nil }
+    isPreparingConnectionWindow = true
+    defer {
+      isPreparingConnectionWindow = false
+      serverList.sendImmediately(.consumeConnectReady(requestID: ready.requestID))
+    }
+    let record = WorkspaceRecord(
+      id: WorkspaceID(),
+      route: .connected(profileID: ready.profile.id),
+      selectedProfileID: ready.profile.id
+    )
+    do {
+      try await workspaceRepository.save(record)
+      return record.id
+    } catch {
+      workspace.reportPersistenceFailure()
+      return nil
     }
   }
 

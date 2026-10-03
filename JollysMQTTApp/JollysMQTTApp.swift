@@ -7,6 +7,21 @@ struct JollysMQTTApp: App {
   private let launchFixture = JollysMQTTUITestFixture.current
 
   var body: some Scene {
+    #if os(macOS)
+      Window("Brokers", id: JollysMQTTWindows.brokerList) {
+        JollysMQTTRootView(
+          workspaceID: launchFixture?.workspaceID
+            ?? JollysMQTTWindows.brokerListWorkspaceID,
+          dependencies: launchFixture?.dependencies
+            ?? JollysMQTTAppDependencies.shared
+        )
+      }
+      .defaultSize(width: 920, height: 680)
+      .defaultLaunchBehavior(.presented)
+      .commands {
+        JollysMQTTWindowCommands()
+      }
+    #endif
     WindowGroup(for: WorkspaceID.self) { workspaceID in
       RestoredWorkspaceScene(
         restoredID: workspaceID,
@@ -16,9 +31,14 @@ struct JollysMQTTApp: App {
     } defaultValue: {
       launchFixture?.workspaceID ?? WorkspaceID()
     }
-    .commands {
-      JollysMQTTWindowCommands()
-    }
+    #if os(macOS)
+      .defaultSize(width: 1200, height: 800)
+      .defaultLaunchBehavior(.suppressed)
+    #else
+      .commands {
+        JollysMQTTWindowCommands()
+      }
+    #endif
   }
 }
 

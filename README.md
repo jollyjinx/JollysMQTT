@@ -5,9 +5,11 @@ It is designed around the topic-tree workflow of MQTT Explorer, with live
 payload inspection, JSON formatting, publishing, retained-message operations,
 history, diffs, and numeric charts.
 
-The app will support multiple independent windows on macOS and iPadOS. A new
-window begins at the broker list; connecting turns that same window into a
-broker workspace. Window contents and graph configuration are restored across
+The app supports multiple independent windows on macOS and iPadOS. On macOS,
+the Brokers window stays open: double-click a broker or choose Connect to open
+a separate connection window. Command-N shows the broker list again. On iPad,
+a new scene begins at the broker list and Connect opens its workspace in that
+scene. Window contents and graph configuration are restored across
 launches. Broker definitions synchronize through encrypted records in the
 user's private CloudKit database, while credentials remain device-only
 Keychain items and message history remains local to each device.

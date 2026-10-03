@@ -399,6 +399,13 @@ public final class WorkspaceStore {
     }
   }
 
+  func reportPersistenceFailure() {
+    WorkspaceFeature.reduce(
+      state: &state,
+      action: .persisted(.failure(WorkspaceFailure()))
+    )
+  }
+
   private func enqueueSave(
     _ record: WorkspaceRecord
   ) -> Task<Result<Void, WorkspaceFailure>, Never> {

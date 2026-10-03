@@ -4,7 +4,7 @@ description: "Repository map, architectural boundaries, validation commands, and
 area: "repo"
 doc_type: "agent-guidance"
 status: "active"
-last_reviewed: "2026-08-05"
+last_reviewed: "2026-10-03"
 tags:
   - "documentation"
   - "agents"
@@ -130,9 +130,11 @@ configuration. Do not inherit mqtt-nio's default POSIX event loop on iOS.
 
 - Follow `AI/MACOS_WORKSPACE_LAYOUT.md` for connected macOS toolbar placement,
   split-view sizing, desktop row density, and exceptional-state banners.
-- New macOS windows (`Command-N`) and new iPad scenes start at the server list.
-- Connecting transforms the current workspace; it does not implicitly create a
-  second window.
+- macOS keeps one persistent Brokers window. Double-click, Connect, and
+  `Command-O` open a fresh connection workspace; `Command-N` and the workspace
+  Brokers button show the broker list without disconnecting existing windows.
+- New iPad scenes start at the server list; iOS/iPadOS Connect transforms the
+  current workspace.
 - Each workspace has independent selection, expansion, history navigation,
   publish drafts, and graph configuration. Connection/topic/history state can
   come from a shared broker feed.

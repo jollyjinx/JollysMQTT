@@ -3,6 +3,13 @@ import JollysMQTTStorage
 import JollysMQTTTransport
 import SwiftUI
 
+public enum JollysMQTTWindows {
+  public static let brokerList = "brokers"
+  public static let brokerListWorkspaceID = WorkspaceID(
+    rawValue: UUID(uuidString: "38847444-4EBA-4BE2-83CA-DFBE2E302C29")!
+  )
+}
+
 extension FocusedValues {
   @Entry var activeServerListStore: ServerListStore?
 }
@@ -16,13 +23,25 @@ public struct JollysMQTTWindowCommands: Commands {
   public var body: some Commands {
     CommandGroup(replacing: .newItem) {
       Button {
-        openWindow(value: WorkspaceID())
+        #if os(macOS)
+          openWindow(id: JollysMQTTWindows.brokerList)
+        #else
+          openWindow(value: WorkspaceID())
+        #endif
       } label: {
-        Text(
-          "New Window",
-          bundle: #bundle,
-          comment: "Command that opens a fresh broker-list workspace."
-        )
+        #if os(macOS)
+          Text(
+            "Show Brokers",
+            bundle: #bundle,
+            comment: "Shows the persistent broker list to open another connection window."
+          )
+        #else
+          Text(
+            "New Window",
+            bundle: #bundle,
+            comment: "Command that opens a fresh broker-list workspace."
+          )
+        #endif
       }
       .keyboardShortcut("n", modifiers: .command)
     }
@@ -34,7 +53,7 @@ public struct JollysMQTTWindowCommands: Commands {
           "Connect to Selected Broker",
           bundle: #bundle,
           comment:
-            "File-menu command that connects the selected saved broker in the current workspace."
+            "Connects the selected saved broker, opening a separate workspace on macOS."
         )
       }
       .keyboardShortcut("o", modifiers: .command)
@@ -103,6 +122,7 @@ public struct JollysMQTTRootView: View {
 
 private struct WorkspaceSceneView: View {
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.openWindow) private var openWindow
   @Bindable var store: WorkspaceSceneStore
   @Bindable private var workspaceStore: WorkspaceStore
 
@@ -123,7 +143,13 @@ private struct WorkspaceSceneView: View {
     }
     .task(id: store.serverList.state.connectReady?.requestID) {
       guard let ready = store.serverList.state.connectReady else { return }
-      await store.connectCurrentWorkspace(ready)
+      #if os(macOS)
+        if let id = await store.prepareConnectionWindow(ready) {
+          openWindow(value: id)
+        }
+      #else
+        await store.connectCurrentWorkspace(ready)
+      #endif
     }
     .task(id: scenePhase) {
       #if os(iOS)
@@ -161,6 +187,7 @@ private struct WorkspaceSceneView: View {
 }
 
 private struct WorkspaceContentView: View {
+  @Environment(\.openWindow) private var openWindow
   let route: WorkspaceRoute
   let selectedTopic: String?
   let serverListStore: ServerListStore
@@ -194,7 +221,11 @@ private struct WorkspaceContentView: View {
           Task { await sceneStore.connection.reconnectAllToApply() }
         },
         onShowBrokers: {
-          Task { await sceneStore.showServerList() }
+          #if os(macOS)
+            openWindow(id: JollysMQTTWindows.brokerList)
+          #else
+            Task { await sceneStore.showServerList() }
+          #endif
         }
       )
     }
@@ -267,6 +298,7 @@ private struct ConnectedWorkspaceView: View {
         historyStore: sceneStore.history,
         publishStore: sceneStore.publishComposer
       )
+      .navigationTitle(Text(verbatim: profileName ?? "JollysMQTT"))
       .safeAreaInset(edge: .top, spacing: 0) {
         MacWorkspaceBanners(
           snapshot: snapshot,
@@ -322,12 +354,13 @@ private struct ConnectedWorkspaceView: View {
               Text(
                 "Brokers",
                 bundle: #bundle,
-                comment: "Returns a connected workspace to the broker list."
+                comment: "Shows the broker list while keeping the connection window open."
               )
             } icon: {
               Image(systemName: "server.rack")
             }
           }
+          .accessibilityIdentifier("workspace.show-brokers")
         }
       }
     }
@@ -1626,7 +1659,7 @@ private struct PayloadJSONPresentationView: View {
       .pickerStyle(.segmented)
 
       if mode == .structure {
-        LazyVStack(alignment: .leading, spacing: 4) {
+        LazyVStack(alignment: .leading, spacing: jsonRowSpacing) {
           ForEach(document.nodes) { node in
             Button {
               store.send(.selectJSONValue(node.id))
@@ -1668,6 +1701,14 @@ private struct PayloadJSONPresentationView: View {
       }
     }
   }
+
+  private var jsonRowSpacing: CGFloat {
+    #if os(macOS)
+      0
+    #else
+      4
+    #endif
+  }
 }
 
 private struct PayloadJSONNodeRow: View {
@@ -1697,7 +1738,7 @@ private struct PayloadJSONNodeRow: View {
       Spacer()
     }
     .padding(.leading, CGFloat(min(node.depth, 12)) * indentation)
-    .padding(.vertical, 4)
+    .padding(.vertical, verticalPadding)
     .frame(minHeight: minimumRowHeight)
     .contentShape(.rect)
   }
@@ -1712,9 +1753,17 @@ private struct PayloadJSONNodeRow: View {
 
   private var minimumRowHeight: CGFloat {
     #if os(macOS)
-      24
+      22
     #else
       44
+    #endif
+  }
+
+  private var verticalPadding: CGFloat {
+    #if os(macOS)
+      0
+    #else
+      4
     #endif
   }
 }
@@ -2088,6 +2137,14 @@ private struct TopicExplorerView: View {
                 sceneStore.toggleTopicExpansion(row.id)
               }
             )
+            .modifier(
+              TopicActivityHighlight(
+                messageCount: row.subtreeMessageCount,
+                latestReceivedAtMicroseconds: row.subtreeLatestReceivedAtMicroseconds,
+                isFrozen: state.isFrozen,
+                isSelected: row.isSelected
+              )
+            )
             .tag(row.id)
             .modifier(TopicOutlineListRowStyle())
           }
@@ -2131,8 +2188,9 @@ private struct TopicOutlineListStyle: ViewModifier {
   func body(content: Content) -> some View {
     #if os(macOS)
       content
-        .listStyle(.inset)
+        .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, minimumRowHeight)
+        .contentMargins(.vertical, 0, for: .scrollContent)
     #else
       content
         .listStyle(.plain)
@@ -2143,7 +2201,7 @@ private struct TopicOutlineListStyle: ViewModifier {
 
   private var minimumRowHeight: CGFloat {
     #if os(macOS)
-      24
+      22
     #else
       44
     #endif
@@ -2156,6 +2214,7 @@ private struct TopicOutlineListRowStyle: ViewModifier {
       content.listRowInsets(
         EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4)
       )
+      .listRowSeparator(.hidden)
     #else
       content.listRowInsets(
         EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
@@ -2724,6 +2783,10 @@ private struct TopicSortPicker: View {
       )
     }
     .pickerStyle(.menu)
+    #if os(macOS)
+      .labelsHidden()
+      .fixedSize()
+    #endif
   }
 }
 
@@ -2778,7 +2841,7 @@ private struct TopicOutlineRow: View {
   let onToggleExpansion: () -> Void
 
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: rowSpacing) {
       if row.allowsExpansionToggle {
         Button(action: onToggleExpansion) {
           Image(
@@ -2823,9 +2886,17 @@ private struct TopicOutlineRow: View {
     .padding(.leading, CGFloat(min(row.depth, 12)) * indentation)
   }
 
+  private var rowSpacing: CGFloat {
+    #if os(macOS)
+      3
+    #else
+      8
+    #endif
+  }
+
   private var disclosureSize: CGFloat {
     #if os(macOS)
-      20
+      16
     #else
       44
     #endif
@@ -2850,10 +2921,11 @@ private struct TopicOutlineRowContent: View {
           .lineLimit(1)
           .layoutPriority(1)
         summary
-        Spacer(minLength: 8)
-          .layoutPriority(-1)
         descendantCounts
+        Spacer(minLength: 0)
+          .layoutPriority(-1)
       }
+      .font(.system(size: 13))
       .controlSize(.small)
       .frame(minHeight: 22)
       .contentShape(.rect)
@@ -2892,7 +2964,9 @@ private struct TopicOutlineRowContent: View {
           .fontWeight(row.isSelected ? .semibold : .regular)
       }
       if row.hasValue && !row.isStale {
-        TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
+        #if !os(macOS)
+          TopicActivityIndicator(latestOrdinal: row.latestOrdinal)
+        #endif
       }
       if row.isStale {
         Label {
@@ -2937,10 +3011,18 @@ private struct TopicOutlineRowContent: View {
   private var summary: some View {
     if let summary = row.payloadSummary, !summary.display.isEmpty {
       Text(verbatim: "= \(summary.display)\(summary.isTruncated ? "…" : "")")
-        .font(.caption)
+        .font(summaryFont)
         .foregroundStyle(.primary)
         .lineLimit(1)
     }
+  }
+
+  private var summaryFont: Font {
+    #if os(macOS)
+      .system(size: 13)
+    #else
+      .caption
+    #endif
   }
 
   @ViewBuilder

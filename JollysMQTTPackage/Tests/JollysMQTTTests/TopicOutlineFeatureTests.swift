@@ -7,6 +7,37 @@ import Testing
 @Suite("Topic outline feature")
 @MainActor
 struct TopicOutlineFeatureTests {
+  @Test("Activity reaches collapsed ancestors for identical payloads and pauses with Freeze View")
+  func subtreeActivity() async throws {
+    let ingestion = makeIngestion(brokerID: UUID())
+    let epoch = ConnectionEpochID()
+    await ingestion.ingest(.outlineFixture(
+      epoch: epoch, ordinal: 1, topic: "root/branch/value", receivedAt: 10
+    ))
+    await ingestion.ingest(.outlineFixture(
+      epoch: epoch, ordinal: 2, topic: "unrelated/value", receivedAt: 10
+    ))
+    var state = TopicOutlineFeature.State()
+    TopicOutlineFeature.reduce(state: &state, action: .snapshotReceived(await ingestion.flush()))
+    let root = try #require(state.rows.first { $0.fullTopic == "root" })
+    #expect(!root.hasValue)
+    #expect(!root.isExpanded)
+    #expect(root.subtreeMessageCount == 1)
+    TopicOutlineFeature.reduce(state: &state, intent: .freezeView)
+    await ingestion.ingest(.outlineFixture(
+      epoch: epoch, ordinal: 3, topic: "root/branch/value", receivedAt: 20
+    ))
+    TopicOutlineFeature.reduce(state: &state, action: .snapshotReceived(await ingestion.flush()))
+    #expect(state.rows.first { $0.fullTopic == "root" }?.subtreeMessageCount == 1)
+    TopicOutlineFeature.reduce(state: &state, intent: .jumpToLive)
+    let updated = try #require(state.rows.first { $0.fullTopic == "root" })
+    #expect(updated.subtreeMessageCount == 2)
+    #expect(updated.subtreeLatestReceivedAtMicroseconds == 20)
+    #expect(state.rows.first { $0.fullTopic == "unrelated" }?.subtreeMessageCount == 1)
+    TopicOutlineFeature.reduce(state: &state, intent: .toggleExpansion(root.id))
+    #expect(state.rows.first { $0.fullTopic == "root/branch" }?.subtreeMessageCount == 2)
+  }
+
   @Test(
     "Selection and expansion retain exact broker-topic identity across revisions and every sort mode",
     arguments: BrokerTopicSortMode.allCases

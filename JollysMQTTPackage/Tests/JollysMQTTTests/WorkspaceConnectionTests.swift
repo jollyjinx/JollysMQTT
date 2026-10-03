@@ -9,6 +9,75 @@ import Testing
 @Suite("Workspace broker-feed composition")
 struct WorkspaceConnectionTests {
   @MainActor
+  @Test("Opening connection windows preserves the broker list and shares the broker feed")
+  func separateConnectionWindows() async throws {
+    let fixture = try await WorkspaceConnectionFixture()
+    defer { fixture.remove() }
+    let recorder = RecordingFeedFactory()
+    let registry = BrokerFeedRegistry(
+      gracePeriodSeconds: 30,
+      makeFeed: { _ in recorder.makeFeed() }
+    )
+    let dependencies = fixture.dependencies(
+      brokerFeedFactory: BrokerFeedLeaseFactory { registry.makeLease(workspaceID: $0) },
+      brokerFeedGenerationCoordinator: registry
+    )
+    let brokers = dependencies.makeSceneStore(id: WorkspaceID())
+    await brokers.start()
+    await brokers.serverList.send(.connect(fixture.profile.id))
+    let ready = try #require(brokers.serverList.state.connectReady)
+    let firstID = try #require(await brokers.prepareConnectionWindow(ready))
+    #expect(await brokers.prepareConnectionWindow(ready) == nil)
+    #expect(brokers.workspace.state.record.route == .serverList)
+    #expect(brokers.serverList.state.connectReady == nil)
+    #expect(recorder.feeds().isEmpty)
+
+    await brokers.serverList.send(.connect(fixture.profile.id))
+    let nextReady = try #require(brokers.serverList.state.connectReady)
+    let secondID = try #require(await brokers.prepareConnectionWindow(nextReady))
+    #expect(firstID != secondID)
+    let first = dependencies.makeSceneStore(id: firstID)
+    let second = dependencies.makeSceneStore(id: secondID)
+    let firstTask = Task { await first.run() }
+    let secondTask = Task { await second.run() }
+    await first.waitUntilOwned()
+    await second.waitUntilOwned()
+    #expect(first.workspace.state.record.route == .connected(profileID: fixture.profile.id))
+    #expect(second.workspace.state.record.route == .connected(profileID: fixture.profile.id))
+    #expect(await registry.leaseCount(for: fixture.profile.id) == 2)
+    #expect(recorder.feeds().count == 1)
+    firstTask.cancel()
+    await firstTask.value
+    #expect(await registry.leaseCount(for: fixture.profile.id) == 1)
+    #expect(brokers.workspace.state.record.route == .serverList)
+    secondTask.cancel()
+    await secondTask.value
+    #expect(await registry.leaseCount(for: fixture.profile.id) == 0)
+  }
+
+  @MainActor
+  @Test("A failed connection-window save leaves the broker list usable and reports the failure")
+  func connectionWindowSaveFailure() async throws {
+    let fixture = try await WorkspaceConnectionFixture()
+    defer { fixture.remove() }
+    let repository = FailingConnectionWindowRepository()
+    let dependencies = JollysMQTTAppDependencies(
+      profileRepository: fixture.profileRepository,
+      workspaceRepository: repository
+    )
+    let brokers = dependencies.makeSceneStore(id: WorkspaceID())
+    await brokers.start()
+    await brokers.serverList.send(.connect(fixture.profile.id))
+    let ready = try #require(brokers.serverList.state.connectReady)
+    #expect(await brokers.prepareConnectionWindow(ready) == nil)
+    #expect(brokers.workspace.state.persistenceError)
+    #expect(brokers.workspace.state.record.route == .serverList)
+    #expect(brokers.serverList.state.connectReady == nil)
+    await brokers.serverList.send(.connect(fixture.profile.id))
+    #expect(brokers.serverList.state.connectReady != nil)
+  }
+
+  @MainActor
   @Test("Two scene stores share the process-wide registry feed")
   func sceneStoresShareRegistryFeed() async throws {
     let fixture = try await WorkspaceConnectionFixture()
@@ -170,6 +239,15 @@ struct WorkspaceConnectionTests {
 
     #expect(first == second)
   }
+}
+
+private actor FailingConnectionWindowRepository: WorkspaceRepositoryProtocol {
+  func load(id: WorkspaceID) -> WorkspaceRecord { WorkspaceRecord(id: id) }
+  func save(_ record: WorkspaceRecord) throws {
+    if case .connected = record.route { throw WorkspaceFailure() }
+  }
+  func markClosed(id: WorkspaceID) {}
+  func pruneClosed() {}
 }
 
 private struct WorkspaceConnectionFixture {
