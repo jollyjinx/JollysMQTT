@@ -10,6 +10,7 @@ readonly CONFIGURATION="${JOLLYSMQTT_CONFIGURATION:-Official Release}"
 readonly TEAM_ID="${JOLLYSMQTT_TEAM_ID:-5V8J7476Q9}"
 readonly XCODEBUILD_BIN="${XCODEBUILD_BIN:-xcodebuild}"
 readonly VERSION_SCRIPT="${SCRIPT_DIR}/xcode_git_version.sh"
+readonly PREPARE_MACOS_ARCHIVE_SCRIPT="${SCRIPT_DIR}/prepare-macos-archive.sh"
 readonly XCODE_TOOL_PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 
 archive_only=false
@@ -135,6 +136,8 @@ command -v "${XCODEBUILD_BIN}" >/dev/null 2>&1 ||
     die "xcodebuild executable not found: ${XCODEBUILD_BIN}"
 [[ -d "${PROJECT}" ]] || die "Xcode project not found: ${PROJECT}"
 [[ -x "${VERSION_SCRIPT}" ]] || die "version script is not executable: ${VERSION_SCRIPT}"
+[[ -x "${PREPARE_MACOS_ARCHIVE_SCRIPT}" ]] ||
+    die "macOS archive preparation script is not executable: ${PREPARE_MACOS_ARCHIVE_SCRIPT}"
 [[ -n "${TEAM_ID}" ]] || die "JOLLYSMQTT_TEAM_ID must not be empty"
 
 git -C "${REPOSITORY_ROOT}" rev-parse --verify HEAD >/dev/null
@@ -275,20 +278,13 @@ archive_platform() {
     local signing_arguments=()
 
     case "${platform}" in
-        iOS)
+        iOS|macOS)
+            # Both archives must be signed so Xcode embeds the app entitlements.
+            # macOS resource-bundle signatures are handled after archiving.
             signing_arguments=(
                 CODE_SIGN_STYLE=Automatic
                 CODE_SIGN_IDENTITY="Apple Development"
             )
-            ;;
-        macOS)
-            # SwiftPM's codeless resource bundles are otherwise signed with
-            # Apple Development during the archive. Mac App Store export
-            # preserves those nested signatures while remotely signing the
-            # containing app, which causes ITMS-90284. Leave the archive
-            # unsigned so export signs the app and seals these bundles as
-            # resources.
-            signing_arguments=(CODE_SIGNING_ALLOWED=NO)
             ;;
         *)
             die "unsupported archive platform: ${platform}"
@@ -309,36 +305,6 @@ archive_platform() {
         MARKETING_VERSION="${MARKETING_VERSION}" \
         CURRENT_PROJECT_VERSION="${BUILD_VERSION}" \
         archive
-}
-
-verify_macos_resource_bundles() {
-    local archive_path="$1"
-    local app_path
-    local resource_bundle
-    local info_plist
-    local resource_bundle_count=0
-
-    app_path="$(find "${archive_path}/Products/Applications" \
-        -maxdepth 1 -type d -name '*.app' -print -quit)"
-    [[ -n "${app_path}" ]] ||
-        die "no macOS app bundle found in archive: ${archive_path}"
-
-    while IFS= read -r -d '' resource_bundle; do
-        resource_bundle_count=$((resource_bundle_count + 1))
-        info_plist="${resource_bundle}/Contents/Info.plist"
-        [[ -f "${info_plist}" ]] ||
-            die "macOS resource bundle is missing Contents/Info.plist: ${resource_bundle}"
-        if plutil -extract CFBundleExecutable raw -o - "${info_plist}" \
-            >/dev/null 2>&1; then
-            die "macOS Swift package resource bundle contains an executable and needs distribution signing: ${resource_bundle}"
-        fi
-        [[ ! -e "${resource_bundle}/Contents/_CodeSignature" ]] ||
-            die "macOS Swift package resource bundle has a nested code signature; it must be unsigned for Mac App Store export: ${resource_bundle}"
-    done < <(find "${app_path}/Contents/Resources" -maxdepth 1 \
-        -type d -name '*.bundle' -print0)
-
-    printf 'Verified %d codeless macOS resource bundle(s) have no nested signatures in %s\n' \
-        "${resource_bundle_count}" "${archive_path}"
 }
 
 verify_archive_versions() {
@@ -389,7 +355,11 @@ archive_platform macOS "${MACOS_ARCHIVE}"
 if [[ "${dry_run}" == false ]]; then
     verify_archive_versions "${IOS_ARCHIVE}"
     verify_archive_versions "${MACOS_ARCHIVE}"
-    verify_macos_resource_bundles "${MACOS_ARCHIVE}"
+fi
+
+run "${PREPARE_MACOS_ARCHIVE_SCRIPT}" "${MACOS_ARCHIVE}"
+
+if [[ "${dry_run}" == false ]]; then
     verify_source_unchanged
 fi
 

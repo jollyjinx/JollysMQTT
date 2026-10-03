@@ -4,7 +4,7 @@ description: "Clean-commit archive, versioning, signing, verification, and App S
 area: "release"
 doc_type: "release-runbook"
 status: "active"
-last_reviewed: "2026-09-30"
+last_reviewed: "2026-10-03"
 tags:
   - "testflight"
   - "app-store-connect"
@@ -40,10 +40,12 @@ environment, and official entitlements.
 - The script verifies that HEAD and the worktree did not change while
   archiving.
 - Archive and export output must remain outside the Git worktree.
-- The iOS archive uses Apple Development. The macOS archive uses Apple
-  Distribution because Xcode's Mac App Store export preserves SwiftPM
-  resource-bundle signatures; they must match the distribution certificate in
-  the embedded Mac App Store provisioning profile.
+- Both archives use Apple Development so Xcode embeds the app entitlements.
+  macOS archive preparation removes signatures only from verified codeless
+  resource bundles and re-seals the containing app with its original
+  certificate and metadata. The app must retain every entitlement, including
+  App Sandbox and outgoing network access, before either platform is uploaded.
+  Xcode's App Store export then applies distribution signing.
 - A retry for the same commit preserves previous output and selects the next
   available `-retry-N` directory. An explicit `--output-dir` remains
   non-overwriting and fails if its path already exists.
@@ -130,12 +132,44 @@ codeless resource bundles, but the macOS archive signed them with Apple
 Development. Xcode's Mac App Store export preserved their nested
 `_CodeSignature` directories while remotely signing the containing app with
 Apple Distribution, so the nested signatures did not match the Store profile.
-The release script now disables code signing for the macOS archive. Xcode's
-Mac App Store export then signs the app and seals the codeless package bundles
-as resources. Before any export, the script verifies that each package bundle
-has no executable and no nested signature; a new executable bundle needs a
-separate distribution-signing solution. The iOS archive continues to use
-Apple Development.
+
+The initial workaround disabled macOS archive signing. On 2026-10-03 both
+archives succeeded and iOS uploaded, but macOS package validation rejected the
+app because App Sandbox was absent. The unsigned archive contained no app
+entitlements; export synthesized only the application and team identifiers.
+Sandbox, outgoing network access, CloudKit, and push entitlements were all
+lost. A provisioning profile alone does not restore app entitlements; inspect
+the actual signature as described in Apple's
+[entitlements troubleshooting note](https://developer.apple.com/library/archive/technotes/tn2415/_index.html).
+
+The release script now signs both archives normally with Apple Development.
+`Tools/prepare-macos-archive.sh` validates the macOS signature and entitlements,
+checks that every package resource bundle is codeless, removes those resource
+signatures, and re-signs only the containing app with its original certificate
+and metadata. It compares all signed entitlements before and after, requires
+App Sandbox and outgoing network access, and verifies the resulting signature.
+Executable or nested-code bundles require a separate distribution-signing
+solution and are rejected before any upload. Do not use `codesign --deep` or
+disable signing for the entire archive.
+
+Xcode may use the development push environment in an Apple Development archive;
+App Store export changes it to production. CloudKit's selected environment and
+the sandbox/network entitlements must survive both steps. For local validation,
+export with a separate options plist containing `destination = export` and
+`method = app-store-connect`; the release script's generated plist deliberately
+uses `destination = upload`. Inspect the app inside the exported package with
+`codesign --display --entitlements - --xml` and `codesign --verify --strict`.
+Run those commands outside a restricted sandbox if codesign reports unavailable
+certificate authorities or an invalid entitlement blob despite a successful
+Xcode signature; the restricted inspection can give misleading results.
+
+Validation on 2026-10-03: a signed Official Release macOS archive and a local
+App Store export both succeeded. The app extracted from the exported installer
+passed strict signature verification with Apple Distribution signing, sandbox
+and network access enabled, the Production CloudKit container intact, and
+production push enabled. All three package resource bundles were unsigned and
+sealed as resources. No upload was performed during this validation; App Store
+Connect processing remains a separate release check.
 
 The shared app `Info.plist` sets `ITSAppUsesNonExemptEncryption` to `false` so
 App Store Connect does not repeat the export-compliance questionnaire for each
