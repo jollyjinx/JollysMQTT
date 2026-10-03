@@ -54,6 +54,14 @@ top-aligned when space permits. Saved geometry is clamped to an available screen
 if a display was removed. Closing charts leaves the server connection running;
 closing the server closes its companion and flushes its chart preferences.
 
+Each card's action row contains Pause/Resume, a Settings popover button, Move
+to Separate Window, and Remove. A detached chart uses its existing store and
+leaves the dashboard grid until its window closes or Return to Dashboard is
+chosen. Closing the dashboard alone leaves detached charts open; closing the
+connection closes all chart windows. Detachment and individual-window geometry
+are transient, while the chart's configuration remains part of the saved
+dashboard.
+
 Each connection keeps its own dashboard stores and borrows its existing feed;
 the chart window does not acquire another lease. Card edits and window geometry
 are saved per broker in local `broker-charts/<broker UUID>.json` records, outside

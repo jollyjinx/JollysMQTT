@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Chart Settings" : {
+      "comment" : "Title of the numeric chart settings popover."
+    },
+    "Charts in Separate Windows" : {
+      "comment" : "Dashboard placeholder when every chart has been moved to its own window."
+    },
+    "Close a chart window to return it to this dashboard." : {
+      "comment" : "Explains how to bring a detached chart back to the dashboard."
+    },
+    "Move to Separate Window" : {
+      "comment" : "Moves one chart out of the dashboard into its own window."
+    },
+    "Return to Dashboard" : {
+      "comment" : "Returns a chart from its separate window to the dashboard."
+    },
     "Time: %@" : {
       "comment" : "Timestamp of the chart sample under the pointer, or a dash when none is selected."
     },
@@ -1220,10 +1235,10 @@
       "comment" : "Help explaining local-only and CloudKit profile-sync boundaries."
     },
     "Settings" : {
-      "comment" : "Expands settings for one numeric chart card."
+      "comment" : "Opens the settings popover for one numeric chart card."
     },
     "Settings for %@" : {
-      "comment" : "Accessible and Voice Control label for one chart settings disclosure. The variable is the exact MQTT topic."
+      "comment" : "Accessible action that opens one chart's settings popover. The variable is the exact MQTT topic."
     },
     "Settings were saved, but bounded pruning could not complete." : {
       "comment" : "Settings committed but applying retention failed."

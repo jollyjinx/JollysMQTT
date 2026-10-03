@@ -521,9 +521,12 @@ public final class WorkspaceSceneStore {
       )
     }
     numericChartDashboard.onConfigurationChange = {
-      [weak workspace, weak brokerCharts] configuration in
+      [weak self, weak workspace, weak brokerCharts] configuration in
       workspace?.sendImmediately(.setNumericChartDashboard(configuration))
       brokerCharts?.saveDashboard(configuration)
+      #if os(macOS)
+        self?.chartWindow.reconcileDetachedWindows()
+      #endif
     }
   }
 

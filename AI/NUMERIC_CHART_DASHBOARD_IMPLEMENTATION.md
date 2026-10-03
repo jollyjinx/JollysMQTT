@@ -84,20 +84,34 @@ leaves the connection active; closing the server closes the companion. Fresh
 connections restore the last saved broker defaults. See
 `MACOS_WORKSPACE_LAYOUT.md` for the desktop interaction contract.
 
+The same controller owns individual macOS chart windows. Move to Separate
+Window hides that card from the dashboard grid and presents the existing card
+store in a new window; it does not remove the card, duplicate samples, or acquire
+a feed lease. Return to Dashboard and the window's close button restore the
+card to its original dashboard order. Removing a detached card closes its
+window, and closing the connection closes every chart window. Detachment is
+transient: after relaunch, all saved cards start in the dashboard. The existing
+per-broker chart settings and dashboard geometry continue to persist.
+
 ## Adaptive presentation
 
 Wide layouts pack stable-ID cards into a semantic SwiftUI `Grid`. The grid uses
 one, two, or three columns according to available width and honors automatic,
 full, half, and third spans. Compact Charts uses a vertical card list so every
 control remains reachable without hover or secondary click. Each card exposes
-Pause/Resume and Remove in its header. Its secondary controls are collapsed in
-a native Settings disclosure by default; disclosure expansion is transient UI
-state and is not persisted. Those settings cover time range, auto-scroll,
+Pause/Resume, Settings, and Remove in one header action row; macOS also includes
+Move to Separate Window or Return to Dashboard. Settings opens a native popover
+with a scrollable vertical layout and a Done button. Opening settings does not
+change the card's height. Those settings cover time range, auto-scroll,
 automatic/fixed Y range, multiplier, line/point/step style, system-safe color,
 adaptive span, clear, and move earlier/later.
 
 Each plot reserves a compact time/value readout above its graph, so selection
-never adds a tooltip over the data or changes the plot height. Native Swift
+never adds a tooltip over the data or changes the plot height. The timestamp
+and value form one group with a 24-point gap; the value uses the primary text
+color (black in light appearance). The group follows the pointer horizontally
+and clamps to the chart edges, keeping both readings nearby even on wide
+graphs. It is hidden when there is no selection. Native Swift
 Charts X selection tracks mouse hover on macOS and touch selection on iOS/iPadOS.
 The readout snaps to the nearest displayed sample and shows its local timestamp
 to milliseconds and its scaled value. A faint dashed rule and a small point

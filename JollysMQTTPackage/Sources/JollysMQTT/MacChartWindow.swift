@@ -1,18 +1,23 @@
 #if os(macOS)
   import AppKit
+  import JollysMQTTCore
   import JollysMQTTStorage
+  import Observation
   import SwiftUI
 
-  /// One independently movable companion per connection. It borrows that
-  /// workspace's dashboard and never acquires another broker-feed lease.
+  /// The dashboard and detached chart windows for one connection borrow that
+  /// workspace's dashboard and never acquire another broker-feed lease.
   @MainActor
+  @Observable
   final class MacChartWindowController: NSObject, NSWindowDelegate {
+    private(set) var detachedCardIDs: Set<NumericChartCardID> = []
     private let dashboard: NumericChartDashboardStore
     private let preferences: BrokerChartPreferencesStore
-    private weak var anchor: NSWindow?
-    private var window: NSWindow?
-    private var restoredBrokerID: UUID?
-    private var title = ""
+    @ObservationIgnored private weak var anchor: NSWindow?
+    @ObservationIgnored private var window: NSWindow?
+    @ObservationIgnored private var detachedWindows: [NumericChartCardID: NSWindow] = [:]
+    @ObservationIgnored private var restoredBrokerID: UUID?
+    @ObservationIgnored private var title = ""
 
     init(dashboard: NumericChartDashboardStore, preferences: BrokerChartPreferencesStore) {
       self.dashboard = dashboard
@@ -49,6 +54,7 @@
         chartWindow.contentMinSize = NSSize(width: 320, height: 320)
         chartWindow.contentView = NSHostingView(
           rootView: NumericChartDashboardPane(dashboard: dashboard, layout: .wide)
+            .environment(self)
         )
         let frame = Self.initialFrame(
           saved: preferences.windowFrame,
@@ -67,18 +73,100 @@
       saveFrame()
     }
 
+    func detach(_ id: NumericChartCardID) {
+      if let existing = detachedWindows[id] {
+        existing.makeKeyAndOrderFront(nil)
+        return
+      }
+      guard let anchor,
+        let card = dashboard.state.cards.first(where: { $0.id == id })
+      else { return }
+      let chartWindow = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 680, height: 420),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable],
+        backing: .buffered,
+        defer: false
+      )
+      chartWindow.isReleasedWhenClosed = false
+      chartWindow.title = card.chart.series.id.topic
+      chartWindow.identifier = NSUserInterfaceItemIdentifier("chart.window.\(id.rawValue)")
+      chartWindow.contentMinSize = NSSize(width: 320, height: 320)
+      chartWindow.contentView = NSHostingView(
+        rootView: MacDetachedChartPane(cardID: id, dashboard: dashboard)
+          .environment(self)
+      )
+      let source = window?.frame ?? anchor.frame
+      let offset = CGFloat(detachedWindows.count + 1) * 24
+      let frame = Self.initialFrame(
+        saved: ChartWindowFrame(
+          x: source.minX + offset, y: source.maxY - 420 - offset,
+          width: 680, height: 420
+        ),
+        anchor: source,
+        screens: NSScreen.screens.map(\.visibleFrame)
+      )
+      chartWindow.setFrame(frame, display: false)
+      chartWindow.delegate = self
+      detachedWindows[id] = chartWindow
+      detachedCardIDs.insert(id)
+      chartWindow.makeKeyAndOrderFront(nil)
+    }
+
+    func returnToDashboard(_ id: NumericChartCardID) {
+      closeDetachedWindow(id)
+      show()
+    }
+
+    /// Removal cancels the existing card store; a detached window must not
+    /// retain an empty presentation after that card leaves the dashboard.
+    func reconcileDetachedWindows() {
+      let currentIDs = Set(dashboard.state.cards.map(\.id))
+      for id in detachedCardIDs.subtracting(currentIDs) {
+        closeDetachedWindow(id)
+      }
+    }
+
     func close() {
       saveFrame()
+      for id in Array(detachedWindows.keys) {
+        closeDetachedWindow(id)
+      }
       window?.close()
       window?.delegate = nil
+      window?.contentView = nil
       window = nil
       anchor = nil
       restoredBrokerID = nil
     }
 
-    func windowDidMove(_ notification: Notification) { saveFrame() }
-    func windowDidResize(_ notification: Notification) { saveFrame() }
-    func windowWillClose(_ notification: Notification) { saveFrame() }
+    func windowDidMove(_ notification: Notification) {
+      if notification.object as? NSWindow === window { saveFrame() }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+      if notification.object as? NSWindow === window { saveFrame() }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+      guard let closing = notification.object as? NSWindow else { return }
+      if closing === window {
+        saveFrame()
+      } else if let id = detachedWindows.first(where: { $0.value === closing })?.key {
+        closing.delegate = nil
+        closing.contentView = nil
+        detachedWindows[id] = nil
+        detachedCardIDs.remove(id)
+        show(makeKey: false)
+      }
+    }
+
+    private func closeDetachedWindow(_ id: NumericChartCardID) {
+      let detached = detachedWindows.removeValue(forKey: id)
+      detached?.delegate = nil
+      detached?.close()
+      detached?.contentView = nil
+      detachedCardIDs.remove(id)
+    }
 
     private func saveFrame() {
       guard let frame = window?.frame else { return }
@@ -117,6 +205,23 @@
     private static func intersectionArea(_ lhs: NSRect, _ rhs: NSRect) -> Double {
       let intersection = lhs.intersection(rhs)
       return intersection.isNull ? 0 : intersection.width * intersection.height
+    }
+  }
+
+  private struct MacDetachedChartPane: View {
+    let cardID: NumericChartCardID
+    @Bindable var dashboard: NumericChartDashboardStore
+
+    var body: some View {
+      ScrollView {
+        if let card = dashboard.state.cards.first(where: { $0.id == cardID }) {
+          NumericChartCard(card: card, dashboard: dashboard)
+            .frame(maxWidth: .infinity, minHeight: 320, alignment: .top)
+            .padding(8)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .accessibilityIdentifier("detached-chart-pane")
     }
   }
 

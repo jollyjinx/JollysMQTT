@@ -124,6 +124,18 @@ struct NumericChartDashboardView: View {
   @Bindable var dashboard: NumericChartDashboardStore
   let layout: NumericChartDashboardLayout
   @State private var availableWidth: CGFloat = 1_024
+  #if os(macOS)
+    @Environment(MacChartWindowController.self) private var chartWindows
+      : MacChartWindowController?
+  #endif
+
+  private var visibleCards: [NumericChartCardConfiguration] {
+    #if os(macOS)
+      dashboard.state.cards.filter { chartWindows?.detachedCardIDs.contains($0.id) != true }
+    #else
+      dashboard.state.cards
+    #endif
+  }
 
   var body: some View {
     Group {
@@ -145,16 +157,29 @@ struct NumericChartDashboardView: View {
             comment: "Explains how to add cards to the chart dashboard."
           )
         }
+      } else if visibleCards.isEmpty {
+        ContentUnavailableView {
+          Label {
+            Text("Charts in Separate Windows", bundle: #bundle,
+              comment: "Dashboard placeholder when every chart has been moved to its own window.")
+          } icon: {
+            Image(systemName: "macwindow.on.rectangle")
+          }
+        } description: {
+          Text("Close a chart window to return it to this dashboard.", bundle: #bundle,
+            comment: "Explains how to bring a detached chart back to the dashboard.")
+        }
       } else {
         switch layout {
         case .wide:
           NumericChartWideGrid(
             dashboard: dashboard,
+            cards: visibleCards,
             availableWidth: availableWidth
           )
         case .compact:
           LazyVStack(spacing: 12) {
-            ForEach(dashboard.state.cards) { card in
+            ForEach(visibleCards) { card in
               NumericChartCard(
                 card: card,
                 dashboard: dashboard
@@ -175,11 +200,12 @@ struct NumericChartDashboardView: View {
 
 private struct NumericChartWideGrid: View {
   @Bindable var dashboard: NumericChartDashboardStore
+  let cards: [NumericChartCardConfiguration]
   let availableWidth: CGFloat
 
   var body: some View {
     let grid = NumericChartDashboardGridLayout(
-      cards: dashboard.state.cards,
+      cards: cards,
       availableWidth: availableWidth
     )
     Grid(
@@ -293,10 +319,9 @@ struct NumericChartDashboardGridLayout: Equatable {
   }
 }
 
-private struct NumericChartCard: View {
+struct NumericChartCard: View {
   let card: NumericChartCardConfiguration
   @Bindable var dashboard: NumericChartDashboardStore
-  @State private var settingsAreExpanded = false
 
   var body: some View {
     GroupBox {
@@ -309,32 +334,6 @@ private struct NumericChartCard: View {
             configuration: configuration,
             dashboard: dashboard,
             store: store
-          )
-          DisclosureGroup(
-            isExpanded: $settingsAreExpanded
-          ) {
-            NumericChartSettings(
-              card: card,
-              configuration: configuration,
-              samples: store.state.samples,
-              dashboard: dashboard,
-              store: store
-            )
-            .padding(.top, 8)
-          } label: {
-            Text(
-              "Settings",
-              bundle: #bundle,
-              comment: "Expands settings for one numeric chart card."
-            )
-          }
-          .accessibilityLabel(
-            Text(
-              "Settings for \(configuration.series.id.topic)",
-              bundle: #bundle,
-              comment:
-                "Accessible and Voice Control label for one chart settings disclosure. The variable is the exact MQTT topic."
-            )
           )
           NumericChartContent(
             card: card,
@@ -359,6 +358,11 @@ private struct NumericChartHeader: View {
   let configuration: NumericChartConfiguration
   @Bindable var dashboard: NumericChartDashboardStore
   @Bindable var store: NumericChartStore
+  @State private var settingsArePresented = false
+  #if os(macOS)
+    @Environment(MacChartWindowController.self) private var chartWindows
+      : MacChartWindowController?
+  #endif
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -424,6 +428,52 @@ private struct NumericChartHeader: View {
           )
         )
         Spacer()
+        Button {
+          settingsArePresented = true
+        } label: {
+          Label {
+            Text("Settings", bundle: #bundle,
+              comment: "Opens the settings popover for one numeric chart card.")
+          } icon: {
+            Image(systemName: "slider.horizontal.3")
+          }
+        }
+        .labelStyle(.iconOnly)
+        .help(Text("Settings", bundle: #bundle))
+        .accessibilityLabel(
+          Text("Settings for \(configuration.series.id.topic)", bundle: #bundle,
+            comment: "Accessible action that opens one chart's settings popover. The variable is the exact MQTT topic.")
+        )
+        .popover(isPresented: $settingsArePresented, arrowEdge: .top) {
+          NumericChartSettingsPopover(cardID: card.id, dashboard: dashboard)
+            .presentationCompactAdaptation(.popover)
+        }
+        #if os(macOS)
+          if let chartWindows {
+            let isDetached = chartWindows.detachedCardIDs.contains(card.id)
+            let windowAction = isDetached
+              ? LocalizedStringResource("Return to Dashboard", bundle: #bundle,
+                comment: "Returns a chart from its separate window to the dashboard.")
+              : LocalizedStringResource("Move to Separate Window", bundle: #bundle,
+                comment: "Moves one chart out of the dashboard into its own window.")
+            Button {
+              if isDetached {
+                chartWindows.returnToDashboard(card.id)
+              } else {
+                chartWindows.detach(card.id)
+              }
+            } label: {
+              Label {
+                Text(windowAction)
+              } icon: {
+                Image(systemName: isDetached ? "arrow.down.left.square" : "arrow.up.right.square")
+              }
+            }
+            .labelStyle(.iconOnly)
+            .help(Text(windowAction))
+            .accessibilityIdentifier("chart.window.\(card.id.rawValue)")
+          }
+        #endif
         Button(role: .destructive) {
           dashboard.send(.remove(card.id))
         } label: {
@@ -437,6 +487,8 @@ private struct NumericChartHeader: View {
             Image(systemName: "xmark")
           }
         }
+        .labelStyle(.iconOnly)
+        .help(Text("Remove Chart", bundle: #bundle))
         .accessibilityLabel(
           Text(
             "Remove chart for \(configuration.series.id.topic)",
@@ -450,6 +502,44 @@ private struct NumericChartHeader: View {
   }
 }
 
+private struct NumericChartSettingsPopover: View {
+  let cardID: NumericChartCardID
+  @Bindable var dashboard: NumericChartDashboardStore
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      HStack {
+        Text("Chart Settings", bundle: #bundle,
+          comment: "Title of the numeric chart settings popover.")
+          .font(.headline)
+        Spacer()
+        Button {
+          dismiss()
+        } label: {
+          Text("Done", bundle: #bundle,
+            comment: "Closes the chart settings popover.")
+        }
+      }
+      ScrollView {
+        if let card = dashboard.state.cards.first(where: { $0.id == cardID }),
+          let store = dashboard.cardStore(for: cardID),
+          let configuration = store.state.configuration
+        {
+          NumericChartSettings(
+            card: card, configuration: configuration, samples: store.state.samples,
+            dashboard: dashboard, store: store
+          )
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+      .frame(maxHeight: 440)
+    }
+    .padding(16)
+    .frame(width: 320)
+  }
+}
+
 private struct NumericChartSettings: View {
   let card: NumericChartCardConfiguration
   let configuration: NumericChartConfiguration
@@ -458,13 +548,8 @@ private struct NumericChartSettings: View {
   @Bindable var store: NumericChartStore
 
   var body: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: 16) {
-        controls
-      }
-      VStack(alignment: .leading, spacing: 10) {
-        controls
-      }
+    VStack(alignment: .leading, spacing: 14) {
+      controls
     }
   }
 
@@ -1018,14 +1103,12 @@ private struct NumericChartPlot: View {
   let presentationStyle: NumericChartPresentationStyle
   let color: NumericChartColor
   @State private var selectedDate: Date?
+  @ScaledMetric(relativeTo: .caption) private var readoutHeight = 18
 
   var body: some View {
-    let selectedSample = selectedSample
-    VStack(spacing: 6) {
-      NumericChartReadout(sample: selectedSample)
-      plot(selectedSample: selectedSample)
-        .frame(minHeight: 180)
-    }
+    plot(selectedSample: selectedSample)
+      .frame(minHeight: 180)
+      .padding(.top, readoutHeight + 10)
   }
 
   private func plot(selectedSample: NumericChartSample?) -> some View {
@@ -1081,6 +1164,20 @@ private struct NumericChartPlot: View {
     .chartXScale(domain: dateDomain)
     .chartYScale(domain: yDomain)
     .chartXSelection(value: $selectedDate)
+    .chartOverlay { proxy in
+      GeometryReader { geometry in
+        if let selectedDate, let plotFrame = proxy.plotFrame,
+          let selectedX = proxy.position(forX: selectedDate)
+        {
+          NumericChartReadoutLayout(anchorX: geometry[plotFrame].minX + selectedX) {
+            NumericChartReadout(sample: selectedSample)
+          }
+          .frame(height: readoutHeight)
+          .offset(y: -readoutHeight - 10)
+        }
+      }
+      .allowsHitTesting(false)
+    }
     .onHover { isHovering in
       if !isHovering { selectedDate = nil }
     }
@@ -1116,6 +1213,36 @@ private struct NumericChartPlot: View {
   }
 }
 
+/// Keeps the readout near the pointer while fitting it inside the chart's edges.
+private struct NumericChartReadoutLayout: Layout {
+  let anchorX: CGFloat
+
+  func sizeThatFits(
+    proposal: ProposedViewSize,
+    subviews: Subviews,
+    cache: inout ()
+  ) -> CGSize {
+    let size = subviews.first?.sizeThatFits(proposal) ?? .zero
+    return CGSize(width: proposal.width ?? size.width, height: proposal.height ?? size.height)
+  }
+
+  func placeSubviews(
+    in bounds: CGRect,
+    proposal: ProposedViewSize,
+    subviews: Subviews,
+    cache: inout ()
+  ) {
+    guard let readout = subviews.first else { return }
+    let width = min(readout.sizeThatFits(.unspecified).width, bounds.width)
+    let leading = min(max(0, anchorX - width / 2), bounds.width - width)
+    readout.place(
+      at: CGPoint(x: bounds.minX + leading, y: bounds.midY),
+      anchor: .leading,
+      proposal: ProposedViewSize(width: width, height: bounds.height)
+    )
+  }
+}
+
 private struct NumericChartReadout: View {
   let sample: NumericChartSample?
 
@@ -1129,22 +1256,23 @@ private struct NumericChartReadout: View {
       $0.value.formatted(.number.precision(.significantDigits(1...12)))
     } ?? "—"
 
-    HStack(spacing: 12) {
+    HStack(spacing: 24) {
       Text(
         "Time: \(timestamp)",
         bundle: #bundle,
         comment: "Timestamp of the chart sample under the pointer, or a dash when none is selected."
       )
-      Spacer(minLength: 0)
+      .foregroundStyle(.secondary)
       Text(
         "Value: \(value)",
         bundle: #bundle,
         comment: "Scaled value of the chart sample under the pointer, or a dash when none is selected."
       )
+      .foregroundStyle(Color.primary)
+      .fontWeight(.medium)
     }
     .font(.caption)
     .monospacedDigit()
-    .foregroundStyle(.secondary)
     .lineLimit(1)
     .minimumScaleFactor(0.75)
     .accessibilityElement(children: .combine)
