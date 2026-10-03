@@ -4,7 +4,7 @@ description: "Build variants, recovery behavior, development schema, determinist
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-09-30"
+last_reviewed: "2026-10-03"
 tags:
   - "cloudkit"
   - "provisioning"
@@ -87,6 +87,89 @@ validation, despite logging the same cached-credential lookup warning for
 `pst@estos.de` (missing `Xcode-Token`); that warning was non-fatal for this
 retry. Package validation rejected the iOS app for missing icon metadata and
 sizes. No successful TestFlight upload is recorded yet.
+
+## 2026-10-03 distributed macOS sync failure
+
+The installed `/Applications/JollysMQTT.app`, version `0.1.0`, build
+`20261003.082220.3`, repeatedly displays the generic profile-sync failure.
+Read-only inspection of the installed app and its unified logs established:
+
+- Strict signature verification passes outside the filesystem sandbox.
+- The app has App Sandbox, outgoing-network access, Production CloudKit,
+  `iCloud.eu.jinx.jollymqtt`, and production push entitlements. Its signature
+  also contains `beta-reports-active`.
+- The CloudKit daemon approves access to the expected Production container
+  and successfully saves the `EncryptedBrokerProfiles` zone.
+- Each of the three profile-record saves fails. The daemon reports
+  `Syntax error in request`; the app receives `CKErrorDomain` code 2
+  (`partialFailure`). The per-record descriptions are privacy-redacted.
+- The adapter currently reduces this partial failure to `internalFailure`,
+  producing the generic banner and Retry action. That banner alone cannot
+  distinguish a schema error from other CloudKit failures.
+
+This rules out absent app entitlements and failure to reach the container for
+the observed run. After the user signed in, CloudKit Console inspection of
+team `5V8J7476Q9`, container `iCloud.eu.jinx.jollymqtt`, confirmed that **both
+Development and Production contain only the built-in `Users` record type**.
+`EncryptedBrokerProfile` is absent in both environments. This confirms the
+missing Production schema that prevents profile creation; successful sync
+after deployment remains to be verified. No `cktool` management token is
+configured.
+
+The required additive schema change is:
+
+| Item | Required value |
+|---|---|
+| New record type | `EncryptedBrokerProfile` |
+| New application field | `profilePayload` |
+| Field type | **Encrypted Bytes**, not ordinary Bytes |
+| Application-field indexes | none; encrypted fields cannot be indexed |
+| Record storage | existing private `EncryptedBrokerProfiles` zone |
+
+The codec already writes `Data` to `CKRecord.encryptedValues["profilePayload"]`.
+Create the type and field in Development, inspect the resulting schema, and
+review the deployment diff before promoting it. Apple's
+[encrypted-field instructions](https://developer.apple.com/documentation/cloudkit/encrypting-user-data)
+require the encrypted field type and prohibit converting an existing ordinary
+field into an encrypted field. No public-database records, real test profile,
+zone reset, or deletion is needed to prepare the schema.
+
+After explicit user authorization, Development now contains the record type
+with exactly one application field, `profilePayload ENCRYPTED BYTES`, and no
+indexes. All ten `CloudKitProfileRecordCodecTests` passed locally. The
+Production deployment preview confirms the new type and field, while leaving
+the existing `Users` type unchanged. Deployment makes the type and field a
+permanent part of the Production schema; it does not copy Development records.
+
+CloudKit Console gives new types default public-database grants: `_world`
+Read, `_icloud` Create, and `_creator` Write. These roles govern the public
+database and do not expose the app's private records. With separate explicit
+user authorization, all three grants were removed from the new type. The
+existing `Users` type and its grants were preserved. The final deployment
+diff contained only the new type's six standard metadata fields and
+`profilePayload ENCRYPTED BYTES`, with no grants or indexes.
+
+The user explicitly authorized Production deployment, and CloudKit Console
+confirmed **Changes Deployed — The schema is deployed to Production** on
+2026-10-03. This supersedes the earlier pending schema-creation/promotion
+status; it does not establish two-device acceptance. The UI automation
+connection to the installed app failed, so the user was asked to press
+**Retry iCloud Sync** for the post-deployment verification. At this point,
+successful profile upload and another device's fetch remain unverified.
+
+App Store distribution does not deploy the CloudKit schema.
+See Apple's [schema deployment instructions](https://developer.apple.com/documentation/CloudKit/deploying-an-icloud-container-s-schema).
+Establish and validate it in Development before an authorized release operator
+reviews and deploys it to Production. Then retry
+sync in this same installed build and confirm both upload and another device's
+fetch. Do not delete the local replica or reset the CloudKit zone to investigate
+this error.
+
+Run `codesign` inspection outside the restricted filesystem sandbox when it
+reports an invalid entitlement blob: this app produced that misleading warning
+inside the sandbox but passed verification with all expected entitlements
+outside it. No broker endpoints, profile contents, credentials, or record UUIDs
+are retained in this acceptance note.
 
 ## Build families
 
@@ -187,8 +270,10 @@ availability, history, payloads, and workspace state are absent.
 
 Automated codec tests pass for the schema allow-list, encrypted-only values,
 UUID-only record names, v1-to-v2 migration, tombstones, conflict bases, and
-absence of credential/history/workspace keys. Actual Development schema
-creation and inspection in CloudKit Dashboard is **PENDING**.
+absence of credential/history/workspace keys. Development schema creation and
+inspection in CloudKit Console passed on 2026-10-03, followed by the explicitly
+authorized Production deployment recorded above. Signed Development writes
+and the full two-device checks below remain pending.
 
 ### Local deterministic validation
 
@@ -269,7 +354,10 @@ For each human run, record:
 
 ## Production release gate
 
-Production promotion remains blocked until all of the following are complete:
+The initial schema was deployed on 2026-10-03 to repair the distributed app,
+with explicit user authorization. That deployment does not complete the full
+release acceptance checklist below. For later schema changes, establish these
+checks before promotion:
 
 - Development schema inspection passes and evidence is retained.
 - Every two-device scenario above passes on the release candidate.

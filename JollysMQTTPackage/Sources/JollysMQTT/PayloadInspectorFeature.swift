@@ -294,8 +294,14 @@ public enum PayloadInspectorFeature {
       state.inspection = inspection
       state.isInspecting = false
       if case .json(let document) = inspection.presentation {
-        state.selectedJSONPointer = .root
-        state.selectedJSONValueText = document.formattedText
+        let pointer = state.selectedJSONPointer.flatMap { selected in
+          document.nodes.contains(where: { $0.id == selected }) ? selected : nil
+        } ?? .root
+        state.selectedJSONPointer = pointer
+        state.selectedJSONValueText = document.formattedValue(at: pointer)
+      } else {
+        state.selectedJSONPointer = nil
+        state.selectedJSONValueText = nil
       }
     case .copyFinished(let outcome):
       state.copyOutcome = outcome

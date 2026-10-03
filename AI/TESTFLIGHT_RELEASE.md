@@ -97,6 +97,18 @@ profile cannot satisfy those entitlements. See
 [CLOUDKIT_PROVISIONING_ACCEPTANCE.md](CLOUDKIT_PROVISIONING_ACCEPTANCE.md) for
 the current signed-release gate.
 
+Before distributing a build that changes synced records, verify the schema in
+the **Production** environment of `iCloud.eu.jinx.jollymqtt`. For the current
+codec, it must contain `EncryptedBrokerProfile.profilePayload` of type
+**Encrypted Bytes**, with no application-field indexes. A successful archive,
+upload, or custom-zone creation does not prove that the record schema exists.
+The first distributed macOS build failed every profile upload because both
+environments contained only `Users`; the required schema was created and
+deployed with explicit user authorization on 2026-10-03. See the incident
+evidence in `CLOUDKIT_PROVISIONING_ACCEPTANCE.md` and verify actual sync after
+deployment. No new application binary is needed for a missing-schema repair
+when the installed app already uses that exact record type and field.
+
 Before exporting or uploading, create an App Store Connect app record for the
 exact bundle ID `eu.jinx.jollymqtt`. The Developer portal App ID and iCloud
 container do not create this App Store Connect record. If shipping both iOS
