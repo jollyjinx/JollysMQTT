@@ -902,6 +902,115 @@ struct HistoryFeatureTests {
   }
 
   @MainActor
+  @Test("Collapsed history ignores busy-topic refresh work and opens with only the latest context")
+  func collapsedHistoryIsIdle() async {
+    let brokerID = UUID()
+    let epoch = ConnectionEpochID()
+    let repository = FixedHistoryRepository(page: HistoryPage(messages: [
+      storedMessage(durableOrder: 1, epoch: epoch, ordinal: 1, payload: Data("baseline".utf8))
+    ], nextCursor: nil))
+    let comparer = RecordingHistoryComparer()
+    let store = HistoryStore(
+      repositories: .init { _ in repository }, comparer: comparer,
+      clipboard: HistoryRecordingClipboard()
+    )
+    let initialState = store.state
+    #expect(!store.isExpanded)
+    for ordinal in 2...1_001 {
+      store.updateContext(HistoryContext(
+        brokerID: brokerID, historySourceID: "source-a",
+        current: payloadMessage(brokerID: brokerID, epoch: epoch,
+          ordinal: UInt64(ordinal), payload: Data("\(ordinal)".utf8))
+      ))
+    }
+    store.reload()
+    store.send(.loadOlder)
+    #expect(store.state == initialState)
+    #expect(await repository.requests().isEmpty)
+    #expect(await comparer.requests().isEmpty)
+
+    store.setExpanded(true)
+    await waitUntil { store.state.comparison != nil }
+    #expect(store.state.context?.current.id.ordinal == 1_001)
+    #expect(await repository.requests().count == 1)
+    #expect(await comparer.requests().count == 1)
+
+    store.setExpanded(false)
+    #expect(store.state.rows.isEmpty)
+    #expect(store.state.comparison == nil)
+    store.updateContext(HistoryContext(
+      brokerID: brokerID, historySourceID: "source-b",
+      current: payloadMessage(brokerID: brokerID, epoch: epoch,
+        ordinal: 1_002, payload: Data("new source".utf8))
+    ))
+    store.reload()
+    #expect(await repository.requests().count == 1)
+    #expect(await comparer.requests().count == 1)
+    store.setExpanded(true)
+    await waitUntil { store.state.comparison != nil }
+    #expect(store.state.context?.historySourceID == "source-b")
+    #expect(await repository.requests().last?.historySourceID == "source-b")
+    #expect(await repository.requests().count == 2)
+
+    store.setExpanded(false)
+    store.updateContext(nil)
+    store.setExpanded(true)
+    #expect(store.state.context == nil)
+    #expect(await repository.requests().count == 2)
+  }
+
+  @MainActor
+  @Test("Collapsing cancels a pending history page", .timeLimit(.minutes(1)))
+  func collapseCancelsPage() async {
+    let brokerID = UUID()
+    let epoch = ConnectionEpochID()
+    let gate = HistoryWorkGate()
+    let repository = SuspendedHistoryRepository(gate: gate, result: HistoryPage(messages: [
+      storedMessage(durableOrder: 1, epoch: epoch, ordinal: 1, payload: Data("old".utf8))
+    ], nextCursor: nil))
+    let comparer = RecordingHistoryComparer()
+    let store = HistoryStore(repositories: .init { _ in repository }, comparer: comparer)
+    store.updateContext(HistoryContext(
+      brokerID: brokerID, historySourceID: "source-a",
+      current: payloadMessage(brokerID: brokerID, epoch: epoch, ordinal: 2, payload: Data("live".utf8))
+    ))
+    store.setExpanded(true)
+    await gate.waitUntilEntered()
+    store.setExpanded(false)
+    await gate.waitUntilCancelled()
+    await gate.finish()
+    #expect(!store.state.isLoading)
+    #expect(store.state.rows.isEmpty)
+    #expect(store.state.context == nil)
+    #expect(await comparer.requests().isEmpty)
+  }
+
+  @MainActor
+  @Test("Collapsing cancels a pending payload comparison", .timeLimit(.minutes(1)))
+  func collapseCancelsComparison() async {
+    let brokerID = UUID()
+    let epoch = ConnectionEpochID()
+    let repository = FixedHistoryRepository(page: HistoryPage(messages: [
+      storedMessage(durableOrder: 1, epoch: epoch, ordinal: 1, payload: Data("old".utf8))
+    ], nextCursor: nil))
+    let gate = HistoryWorkGate()
+    let comparer = GatedHistoryComparer(gate: gate)
+    let store = HistoryStore(repositories: .init { _ in repository }, comparer: comparer)
+    store.updateContext(HistoryContext(
+      brokerID: brokerID, historySourceID: "source-a",
+      current: payloadMessage(brokerID: brokerID, epoch: epoch, ordinal: 2, payload: Data("live".utf8))
+    ))
+    store.setExpanded(true)
+    await gate.waitUntilEntered()
+    store.setExpanded(false)
+    await gate.waitUntilCancelled()
+    await gate.finish()
+    #expect(store.state.comparison == nil)
+    #expect(store.state.rows.isEmpty)
+    #expect(store.state.context == nil)
+  }
+
+  @MainActor
   @Test("The store loads a repository page and compares it asynchronously")
   func storeLoadsAndCompares() async {
     let brokerID = UUID()
@@ -932,6 +1041,7 @@ struct HistoryFeatureTests {
       clipboard: HistoryRecordingClipboard()
     )
 
+    store.setExpanded(true)
     store.updateContext(
       HistoryContext(
         brokerID: brokerID,
@@ -981,6 +1091,7 @@ struct HistoryFeatureTests {
       repositories: BrokerHistoryRepositoryProvider { _ in repository },
       clipboard: clipboard
     )
+    store.setExpanded(true)
     store.updateContext(
       HistoryContext(
         brokerID: brokerID,
@@ -1043,6 +1154,7 @@ struct HistoryFeatureTests {
       clipboard: HistoryRecordingClipboard()
     )
 
+    store.setExpanded(true)
     store.updateContext(context)
     for _ in 0..<10_000 {
       if await comparer.requestCount() == 1 {
@@ -1155,6 +1267,67 @@ private actor FixedHistoryRepository: BrokerHistoryReading {
 
   func requests() -> [HistoryPageRequest] {
     recordedRequests
+  }
+}
+
+private actor HistoryWorkGate {
+  private var pending: CheckedContinuation<Void, Never>?
+  private var enteredWaiter: CheckedContinuation<Void, Never>?
+  private var cancelledWaiter: CheckedContinuation<Void, Never>?
+  private var isCancelled = false
+
+  func suspend() async {
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        pending = continuation
+        enteredWaiter?.resume()
+        enteredWaiter = nil
+      }
+    } onCancel: {
+      Task { await self.recordCancellation() }
+    }
+  }
+
+  func waitUntilEntered() async {
+    guard pending == nil else { return }
+    await withCheckedContinuation { enteredWaiter = $0 }
+  }
+
+  func waitUntilCancelled() async {
+    guard !isCancelled else { return }
+    await withCheckedContinuation { cancelledWaiter = $0 }
+  }
+
+  private func recordCancellation() {
+    isCancelled = true
+    cancelledWaiter?.resume()
+    cancelledWaiter = nil
+  }
+
+  func finish() {
+    pending?.resume()
+    pending = nil
+  }
+}
+
+private struct SuspendedHistoryRepository: BrokerHistoryReading {
+  let gate: HistoryWorkGate
+  let result: HistoryPage
+
+  func page(_ request: HistoryPageRequest) async throws -> HistoryPage {
+    await gate.suspend()
+    return result
+  }
+}
+
+private struct GatedHistoryComparer: PayloadComparing {
+  let gate: HistoryWorkGate
+
+  func compare(
+    current: PayloadComparisonOperand, baseline: PayloadComparisonOperand
+  ) async -> PayloadComparison {
+    await gate.suspend()
+    return await PayloadComparisonEngine().compare(current: current, baseline: baseline)
   }
 }
 

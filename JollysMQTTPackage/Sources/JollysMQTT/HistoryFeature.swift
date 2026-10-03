@@ -577,7 +577,11 @@ private actor EmptyBrokerHistoryMaintenance:
 @Observable
 public final class HistoryStore {
   public private(set) var state: HistoryFeature.State
+  public private(set) var isExpanded = false
 
+  // Collapsed history retains only the newest input, without invalidating UI
+  // state or starting database queries / payload comparisons for every update.
+  @ObservationIgnored private var latestContext: HistoryContext?
   private let repositories: BrokerHistoryRepositoryProvider
   private let comparer: any PayloadComparing
   private let clipboard: any PayloadClipboardWriting
@@ -600,13 +604,33 @@ public final class HistoryStore {
     send(.contextChanged(context))
   }
 
+  public func setExpanded(_ isExpanded: Bool) {
+    guard self.isExpanded != isExpanded else { return }
+    self.isExpanded = isExpanded
+    if isExpanded {
+      send(.contextChanged(latestContext))
+    } else {
+      pageTask?.cancel()
+      pageTask = nil
+      comparisonTask?.cancel()
+      comparisonTask = nil
+      // Invalidate pending results and release rows and comparison payloads.
+      // Reopening starts at the newest page for the latest selected topic.
+      _ = HistoryFeature.reduce(state: &state, intent: .contextChanged(nil))
+    }
+  }
+
   public func reload() {
-    guard let context = state.context else { return }
+    guard isExpanded, let context = latestContext else { return }
     send(.contextChanged(nil))
     send(.contextChanged(context))
   }
 
   public func send(_ intent: HistoryFeature.Intent) {
+    if case .contextChanged(let context) = intent {
+      latestContext = context
+    }
+    guard isExpanded else { return }
     if case .contextChanged(let context) = intent {
       if state.context?.scope != context?.scope {
         pageTask?.cancel()
@@ -631,6 +655,7 @@ public final class HistoryStore {
       guard let brokerID = state.context?.brokerID else { return }
       let repository = repositories.repository(for: brokerID)
       pageTask = Task { [weak self] in
+        guard !Task.isCancelled else { return }
         do {
           let page = try await repository.page(request)
           guard !Task.isCancelled, let self else { return }
@@ -657,6 +682,7 @@ public final class HistoryStore {
     case .compare(let request):
       let comparer = comparer
       comparisonTask = Task { [weak self] in
+        guard !Task.isCancelled else { return }
         let comparison = await comparer.compare(
           current: request.current,
           baseline: request.baseline

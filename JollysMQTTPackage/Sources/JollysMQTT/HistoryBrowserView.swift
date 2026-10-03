@@ -7,34 +7,25 @@ struct HistoryBrowserView: View {
   @Bindable var maintenanceStore: HistoryMaintenanceStore
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    DisclosureGroup(
+      isExpanded: Binding(
+        get: { store.isExpanded },
+        set: { store.setExpanded($0) }
+      )
+    ) {
+      if store.isExpanded {
+        HistoryBrowserContent(store: store, maintenanceStore: maintenanceStore)
+      }
+    } label: {
       Text(
         "History",
         bundle: #bundle,
         comment: "Heading for durable MQTT payload history."
       )
       .font(.headline)
-
-      if store.state.context == nil {
-        Text(
-          "History becomes available for the current value of a connected topic.",
-          bundle: #bundle,
-          comment: "History placeholder when no current MQTT topic is selected."
-        )
-        .foregroundStyle(.secondary)
-      } else {
-        HistoryPageControls(
-          store: store,
-          maintenanceStore: maintenanceStore
-        )
-        HistoryPageContent(store: store)
-        if let comparison = store.state.comparison {
-          PayloadComparisonView(comparison: comparison)
-        }
-      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("history.disclosure")
     .sheet(
       isPresented: Binding(
         get: { maintenanceStore.state.isPresented },
@@ -43,6 +34,32 @@ struct HistoryBrowserView: View {
     ) {
       HistoryMaintenanceView(store: maintenanceStore)
     }
+  }
+}
+
+private struct HistoryBrowserContent: View {
+  @Bindable var store: HistoryStore
+  @Bindable var maintenanceStore: HistoryMaintenanceStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      if store.state.context == nil {
+        Text(
+          "History becomes available for the current value of a connected topic.",
+          bundle: #bundle,
+          comment: "History placeholder when no current MQTT topic is selected."
+        )
+        .foregroundStyle(.secondary)
+      } else {
+        HistoryPageControls(store: store, maintenanceStore: maintenanceStore)
+        HistoryPageContent(store: store)
+        if let comparison = store.state.comparison {
+          PayloadComparisonView(comparison: comparison)
+        }
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("history.content")
   }
 }
 

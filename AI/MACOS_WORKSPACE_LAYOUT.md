@@ -107,6 +107,15 @@ live in a Retained Values menu; confirmation still explains the exact MQTT
 semantics and destructive scope, and active or completed operation feedback
 appears inline only while it is relevant.
 
+History is a native disclosure section, collapsed by default in each workspace
+on every platform. Expanding it loads the latest selected topic's history page
+and enables payload comparisons. Collapsing cancels page/comparison tasks,
+invalidates their pending results, and releases the displayed history state.
+While collapsed, the store retains only the latest context without observable
+state updates, database queries, or diff generation; reopening starts at the
+latest page. This controls history browsing only: broker ingestion, durable
+message recording, retention, and independent chart cards keep running.
+
 ## Broker profile editor
 
 The shared profile form explicitly uses the grouped form style on macOS so it
