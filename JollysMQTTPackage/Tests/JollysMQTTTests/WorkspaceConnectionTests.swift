@@ -9,6 +9,60 @@ import Testing
 @Suite("Workspace broker-feed composition")
 struct WorkspaceConnectionTests {
   @MainActor
+  @Test("Fresh connections restore broker charts and geometry after closing the original workspace")
+  func brokerChartsSurviveNewConnection() async throws {
+    let fixture = try await WorkspaceConnectionFixture()
+    defer { fixture.remove() }
+    let chartDirectory = fixture.directory.appending(path: "broker-charts")
+    func dependencies() -> JollysMQTTAppDependencies {
+      JollysMQTTAppDependencies(
+        profileRepository: fixture.profileRepository,
+        workspaceRepository: fixture.workspaceRepository,
+        brokerChartRepository: LocalBrokerChartRepository(directoryURL: chartDirectory)
+      )
+    }
+    let original = dependencies().makeSceneStore(id: WorkspaceID())
+    await original.start()
+    await original.connectCurrentWorkspace(fixture.connectReady(requestID: 1))
+    let series = NumericChartSeries(
+      id: NumericChartSeriesID(
+        brokerID: fixture.profile.id, topic: "device/metrics",
+        jsonPointer: PayloadJSONPointer(rawValue: "/temperature")
+      ),
+      conversion: NumericChartValueConversion(kind: .number, multiplier: 0.1)
+    )
+    original.pinNumericChart(series)
+    let cardID = try #require(original.numericChartDashboard.state.cards.first?.id)
+    original.numericChartDashboard.send(.setColor(cardID, .orange))
+    original.numericChartDashboard.cardStore(for: cardID)?.send(.setPaused(true))
+    let frame = ChartWindowFrame(x: 1400, y: 200, width: 720, height: 600)
+    original.brokerCharts.saveWindowFrame(frame)
+    let lifetime = Task { await original.run() }
+    await original.waitUntilOwned()
+    lifetime.cancel()
+    await lifetime.value
+
+    // A different repository and workspace model a later connection/app launch.
+    let nextDependencies = dependencies()
+    let brokers = nextDependencies.makeSceneStore(id: WorkspaceID())
+    await brokers.start()
+    await brokers.serverList.send(.connect(fixture.profile.id))
+    let ready = try #require(brokers.serverList.state.connectReady)
+    let nextID = try #require(await brokers.prepareConnectionWindow(ready))
+    let next = nextDependencies.makeSceneStore(id: nextID)
+    await next.start()
+    #expect(next.numericChartDashboard.state.configuration == original.numericChartDashboard.state.configuration)
+    #expect(next.brokerCharts.windowFrame == frame)
+
+    // Removing the final card is an explicit empty preference, never a missing record.
+    next.numericChartDashboard.send(.remove(cardID))
+    await next.brokerCharts.flush()
+    let reopened = dependencies().makeSceneStore(id: original.workspace.state.record.id)
+    await reopened.start()
+    #expect(reopened.numericChartDashboard.state.cards.isEmpty)
+  }
+
+  @MainActor
   @Test("Opening connection windows preserves the broker list and shares the broker feed")
   func separateConnectionWindows() async throws {
     let fixture = try await WorkspaceConnectionFixture()

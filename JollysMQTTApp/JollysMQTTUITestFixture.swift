@@ -20,10 +20,11 @@
 
     static var current: Self? {
       let arguments = ProcessInfo.processInfo.arguments
+      let preview = ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_PREVIEW"]
       let launchesConnectedWorkspace =
-        arguments.contains("--ui-testing-connected")
+        arguments.contains("--ui-testing-connected") || preview == "connected"
       let launchesBrokerList =
-        arguments.contains("--ui-testing-broker-list")
+        arguments.contains("--ui-testing-broker-list") || preview == "brokers"
       guard launchesConnectedWorkspace || launchesBrokerList else {
         return nil
       }
@@ -97,11 +98,19 @@
               "JOLLYSMQTT_UI_WORKSPACE_FILE"
             ].map { URL(fileURLWithPath: $0) }
           ),
+          brokerChartRepository: chartRepository(),
           brokerFeedFactory: BrokerFeedLeaseFactory { _ in
             JollysMQTTestFeed()
           }
         )
       )
+    }
+
+    private static func chartRepository() -> any BrokerChartRepositoryProtocol {
+      if let directory = ProcessInfo.processInfo.environment["JOLLYSMQTT_UI_CHART_DIRECTORY"] {
+        return LocalBrokerChartRepository(directoryURL: URL(fileURLWithPath: directory))
+      }
+      return MemoryBrokerChartRepository()
     }
   }
 

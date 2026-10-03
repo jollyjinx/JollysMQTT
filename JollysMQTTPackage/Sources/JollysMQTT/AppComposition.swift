@@ -254,6 +254,9 @@ public struct JollysMQTTAppDependencies: Sendable {
           directoryHint: .isDirectory
         )
       ),
+      brokerChartRepository: LocalBrokerChartRepository(
+        directoryURL: root.appending(path: "broker-charts", directoryHint: .isDirectory)
+      ),
       brokerFeedFactory: .init { workspaceID in
         registry.makeLease(workspaceID: workspaceID)
       },
@@ -273,6 +276,7 @@ public struct JollysMQTTAppDependencies: Sendable {
   public let profileSynchronizingRepository: (any ProfileSynchronizingRepositoryProtocol)?
   public let credentialRepository: any CredentialRepositoryProtocol
   public let workspaceRepository: any WorkspaceRepositoryProtocol
+  public let brokerChartRepository: any BrokerChartRepositoryProtocol
   public let workspaceReleaser: any WorkspaceLeaseReleasing
   public let brokerFeedFactory: BrokerFeedLeaseFactory
   public let brokerFeedGenerationCoordinator: any BrokerFeedGenerationCoordinating
@@ -287,6 +291,7 @@ public struct JollysMQTTAppDependencies: Sendable {
       (any ProfileSynchronizingRepositoryProtocol)? = nil,
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     workspaceRepository: any WorkspaceRepositoryProtocol,
+    brokerChartRepository: any BrokerChartRepositoryProtocol = MemoryBrokerChartRepository(),
     workspaceReleaser: any WorkspaceLeaseReleasing = NoopWorkspaceLeaseReleaser(),
     brokerFeedFactory: BrokerFeedLeaseFactory = .noop,
     brokerFeedGenerationCoordinator:
@@ -309,6 +314,7 @@ public struct JollysMQTTAppDependencies: Sendable {
         as? any ProfileSynchronizingRepositoryProtocol)
     self.credentialRepository = credentialRepository
     self.workspaceRepository = workspaceRepository
+    self.brokerChartRepository = brokerChartRepository
     self.workspaceReleaser = workspaceReleaser
     self.brokerFeedFactory = brokerFeedFactory
     self.brokerFeedGenerationCoordinator =
@@ -352,6 +358,10 @@ public final class WorkspaceSceneStore {
   public let history: HistoryStore
   public let historyMaintenance: HistoryMaintenanceStore
   public let numericChartDashboard: NumericChartDashboardStore
+  let brokerCharts: BrokerChartPreferencesStore
+  #if os(macOS)
+    let chartWindow: MacChartWindowController
+  #endif
   public let profileSync: ProfileSyncControlStore
 
   private let workspaceRepository: any WorkspaceRepositoryProtocol
@@ -396,6 +406,15 @@ public final class WorkspaceSceneStore {
       repositories: dependencies.historyRepositoryProvider
     )
     self.numericChartDashboard = numericChartDashboard
+    let brokerCharts = BrokerChartPreferencesStore(repository: dependencies.brokerChartRepository)
+    self.brokerCharts = brokerCharts
+    brokerCharts.onFailure = { [weak workspace] in workspace?.reportPersistenceFailure() }
+    #if os(macOS)
+      let chartWindow = MacChartWindowController(
+        dashboard: numericChartDashboard, preferences: brokerCharts
+      )
+      self.chartWindow = chartWindow
+    #endif
     let historyMaintenance = HistoryMaintenanceStore(
       maintenance: dependencies.historyMaintenanceProvider,
       settings: dependencies.historyRetentionSettings
@@ -428,6 +447,10 @@ public final class WorkspaceSceneStore {
         downstream: dependencies.workspaceReleaser
       ),
       prepareForRelease: {
+        #if os(macOS)
+          await chartWindow.close()
+        #endif
+        await brokerCharts.flush()
         await workspace.flush()
       }
     )
@@ -498,8 +521,9 @@ public final class WorkspaceSceneStore {
       )
     }
     numericChartDashboard.onConfigurationChange = {
-      [weak workspace] configuration in
+      [weak workspace, weak brokerCharts] configuration in
       workspace?.sendImmediately(.setNumericChartDashboard(configuration))
+      brokerCharts?.saveDashboard(configuration)
     }
   }
 
@@ -596,6 +620,9 @@ public final class WorkspaceSceneStore {
       // Pruning old closed records must not block opening the current scene.
     }
     await workspace.load()
+    if case .connected(let profileID) = workspace.state.record.route {
+      await restoreBrokerCharts(profileID)
+    }
     numericChartDashboard.restore(
       workspace.state.record.numericChartDashboard
     )
@@ -701,6 +728,7 @@ public final class WorkspaceSceneStore {
 
   public func connectCurrentWorkspace(_ ready: ConnectReadyState) async {
     workspace.sendImmediately(.connect(profileID: ready.profile.id))
+    await restoreBrokerCharts(ready.profile.id)
     numericChartDashboard.restore(
       workspace.state.record.numericChartDashboard
     )
@@ -721,6 +749,10 @@ public final class WorkspaceSceneStore {
   }
 
   public func showServerList() async {
+    #if os(macOS)
+      chartWindow.close()
+    #endif
+    await brokerCharts.flush()
     await connection.cancel()
     await feed.release()
     workspace.sendImmediately(.showServerList)
@@ -740,7 +772,19 @@ public final class WorkspaceSceneStore {
     else {
       return
     }
-    _ = numericChartDashboard.pin(series)
+    if numericChartDashboard.pin(series) {
+      #if os(macOS)
+        chartWindow.show()
+      #endif
+    }
+  }
+
+  private func restoreBrokerCharts(_ brokerID: UUID) async {
+    let dashboard = await brokerCharts.load(
+      brokerID: brokerID,
+      fallback: workspace.state.record.numericChartDashboard
+    )
+    workspace.sendImmediately(.setNumericChartDashboard(dashboard))
   }
 
   public func setSceneActive(_ isActive: Bool) async {

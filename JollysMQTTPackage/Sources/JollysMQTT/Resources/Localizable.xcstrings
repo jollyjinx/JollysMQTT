@@ -1,6 +1,24 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Enables drag handles for reordering broker profiles." : {
+      "comment" : "Accessibility hint for editing the broker list order on iOS."
+    },
+    "Use Regular Test Layout" : {
+      "comment" : "UI-test-only control that simulates a regular workspace resize."
+    },
+    "Use Compact Test Layout" : {
+      "comment" : "UI-test-only control that simulates a compact workspace resize."
+    },
+    "Show Details" : {
+      "comment" : "Shows the detail pane beside the topic outline."
+    },
+    "Hide Details" : {
+      "comment" : "Hides the detail pane while keeping the topic outline visible."
+    },
+    "%@ — Charts" : {
+      "comment" : "Window title for a broker’s independently movable chart dashboard."
+    },
     "%@ line %lld: %@" : {
       "comment" : "Accessible summary for one text payload difference.",
       "localizations" : {

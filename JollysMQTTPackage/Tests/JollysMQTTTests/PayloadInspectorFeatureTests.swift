@@ -7,6 +7,62 @@ import Testing
 @Suite("Payload inspector feature")
 @MainActor
 struct PayloadInspectorFeatureTests {
+  @Test("Live JSON updates preserve the selected path and refresh pinning and copy values")
+  func liveJSONSelection() async throws {
+    var state = PayloadInspectorFeature.State()
+    let topicID = BrokerTopicID(brokerID: UUID(), fullTopic: "device/metrics")
+    let epoch = ConnectionEpochID()
+    let pointer = PayloadJSONPointer(rawValue: "/a~1b/0/value")
+    let payloads = [
+      #"{"a/b":[{"value":12}]}"#,
+      #"{"a/b":[{"value":13}]}"#,
+      #"{"a/b":[{"value":true}]}"#,
+      #"{"a/b":[{"value":"offline"}]}"#,
+      #"{"a/b":[{"other":14}]}"#,
+      "plain text",
+    ]
+    for (index, payload) in payloads.enumerated() {
+      let message = PayloadMessage.testFixture(
+        topicID: topicID, payload: Data(payload.utf8),
+        connectionEpoch: epoch, ordinal: UInt64(index + 1)
+      )
+      let effect = PayloadInspectorFeature.reduce(state: &state, intent: .selectionChanged(.current(message)))
+      guard case .inspect(let requestID, _) = effect else {
+        Issue.record("Expected inspection")
+        return
+      }
+      if index > 0 && index < 5 { #expect(state.selectedJSONPointer == pointer) }
+      let inspection = await PayloadInspector().inspect(message)
+      PayloadInspectorFeature.reduce(state: &state, action: .inspectionFinished(
+        requestID: requestID, messageID: message.id, inspection: inspection
+      ))
+      if index == 0 {
+        _ = PayloadInspectorFeature.reduce(state: &state, intent: .selectJSONValue(pointer))
+      }
+      if index < 4 {
+        #expect(state.selectedJSONPointer == pointer)
+        #expect(state.selectedJSONValueText == ["12", "13", "true", "\"offline\""][index])
+        let availability = NumericChartPinEvaluator.availability(
+          inspection: inspection, selectedJSONPointer: state.selectedJSONPointer
+        )
+        if index < 3 {
+          guard case .available(let series) = availability else {
+            Issue.record("Pin must remain available across numeric/Boolean updates")
+            return
+          }
+          #expect(series.id.jsonPointer == pointer)
+        } else {
+          #expect(availability == .unavailable(.selectedValueIsNotNumeric))
+        }
+      } else if index == 4 {
+        #expect(state.selectedJSONPointer == .root)
+      } else {
+        #expect(state.selectedJSONPointer == nil)
+        #expect(state.selectedJSONValueText == nil)
+      }
+    }
+  }
+
   @Test("Parsing is lazy and stale selections never expose cached payloads")
   func lazyAndStaleSuppression() async {
     let inspector = ControlledPayloadInspector()

@@ -41,30 +41,35 @@ stage while a connection attempt is active. It also shows a connection failure
 or retry, changed broker generation, or degraded durable history. Removing the
 condition removes the banner and returns the space to the workspace.
 
-The primary layout remains a native adjustable `NavigationSplitView`:
+The primary layout is a native adjustable `HSplitView`. Topics stay visible
+and take the full window width when the trailing Details/Publish pane is hidden.
+The toolbar’s Hide Details / Show Details control (Option-Command-S) controls
+that trailing pane. Topics have a 320-point minimum and 640-point ideal width;
+details have a 360-point minimum and 440-point ideal width.
 
-- the topic outline has a 320-point minimum and 640-point ideal width. Its
-  maximum is beyond practical window widths so the divider can give it the
-  additional space available when the window grows;
-- the outline and the active Details, Publish, or Charts destination occupy the
-  full content height;
-- the user can resize or collapse the topic column through native macOS split
-  behavior.
+Charts live in a separate, independently movable and resizable macOS window.
+Pinning opens it, and the Charts toolbar button reopens a manually closed chart
+window. Initial placement is immediately to the right of its server window,
+top-aligned when space permits. Saved geometry is clamped to an available screen
+if a display was removed. Closing charts leaves the server connection running;
+closing the server closes its companion and flushes its chart preferences.
 
-When Charts is active and the window can fit all regions, the detail region
-uses a native horizontal split so the topic outline, selected-topic
-information, and chart dashboard remain visible in that order. The selected
-topic information has a 360-point minimum, 440-point ideal, and 600-point
-maximum width. The dashboard has a 320-point minimum and 640-point ideal width.
-Together with the topic outline and native divider widths, this makes 1,002
-points the regular graph-workspace threshold. Below that fit the workspace uses
-the compact tab presentation, where Charts remains a dedicated destination and
-keeps the same dashboard state.
+Each connection keeps its own dashboard stores and borrows its existing feed;
+the chart window does not acquire another lease. Card edits and window geometry
+are saved per broker in local `broker-charts/<broker UUID>.json` records, outside
+the seven-day closed-workspace pruning policy. Future connections seed their
+cards and geometry from that record, including card order, JSON paths, settings,
+pause state, and clear boundaries. Concurrent connection windows keep independent
+live presentation; the latest card edit supplies the next connection’s defaults.
+Geometry-only changes do not overwrite card edits from another window. An
+explicitly empty saved dashboard overrides stale cards in an old workspace.
+Existing workspace charts migrate on first restoration when no broker record
+exists. These preferences are device-local and never synchronized via CloudKit.
 
-Navigating the outline only changes the information region; it does not dismiss
-or rebuild chart cards. Pinning from topic information updates the already
-visible dashboard. An empty dashboard keeps its region visible and explains
-how to select a numeric or Boolean payload and pin it.
+iPhone/iPad retain their adaptive in-scene chart destinations. Selecting a JSON
+leaf remains stable across same-topic updates while that path still exists. Copy
+and Pin to Chart evaluate the newly inspected value at that path. A removed path
+falls back to the root; a nonnumeric replacement disables chart pinning.
 
 macOS topic rows are intentionally denser than touch-platform rows. The outline
 uses a plain native list with no separators or vertical row insets and a
@@ -82,6 +87,12 @@ and row spacing. The iPad topic pane prefers 480 points instead of 360.
 Structural JSON rows use the same platform distinction: compact desktop rows
 and 44-point touch rows. Desktop JSON rows have no extra stack spacing or
 vertical padding.
+
+Clicking or tapping a topic's name, value, or remaining row content selects it
+and toggles its children just like its disclosure triangle, including when the
+topic is already selected. The disclosure triangle remains a separate expansion
+action, so one click never toggles twice. Leaf topics only select their value;
+search-forced expansion keeps the existing disclosure rules.
 
 A received message briefly tints its row green and adds a leading activity bar;
 the highlight fades after 800 ms. Reduced Motion disables the fade. A coalesced
@@ -122,10 +133,11 @@ regardless of the locale's thousands separator.
   payload previews can use the extra width.
 - Copy and retained-value actions remain reachable without permanent vertical
   button stacks.
-- Charts at a fitting regular width presents three independently resizable
-  regions in topic-outline, topic-information, and dashboard order. Chart cards
-  preserve identity, order, pause state, settings, and clear boundaries while
-  topic selection changes.
+- Hide Details leaves Topics visible; Show Details restores the trailing pane.
+- Pinning opens a separate chart window. Its cards and geometry return on a
+  later connection to that broker, including after a process restart.
+- Selecting another topic does not replace existing chart cards, and live JSON
+  updates preserve the selected leaf while that path exists.
 - Connection-stage banners appear during an active connection attempt. Failure,
   generation-change, and history-degradation banners appear only while their
   exceptional state exists.
@@ -167,3 +179,24 @@ used the previously documented bare app path; the generated `.xctestrun` had
 the correct `.app` path, but its runner was killed before establishing a test
 connection. The new window UI tests are checked in but are not recorded as
 automatically passed. The native-app checks above used the computer-use tools.
+
+
+The later 2026-10-03 chart-window change passed the package build and full suite
+(485 passed, eight opt-in Mosquitto tests skipped), macOS Debug build including
+the UI-test target, and unsigned generic iOS build. Regression tests cover live
+JSON leaf selection, new connections restoring persisted chart settings and
+geometry, explicit removal of the last chart, per-broker isolation, partial
+frame updates, unreadable preference preservation, and off-screen recovery.
+
+An isolated `JollysMQTT Charts Preview` fixture verified Hide Details / Show
+Details while Topics stayed visible, an independent empty chart window, and
+closing that chart window without losing the server. A selected `/temperature`
+leaf kept Pin to Chart visible through incoming messages (including identical
+payloads). Pinning then persisted the expected topic and JSON path. The native
+UI automation helper disconnected immediately after pinning and could not be
+reconnected; the preview process remained alive. Consequently manual dragging
+and subsequent connection restoration were not visually verified in this run;
+those persistence and geometry paths are covered by package tests. UI tests
+were compiled but not executed. `JOLLYSMQTT_UI_PREVIEW=brokers` (Debug only) and
+`JOLLYSMQTT_UI_CHART_DIRECTORY` support isolated persistence verification without
+real brokers or credentials.

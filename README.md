@@ -9,8 +9,10 @@ The app supports multiple independent windows on macOS and iPadOS. On macOS,
 the Brokers window stays open: double-click a broker or choose Connect to open
 a separate connection window. Command-N shows the broker list again. On iPad,
 a new scene begins at the broker list and Connect opens its workspace in that
-scene. Window contents and graph configuration are restored across
-launches. Broker definitions synchronize through encrypted records in the
+scene. On macOS, charts open in a separate movable window beside their server.
+The chart topics, settings, and window position are remembered for future
+connections to that broker. Hide Details collapses the detail pane while keeping
+the topic outline visible. Window contents are restored across launches. Broker definitions synchronize through encrypted records in the
 user's private CloudKit database, while credentials remain device-only
 Keychain items and message history remains local to each device.
 

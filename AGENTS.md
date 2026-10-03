@@ -133,6 +133,9 @@ configuration. Do not inherit mqtt-nio's default POSIX event loop on iOS.
 - macOS keeps one persistent Brokers window. Double-click, Connect, and
   `Command-O` open a fresh connection workspace; `Command-N` and the workspace
   Brokers button show the broker list without disconnecting existing windows.
+- macOS charts use a movable companion window borrowing the connection’s feed.
+  Persist chart defaults and companion geometry per broker outside expiring
+  workspace records; hide/show details must leave Topics visible.
 - New iPad scenes start at the server list; iOS/iPadOS Connect transforms the
   current workspace.
 - Each workspace has independent selection, expansion, history navigation,

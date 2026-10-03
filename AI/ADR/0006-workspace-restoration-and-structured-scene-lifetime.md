@@ -90,4 +90,7 @@ lifecycle semantics.
 - Persistence effects are ordered, and flush follows a moving latest-tail
   generation so a write enqueued while flushing cannot be missed.
 - Workspace restoration or persistence failure has a localized visible alert.
-- System-managed window geometry remains outside the workspace document.
+- Server-window geometry remains system-managed. On macOS, chart companion
+  geometry and chart defaults are stored per broker in separate local versioned
+  records, survive closed-workspace pruning, and flush before scene release.
+  See `AI/NUMERIC_CHART_DASHBOARD_IMPLEMENTATION.md`.

@@ -632,6 +632,15 @@ private struct SelectedPayloadWorkspace: View {
   @Bindable var publishStore: PublishStore
 
   var body: some View {
+    #if os(macOS)
+      MacPayloadWorkspace(
+        topicState: topicState,
+        sceneStore: sceneStore,
+        inspectorStore: inspectorStore,
+        historyStore: historyStore,
+        publishStore: publishStore
+      )
+    #else
     GeometryReader { proxy in
       let presentation = resolvedPresentation(
         availableWidth: Double(proxy.size.width)
@@ -666,6 +675,7 @@ private struct SelectedPayloadWorkspace: View {
         }
       }
     #endif
+    #endif
   }
 
   private func resolvedPresentation(
@@ -696,6 +706,109 @@ private struct SelectedPayloadWorkspace: View {
     return horizontalSizeClass == .compact ? .compact : .regular
   }
 }
+
+#if os(macOS)
+  private struct MacPayloadWorkspace: View {
+    let topicState: TopicOutlineFeature.State
+    @Bindable var sceneStore: WorkspaceSceneStore
+    @Bindable var inspectorStore: PayloadInspectorStore
+    @Bindable var historyStore: HistoryStore
+    @Bindable var publishStore: PublishStore
+    @State private var detailsVisible = true
+
+    var body: some View {
+      HSplitView {
+        TopicExplorerView(
+          state: topicState,
+          sceneStore: sceneStore,
+          selectionNavigationBehavior: .persistentInformationPane
+        )
+        .frame(minWidth: 320, idealWidth: 640, maxWidth: .infinity)
+        if detailsVisible {
+          MacWorkspaceDetails(
+            sceneStore: sceneStore,
+            inspectorStore: inspectorStore,
+            historyStore: historyStore,
+            publishStore: publishStore
+          )
+          .frame(minWidth: 360, idealWidth: 440, maxWidth: .infinity)
+          .accessibilityIdentifier("workspace.details.pane")
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .accessibilityIdentifier("workspace.wide.split")
+      .background {
+        MacChartWindowAnchor(
+          controller: sceneStore.chartWindow,
+          title: String(localized: "\(brokerName) — Charts", bundle: #bundle),
+          isReady: sceneStore.brokerCharts.isLoaded
+        )
+        .frame(width: 0, height: 0)
+      }
+      .toolbar {
+        ToolbarItem {
+          Button { sceneStore.chartWindow.show() } label: {
+            Label {
+              Text("Charts", bundle: #bundle, comment: "Opens the broker's chart window.")
+            } icon: {
+              Image(systemName: "chart.xyaxis.line")
+            }
+          }
+          .accessibilityIdentifier("workspace.charts.open")
+        }
+        ToolbarItem {
+          Button { detailsVisible.toggle() } label: {
+            Label {
+              Text(detailsVisible
+                ? LocalizedStringResource("Hide Details", bundle: #bundle)
+                : LocalizedStringResource("Show Details", bundle: #bundle))
+            } icon: {
+              Image(systemName: "sidebar.right")
+            }
+          }
+          .keyboardShortcut("s", modifiers: [.command, .option])
+          .accessibilityIdentifier("workspace.details.toggle")
+        }
+      }
+    }
+
+    private var brokerName: String {
+      sceneStore.serverList.state.profiles.first {
+        $0.id == sceneStore.workspace.state.record.selectedProfileID
+      }?.profile.name ?? ""
+    }
+  }
+
+  private struct MacWorkspaceDetails: View {
+    @Bindable var sceneStore: WorkspaceSceneStore
+    @Bindable var inspectorStore: PayloadInspectorStore
+    @Bindable var historyStore: HistoryStore
+    @Bindable var publishStore: PublishStore
+
+    var body: some View {
+      TabView(selection: Binding(
+        get: { sceneStore.destination == .publish ? WorkspaceDestination.publish : .details },
+        set: { sceneStore.destination = $0 }
+      )) {
+        PayloadInspectorPane(
+          store: inspectorStore,
+          historyStore: historyStore,
+          historyMaintenanceStore: sceneStore.historyMaintenance,
+          retainedDeletionStore: sceneStore.retainedDeletion,
+          numericChartDashboard: sceneStore.numericChartDashboard,
+          onPinNumericChart: sceneStore.pinNumericChart,
+          layout: .wide
+        )
+        .tabItem { Text("Details", bundle: #bundle) }
+        .tag(WorkspaceDestination.details)
+
+        PublishComposerView(store: publishStore)
+          .tabItem { Text("Publish", bundle: #bundle) }
+          .tag(WorkspaceDestination.publish)
+      }
+    }
+  }
+#endif
 
 #if DEBUG
   private struct WorkspaceResizeTestControls: View {
@@ -984,7 +1097,7 @@ private struct PayloadWideGraphWorkspace: View {
   }
 }
 
-private struct NumericChartDashboardPane: View {
+struct NumericChartDashboardPane: View {
   @Bindable var dashboard: NumericChartDashboardStore
   let layout: NumericChartDashboardLayout
 
@@ -2133,6 +2246,15 @@ private struct TopicExplorerView: View {
           ForEach(state.rows) { row in
             TopicOutlineRow(
               row: row,
+              onActivate: {
+                sceneStore.selectTopic(
+                  row.id,
+                  navigationBehavior: selectionNavigationBehavior
+                )
+                if row.allowsExpansionToggle {
+                  sceneStore.toggleTopicExpansion(row.id)
+                }
+              },
               onToggleExpansion: {
                 sceneStore.toggleTopicExpansion(row.id)
               }
@@ -2838,6 +2960,7 @@ private struct TopicFreezeButton: View {
 
 private struct TopicOutlineRow: View {
   let row: TopicOutlineRowState
+  let onActivate: () -> Void
   let onToggleExpansion: () -> Void
 
   var body: some View {
@@ -2880,6 +3003,8 @@ private struct TopicOutlineRow: View {
           .accessibilityHidden(true)
       }
       TopicOutlineRowContent(row: row)
+        .onTapGesture(perform: onActivate)
+        .accessibilityAction { onActivate() }
         .accessibilityIdentifier("topic-row.\(row.fullTopic)")
     }
     .foregroundStyle(.primary)

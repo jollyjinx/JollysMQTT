@@ -4,7 +4,7 @@ description: "Persistent multi-card identity, bounded aggregate work, clear-boun
 area: "charting"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-07-29"
+last_reviewed: "2026-10-03"
 tags:
   - "charts"
   - "history"
@@ -65,6 +65,24 @@ moved backward. Exact identities cover live samples that had not received a
 durable order when Clear was invoked. SQLite durable order is monotonic across
 history-source changes, so the boundary also survives reconnect and current
 source transitions.
+
+## Broker defaults and macOS window lifetime
+
+`LocalBrokerChartRepository` stores versioned local chart preferences per broker,
+separately from expiring workspace records. `BrokerChartPreferencesStore`
+coalesces ordered card/frame writes and flushes them before the connection’s
+scene lifetime releases its feed. Missing preferences migrate the current
+workspace dashboard; saved empty dashboards deliberately suppress old cards.
+Unreadable or future-version documents are preserved and surface a workspace
+persistence error. Frame updates and dashboard updates merge independently.
+
+On macOS, `MacChartWindowController` hosts the same SwiftUI dashboard in an
+independently movable window. It restores saved geometry or first opens to the
+right of the server, fitting to available displays. The window borrows the
+connection’s stores without a new feed lease. Closing it preserves cards and
+leaves the connection active; closing the server closes the companion. Fresh
+connections restore the last saved broker defaults. See
+`MACOS_WORKSPACE_LAYOUT.md` for the desktop interaction contract.
 
 ## Adaptive presentation
 
