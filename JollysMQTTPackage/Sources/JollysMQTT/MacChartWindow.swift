@@ -213,13 +213,13 @@
     @Bindable var dashboard: NumericChartDashboardStore
 
     var body: some View {
-      ScrollView {
+      Group {
         if let card = dashboard.state.cards.first(where: { $0.id == cardID }) {
           NumericChartCard(card: card, dashboard: dashboard)
-            .frame(maxWidth: .infinity, minHeight: 320, alignment: .top)
-            .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
       }
+      .padding(8)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .accessibilityIdentifier("detached-chart-pane")
     }

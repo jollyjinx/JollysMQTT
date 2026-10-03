@@ -93,6 +93,12 @@ window, and closing the connection closes every chart window. Detachment is
 transient: after relaunch, all saved cards start in the dashboard. The existing
 per-broker chart settings and dashboard geometry continue to persist.
 
+A detached chart receives the window's finite content size directly, without a
+vertical scroll view. The header stays at its natural height and the plot takes
+the remaining width and height, growing and shrinking with the window. Keep the
+scrolling container only around the multi-card dashboard: it gives children an
+unspecified height and would leave a detached plot at its minimum height.
+
 ## Adaptive presentation
 
 Wide layouts pack stable-ID cards into a semantic SwiftUI `Grid`. The grid uses

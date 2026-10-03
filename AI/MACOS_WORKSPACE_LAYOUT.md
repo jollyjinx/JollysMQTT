@@ -62,6 +62,10 @@ connection closes all chart windows. Detachment and individual-window geometry
 are transient, while the chart's configuration remains part of the saved
 dashboard.
 
+Detached charts fill their window's content area. Resizing the window grows the
+plot in both dimensions while keeping the header and action row at their natural
+height.
+
 Each connection keeps its own dashboard stores and borrows its existing feed;
 the chart window does not acquire another lease. Card edits and window geometry
 are saved per broker in local `broker-charts/<broker UUID>.json` records, outside
