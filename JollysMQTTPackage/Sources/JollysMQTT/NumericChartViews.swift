@@ -1001,7 +1001,6 @@ private struct NumericChartContent: View {
           presentationStyle: card.presentationStyle,
           color: card.color
         )
-        .frame(minHeight: 180)
         .onGeometryChange(for: CGFloat.self) {
           $0.size.width
         } action: {
@@ -1018,8 +1017,18 @@ private struct NumericChartPlot: View {
   let yDomain: ClosedRange<Double>
   let presentationStyle: NumericChartPresentationStyle
   let color: NumericChartColor
+  @State private var selectedDate: Date?
 
   var body: some View {
+    let selectedSample = selectedSample
+    VStack(spacing: 6) {
+      NumericChartReadout(sample: selectedSample)
+      plot(selectedSample: selectedSample)
+        .frame(minHeight: 180)
+    }
+  }
+
+  private func plot(selectedSample: NumericChartSample?) -> some View {
     let timeLabel = String(
       localized: "Chart time",
       bundle: #bundle,
@@ -1030,32 +1039,51 @@ private struct NumericChartPlot: View {
       bundle: #bundle,
       comment: "Charts axis label for numeric MQTT sample values."
     )
-    Chart(samples) { sample in
-      switch presentationStyle {
-      case .line:
-        LineMark(
-          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-          y: .value(valueLabel, sample.value)
-        )
-        .foregroundStyle(color.swiftUIColor)
-      case .points:
+    return Chart {
+      ForEach(samples) { sample in
+        switch presentationStyle {
+        case .line:
+          LineMark(
+            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+            y: .value(valueLabel, sample.value)
+          )
+          .foregroundStyle(color.swiftUIColor)
+        case .points:
+          PointMark(
+            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+            y: .value(valueLabel, sample.value)
+          )
+          .foregroundStyle(color.swiftUIColor)
+          .symbolSize(24)
+        case .step:
+          LineMark(
+            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
+            y: .value(valueLabel, sample.value)
+          )
+          .foregroundStyle(color.swiftUIColor)
+          .interpolationMethod(.stepEnd)
+        }
+      }
+      if let selectedSample {
+        RuleMark(x: .value(timeLabel, date(selectedSample.receivedAtMicroseconds)))
+          .foregroundStyle(.secondary.opacity(0.35))
+          .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+          .accessibilityHidden(true)
         PointMark(
-          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-          y: .value(valueLabel, sample.value)
+          x: .value(timeLabel, date(selectedSample.receivedAtMicroseconds)),
+          y: .value(valueLabel, selectedSample.value)
         )
         .foregroundStyle(color.swiftUIColor)
-        .symbolSize(24)
-      case .step:
-        LineMark(
-          x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-          y: .value(valueLabel, sample.value)
-        )
-        .foregroundStyle(color.swiftUIColor)
-        .interpolationMethod(.stepEnd)
+        .symbolSize(45)
+        .accessibilityHidden(true)
       }
     }
     .chartXScale(domain: dateDomain)
     .chartYScale(domain: yDomain)
+    .chartXSelection(value: $selectedDate)
+    .onHover { isHovering in
+      if !isHovering { selectedDate = nil }
+    }
     .accessibilityLabel(
       Text(
         "Numeric MQTT value over time",
@@ -1063,6 +1091,16 @@ private struct NumericChartPlot: View {
         comment: "Accessible description of the numeric MQTT line chart."
       )
     )
+  }
+
+  private var selectedSample: NumericChartSample? {
+    guard let selectedDate, dateDomain.contains(selectedDate) else { return nil }
+    // Inspect the actual plotted values, including the configured multiplier
+    // and downsampling, without synthesizing values between MQTT messages.
+    return samples.min {
+      abs(date($0.receivedAtMicroseconds).timeIntervalSince(selectedDate))
+        < abs(date($1.receivedAtMicroseconds).timeIntervalSince(selectedDate))
+    }
   }
 
   private var dateDomain: ClosedRange<Date> {
@@ -1075,6 +1113,42 @@ private struct NumericChartPlot: View {
 
   private func date(_ microseconds: Int64) -> Date {
     Date(timeIntervalSince1970: Double(microseconds) / 1_000_000)
+  }
+}
+
+private struct NumericChartReadout: View {
+  let sample: NumericChartSample?
+
+  var body: some View {
+    let timestamp = sample.map {
+      Date(timeIntervalSince1970: Double($0.receivedAtMicroseconds) / 1_000_000)
+        .formatted(.dateTime.month(.twoDigits).day(.twoDigits)
+          .hour().minute().second().secondFraction(.fractional(3)))
+    } ?? "—"
+    let value = sample.map {
+      $0.value.formatted(.number.precision(.significantDigits(1...12)))
+    } ?? "—"
+
+    HStack(spacing: 12) {
+      Text(
+        "Time: \(timestamp)",
+        bundle: #bundle,
+        comment: "Timestamp of the chart sample under the pointer, or a dash when none is selected."
+      )
+      Spacer(minLength: 0)
+      Text(
+        "Value: \(value)",
+        bundle: #bundle,
+        comment: "Scaled value of the chart sample under the pointer, or a dash when none is selected."
+      )
+    }
+    .font(.caption)
+    .monospacedDigit()
+    .foregroundStyle(.secondary)
+    .lineLimit(1)
+    .minimumScaleFactor(0.75)
+    .accessibilityElement(children: .combine)
+    .accessibilityHidden(sample == nil)
   }
 }
 

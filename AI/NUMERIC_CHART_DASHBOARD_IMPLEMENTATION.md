@@ -95,3 +95,12 @@ a native Settings disclosure by default; disclosure expansion is transient UI
 state and is not persisted. Those settings cover time range, auto-scroll,
 automatic/fixed Y range, multiplier, line/point/step style, system-safe color,
 adaptive span, clear, and move earlier/later.
+
+Each plot reserves a compact time/value readout above its graph, so selection
+never adds a tooltip over the data or changes the plot height. Native Swift
+Charts X selection tracks mouse hover on macOS and touch selection on iOS/iPadOS.
+The readout snaps to the nearest displayed sample and shows its local timestamp
+to milliseconds and its scaled value. A faint dashed rule and a small point
+identify that sample. Selection is transient per-card view state; leaving the
+chart clears it. Lookup uses the current bounded display samples, so removed
+or cleared samples cannot remain in the readout.

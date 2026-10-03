@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Time: %@" : {
+      "comment" : "Timestamp of the chart sample under the pointer, or a dash when none is selected."
+    },
+    "Value: %@" : {
+      "comment" : "Scaled value of the chart sample under the pointer, or a dash when none is selected."
+    },
     "Enables drag handles for reordering broker profiles." : {
       "comment" : "Accessibility hint for editing the broker list order on iOS."
     },
