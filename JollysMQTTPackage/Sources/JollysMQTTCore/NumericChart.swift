@@ -324,6 +324,8 @@ public enum NumericChartConfigurationValidationError:
   case visibleDuration(Int64)
   case fixedVisibleRange(lowerBound: Int64, upperBound: Int64)
   case fixedYAxis(lowerBound: Double, upperBound: Double)
+  case yAxisBounds(lowerBound: Double?, upperBound: Double?)
+  case logarithmicYAxisBounds
 }
 
 public struct NumericChartVisibleRange:
@@ -404,6 +406,11 @@ public struct NumericChartVisibleRange:
   }
 }
 
+public enum NumericChartYAxisScale: String, CaseIterable, Codable, Equatable, Sendable {
+  case linear
+  case logarithmic
+}
+
 public struct NumericChartYAxis:
   Codable,
   Equatable,
@@ -417,12 +424,46 @@ public struct NumericChartYAxis:
   public static let automatic = NumericChartYAxis(
     uncheckedMode: .automatic,
     lowerBound: nil,
-    upperBound: nil
+    upperBound: nil,
+    scale: .linear
   )
 
   public let mode: Mode
   public let lowerBound: Double?
   public let upperBound: Double?
+  public let scale: NumericChartYAxisScale
+
+  /// Each missing bound follows the visible samples independently.
+  public static func bounded(
+    lowerBound: Double? = nil,
+    upperBound: Double? = nil,
+    scale: NumericChartYAxisScale = .linear
+  ) throws -> Self {
+    guard lowerBound.map(\.isFinite) ?? true,
+      upperBound.map(\.isFinite) ?? true
+    else {
+      throw NumericChartConfigurationValidationError.yAxisBounds(
+        lowerBound: lowerBound, upperBound: upperBound
+      )
+    }
+    if let lowerBound, let upperBound, lowerBound >= upperBound {
+      throw NumericChartConfigurationValidationError.yAxisBounds(
+        lowerBound: lowerBound, upperBound: upperBound
+      )
+    }
+    guard
+      scale != .logarithmic
+        || ((lowerBound.map { $0 > 0 } ?? true) && (upperBound.map { $0 > 0 } ?? true))
+    else {
+      throw NumericChartConfigurationValidationError.logarithmicYAxisBounds
+    }
+    return Self(
+      uncheckedMode: lowerBound == nil && upperBound == nil ? .automatic : .fixed,
+      lowerBound: lowerBound,
+      upperBound: upperBound,
+      scale: scale
+    )
+  }
 
   public static func fixed(
     lowerBound: Double,
@@ -437,8 +478,7 @@ public struct NumericChartYAxis:
         upperBound: upperBound
       )
     }
-    return Self(
-      uncheckedMode: .fixed,
+    return try bounded(
       lowerBound: lowerBound,
       upperBound: upperBound
     )
@@ -447,29 +487,34 @@ public struct NumericChartYAxis:
   private init(
     uncheckedMode mode: Mode,
     lowerBound: Double?,
-    upperBound: Double?
+    upperBound: Double?,
+    scale: NumericChartYAxisScale
   ) {
     self.mode = mode
     self.lowerBound = lowerBound
     self.upperBound = upperBound
+    self.scale = scale
   }
 
   private enum CodingKeys: String, CodingKey {
     case mode
     case lowerBound
     case upperBound
+    case scale
   }
 
   public init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     let mode = try values.decode(Mode.self, forKey: .mode)
+    let scale = try values.decodeIfPresent(NumericChartYAxisScale.self, forKey: .scale) ?? .linear
     switch mode {
     case .automatic:
-      self = .automatic
+      self = try Self.bounded(scale: scale)
     case .fixed:
-      self = try Self.fixed(
-        lowerBound: values.decode(Double.self, forKey: .lowerBound),
-        upperBound: values.decode(Double.self, forKey: .upperBound)
+      self = try Self.bounded(
+        lowerBound: values.decodeIfPresent(Double.self, forKey: .lowerBound),
+        upperBound: values.decodeIfPresent(Double.self, forKey: .upperBound),
+        scale: scale
       )
     }
   }

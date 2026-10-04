@@ -4,7 +4,7 @@ description: "Persistent multi-card identity, bounded aggregate work, clear-boun
 area: "charting"
 doc_type: "implementation-notes"
 status: "active"
-last_reviewed: "2026-10-03"
+last_reviewed: "2026-10-04"
 tags:
   - "charts"
   - "history"
@@ -109,7 +109,8 @@ Pause/Resume, Settings, and Remove in one header action row; macOS also includes
 Move to Separate Window or Return to Dashboard. Settings opens a native popover
 with a scrollable vertical layout and a Done button. Opening settings does not
 change the card's height. Those settings cover time range, auto-scroll,
-automatic/fixed Y range, multiplier, line/point/step style, system-safe color,
+independent automatic/fixed Y bounds, linear/logarithmic Y scale, multiplier,
+line/point/step style, system-safe color,
 adaptive span, clear, and move earlier/later.
 
 Each plot reserves a compact time/value readout above its graph, so selection
@@ -124,3 +125,38 @@ to milliseconds and its scaled value. A faint dashed rule and a small point
 identify that sample. Selection is transient per-card view state; leaving the
 chart clears it. Lookup uses the current bounded display samples, so removed
 or cleared samples cannot remain in the readout.
+
+## Y bounds, clipping, and logarithmic scale
+
+Each Y bound is optional. Clearing Minimum or Maximum returns only that side
+to automatic scaling, with grey `automin` and `automax` field prompts. The
+fields accept locale-formatted finite numbers and reject reversed/equal bounds.
+When a fixed bound is beyond every visible sample, the automatic neighbor
+expands around it to keep a usable domain.
+
+`NumericChartYAxis` persists the scale and optional bounds. Older automatic
+and fixed axes default to linear on decode; existing workspace and broker
+chart document versions remain readable. Switching to logarithmic clears
+nonpositive fixed bounds and preserves positive bounds. Logarithmic bounds
+must be positive; automatic logarithmic domains use positive samples only,
+falling back to 1...10 when none exist.
+
+`NumericChartPlotData` projects the bounded, downsampled display samples without
+altering their values or identities. Out-of-range points clamp to the nearest
+Y edge in red, including nonpositive values at the bottom of logarithmic plots.
+Line segments split at domain crossings in the chosen scale; missing portions
+run red along the edge. Step plots retain their held values and red clipped
+plateaus. Original sample values remain available in the selection readout.
+Boundary-equal values keep the configured chart color. At most three line
+segments (six vertices) are prepared per adjacent display-sample pair; step
+plots use two segments. Chart accessibility exposes the clipped sample count.
+
+Validation on 2026-10-04: Swift package build and parallel tests, macOS Debug
+build, and unsigned iOS build pass. Core regressions cover legacy decoding,
+independent bounds, boundary crossings, step plateaus, logarithmic domains,
+nonpositive readings, and finite extremes. The focused macOS UI regression
+restores a pinned chart through the existing workspace fixture, verifies red
+clipping through its accessible label, clears each bound independently, reopens
+Settings, and selects Logarithmic. Its recorded rendering shows the red sample
+at the upper edge. Mosquitto integration tests remain opt-in and were not run
+for this presentation change.

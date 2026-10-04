@@ -353,6 +353,77 @@ final class AdaptiveWorkspaceUITests: XCTestCase {
 
   #if os(macOS)
     @MainActor
+    func testChartBoundsClearIndependentlyAndLogarithmicScaleIsSelectable() throws {
+      let workspaceFile = FileManager.default.temporaryDirectory
+        .appendingPathComponent("chart-bounds-ui-\(UUID().uuidString).json")
+      defer { try? FileManager.default.removeItem(at: workspaceFile) }
+      // Restore one chart directly so this graph regression does not depend
+      // on unrelated topic-outline expansion interactions.
+      let record = #"""
+        {
+          "id":{"rawValue":"58161A5D-20ED-4A36-BDC2-352294324F11"},
+          "route":{"connected":{"profileID":"E9DE2914-EDB1-4774-BFE5-601A5D8C7C1A"}},
+          "selectedProfileID":"E9DE2914-EDB1-4774-BFE5-601A5D8C7C1A",
+          "destination":"charts",
+          "numericChart":{
+            "series":{
+              "id":{"brokerID":"E9DE2914-EDB1-4774-BFE5-601A5D8C7C1A","topic":"factory/line/temperature"},
+              "conversion":{"kind":"number","multiplier":1}
+            },
+            "isPaused":false,"autoScroll":true,
+            "visibleRange":{"durationMicroseconds":300000000},
+            "yAxis":{"mode":"automatic"}
+          }
+        }
+        """#
+      try Data(record.utf8).write(to: workspaceFile)
+      let app = launch(destination: "charts", widthClass: "regular", workspaceFile: workspaceFile.path)
+      let openCharts = app.buttons["workspace.charts.open"]
+      XCTAssertTrue(openCharts.waitForExistence(timeout: 5))
+      openCharts.click()
+      let settings = app.buttons["Settings for factory/line/temperature"]
+      XCTAssertTrue(settings.waitForExistence(timeout: 5))
+      settings.click()
+
+      let minimum = app.textFields["chart.y.minimum"]
+      let maximum = app.textFields["chart.y.maximum"]
+      XCTAssertTrue(minimum.waitForExistence(timeout: 3))
+      XCTAssertEqual(minimum.placeholderValue, "automin")
+      XCTAssertEqual(maximum.placeholderValue, "automax")
+      minimum.click()
+      minimum.typeText("20")
+      maximum.click()
+      maximum.typeText("21")
+      app.buttons["Done"].click()
+      let plot = app.descendants(matching: .any)["chart.plot"]
+      XCTAssertTrue(plot.waitForExistence(timeout: 3))
+      XCTAssertTrue(plot.label.contains("Clipped samples: 1"))
+
+      settings.click()
+      maximum.click()
+      maximum.typeKey("a", modifierFlags: .command)
+      maximum.typeKey(.delete, modifierFlags: [])
+      app.buttons["Done"].click()
+      XCTAssertTrue(plot.label.contains("Clipped samples: 0"))
+      settings.click()
+      XCTAssertEqual(minimum.value as? String, "20")
+      XCTAssertTrue(maximum.value as? String == "" || maximum.value as? String == "automax")
+
+      let scale = app.popUpButtons["chart.y.scale"]
+      scale.click()
+      app.menuItems["Logarithmic"].click()
+      XCTAssertTrue(app.staticTexts["Zero and negative values appear in red at the bottom edge."].exists)
+      minimum.click()
+      minimum.typeKey("a", modifierFlags: .command)
+      minimum.typeKey(.delete, modifierFlags: [])
+      app.buttons["Done"].click()
+      settings.click()
+      XCTAssertTrue(minimum.value as? String == "" || minimum.value as? String == "automin")
+      XCTAssertTrue(maximum.value as? String == "" || maximum.value as? String == "automax")
+      XCTAssertEqual(scale.value as? String, "Logarithmic")
+    }
+
+    @MainActor
     func testDetailsToggleKeepsTopicsVisible() {
       let app = launch(destination: "details", widthClass: "regular")
       let toggle = app.buttons["workspace.details.toggle"]

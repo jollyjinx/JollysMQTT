@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Linear" : {
+      "comment" : "Linear numeric chart Y-axis scale."
+    },
+    "Logarithmic" : {
+      "comment" : "Logarithmic numeric chart Y-axis scale."
+    },
+    "Y scale" : {
+      "comment" : "Label for the numeric chart’s linear or logarithmic Y-axis scale."
+    },
+    "automin" : {
+      "comment" : "Grey placeholder meaning the chart minimum follows the data automatically."
+    },
+    "automax" : {
+      "comment" : "Grey placeholder meaning the chart maximum follows the data automatically."
+    },
+    "Enter finite bounds with minimum below maximum. Logarithmic bounds must be positive." : {
+      "comment" : "Validation message for invalid numeric chart bounds."
+    },
+    "Zero and negative values appear in red at the bottom edge." : {
+      "comment" : "Explains how nonpositive values are displayed on a logarithmic chart."
+    },
+    "Numeric MQTT value over time. Clipped samples: %lld" : {
+      "comment" : "Accessible chart description. The variable counts samples clamped to a red top or bottom edge."
+    },
     "Chart Settings" : {
       "comment" : "Title of the numeric chart settings popover."
     },

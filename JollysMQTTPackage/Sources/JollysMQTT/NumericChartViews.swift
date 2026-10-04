@@ -586,8 +586,7 @@ private struct NumericChartSettings: View {
     }
     .frame(maxWidth: 140)
     NumericChartYAxisControls(
-      configuration: configuration,
-      samples: samples,
+      yAxis: configuration.yAxis,
       store: store
     )
     Picker(
@@ -901,113 +900,135 @@ private struct NumericChartDurationPicker: View {
 }
 
 private struct NumericChartYAxisControls: View {
-  let configuration: NumericChartConfiguration
-  let samples: [NumericChartSample]
+  let yAxis: NumericChartYAxis
   @Bindable var store: NumericChartStore
+  @Environment(\.locale) private var locale
+  @State private var minimumText = ""
+  @State private var maximumText = ""
 
   var body: some View {
-    Picker(
-      selection: Binding(
-        get: { configuration.yAxis.mode },
-        set: setMode
-      )
-    ) {
-      Text(
-        "Automatic Y-axis",
-        bundle: #bundle,
-        comment: "Automatically scales the numeric chart Y-axis."
-      )
-      .tag(NumericChartYAxis.Mode.automatic)
-      Text(
-        "Fixed Y-axis",
-        bundle: #bundle,
-        comment: "Uses persisted fixed numeric chart Y-axis bounds."
-      )
-      .tag(NumericChartYAxis.Mode.fixed)
-    } label: {
-      Text(
-        "Y-axis",
-        bundle: #bundle,
-        comment: "Label for numeric chart Y-axis scaling mode."
-      )
-    }
-    if configuration.yAxis.mode == .fixed {
-      HStack(spacing: 8) {
-        TextField(
-          value: Binding(
-            get: { configuration.yAxis.lowerBound ?? 0 },
-            set: setLowerBound
-          ),
-          format: .number
-        ) {
-          Text(
-            "Y minimum",
-            bundle: #bundle,
-            comment: "Fixed numeric-chart Y-axis minimum."
-          )
-        }
-        TextField(
-          value: Binding(
-            get: { configuration.yAxis.upperBound ?? 1 },
-            set: setUpperBound
-          ),
-          format: .number
-        ) {
-          Text(
-            "Y maximum",
-            bundle: #bundle,
-            comment: "Fixed numeric-chart Y-axis maximum."
-          )
-        }
-      }
-      .frame(maxWidth: 260)
-    }
-  }
-
-  private func setMode(_ mode: NumericChartYAxis.Mode) {
-    switch mode {
-    case .automatic:
-      store.send(.setYAxis(.automatic))
-    case .fixed:
-      let domain = automaticDomain
-      guard
-        let yAxis = try? NumericChartYAxis.fixed(
-          lowerBound: domain.lowerBound,
-          upperBound: domain.upperBound
+    VStack(alignment: .leading, spacing: 8) {
+      Picker(selection: Binding(get: { yAxis.scale }, set: setScale)) {
+        Text(
+          "Linear", bundle: #bundle,
+          comment: "Linear numeric chart Y-axis scale."
         )
-      else {
-        return
+        .tag(NumericChartYAxisScale.linear)
+        Text(
+          "Logarithmic", bundle: #bundle,
+          comment: "Logarithmic numeric chart Y-axis scale."
+        )
+        .tag(NumericChartYAxisScale.logarithmic)
+      } label: {
+        Text(
+          "Y scale", bundle: #bundle,
+          comment: "Label for the numeric chart's linear or logarithmic Y-axis scale.")
       }
-      store.send(.setYAxis(yAxis))
+      .accessibilityIdentifier("chart.y.scale")
+      HStack(spacing: 8) {
+        NumericChartBoundField(
+          text: $minimumText,
+          title: LocalizedStringResource("Y minimum", bundle: #bundle),
+          prompt: LocalizedStringResource(
+            "automin", bundle: #bundle,
+            comment: "Grey placeholder meaning the chart minimum follows the data automatically."),
+          identifier: "chart.y.minimum"
+        )
+        NumericChartBoundField(
+          text: $maximumText,
+          title: LocalizedStringResource("Y maximum", bundle: #bundle),
+          prompt: LocalizedStringResource(
+            "automax", bundle: #bundle,
+            comment: "Grey placeholder meaning the chart maximum follows the data automatically."),
+          identifier: "chart.y.maximum"
+        )
+      }
+      if editedAxis == nil {
+        Text(
+          "Enter finite bounds with minimum below maximum. Logarithmic bounds must be positive.",
+          bundle: #bundle,
+          comment: "Validation message for invalid numeric chart bounds."
+        )
+        .font(.caption)
+        .foregroundStyle(.red)
+      }
+      if yAxis.scale == .logarithmic {
+        Text(
+          "Zero and negative values appear in red at the bottom edge.", bundle: #bundle,
+          comment: "Explains how nonpositive values are displayed on a logarithmic chart."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
     }
+    .onAppear { synchronizeBounds() }
+    .onChange(of: minimumText) { applyBounds() }
+    .onChange(of: maximumText) { applyBounds() }
+    .onChange(of: yAxis) { synchronizeBounds() }
   }
 
-  private func setLowerBound(_ lowerBound: Double) {
-    guard let upperBound = configuration.yAxis.upperBound,
-      let yAxis = try? NumericChartYAxis.fixed(
-        lowerBound: lowerBound,
-        upperBound: upperBound
+  private var editedAxis: NumericChartYAxis? {
+    do {
+      return try .bounded(
+        lowerBound: parse(minimumText), upperBound: parse(maximumText), scale: yAxis.scale
       )
-    else {
-      return
-    }
-    store.send(.setYAxis(yAxis))
+    } catch { return nil }
   }
 
-  private func setUpperBound(_ upperBound: Double) {
-    guard let lowerBound = configuration.yAxis.lowerBound,
-      let yAxis = try? NumericChartYAxis.fixed(
-        lowerBound: lowerBound,
-        upperBound: upperBound
-      )
-    else {
-      return
-    }
-    store.send(.setYAxis(yAxis))
+  private func parse(_ text: String) throws -> Double? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty
+      ? nil : try Double(trimmed, format: .number.locale(locale), lenient: false)
   }
 
-  private var automaticDomain: ClosedRange<Double> {
-    NumericChartDomain.automatic(for: samples)
+  private func applyBounds() {
+    if let editedAxis, editedAxis != yAxis { store.send(.setYAxis(editedAxis)) }
+  }
+
+  private func synchronizeBounds() {
+    // Preserve the user's spelling and cursor during valid edits (including a
+    // trailing decimal separator). Refresh only externally changed values.
+    if (try? parse(minimumText)) != yAxis.lowerBound {
+      minimumText =
+        yAxis.lowerBound.map {
+          $0.formatted(.number.locale(locale).grouping(.never).precision(.significantDigits(1...17)))
+        } ?? ""
+    }
+    if (try? parse(maximumText)) != yAxis.upperBound {
+      maximumText =
+        yAxis.upperBound.map {
+          $0.formatted(.number.locale(locale).grouping(.never).precision(.significantDigits(1...17)))
+        } ?? ""
+    }
+  }
+
+  private func setScale(_ scale: NumericChartYAxisScale) {
+    // Nonpositive fixed bounds cannot define a logarithmic domain. Only those
+    // bounds return to automatic when logarithmic scaling is selected.
+    let lower = yAxis.lowerBound.flatMap { scale == .logarithmic && $0 <= 0 ? nil : $0 }
+    let upper = yAxis.upperBound.flatMap { scale == .logarithmic && $0 <= 0 ? nil : $0 }
+    if let axis = try? NumericChartYAxis.bounded(lowerBound: lower, upperBound: upper, scale: scale)
+    {
+      store.send(.setYAxis(axis))
+    }
+  }
+}
+
+private struct NumericChartBoundField: View {
+  @Binding var text: String
+  let title: LocalizedStringResource
+  let prompt: LocalizedStringResource
+  let identifier: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title).font(.caption).foregroundStyle(.secondary)
+      TextField(text: $text, prompt: Text(prompt).foregroundStyle(.secondary)) {
+        Text(title)
+      }
+      .textFieldStyle(.roundedBorder)
+      .accessibilityIdentifier(identifier)
+    }
   }
 }
 
@@ -1077,12 +1098,13 @@ private struct NumericChartContent: View {
         }
       } else {
         NumericChartPlot(
-          samples: store.state.displaySamples,
-          timeDomain: store.state.visibleTimeRangeMicroseconds,
-          yDomain: NumericChartDomain.domain(
-            configuration: store.state.configuration,
-            samples: store.state.displaySamples
+          data: NumericChartPlotData(
+            samples: store.state.displaySamples,
+            yAxis: store.state.configuration?.yAxis ?? .automatic,
+            presentationStyle: card.presentationStyle
           ),
+          timeDomain: store.state.visibleTimeRangeMicroseconds,
+          yScale: store.state.configuration?.yAxis.scale ?? .linear,
           presentationStyle: card.presentationStyle,
           color: card.color
         )
@@ -1097,9 +1119,9 @@ private struct NumericChartContent: View {
 }
 
 private struct NumericChartPlot: View {
-  let samples: [NumericChartSample]
+  let data: NumericChartPlotData
   let timeDomain: ClosedRange<Int64>?
-  let yDomain: ClosedRange<Double>
+  let yScale: NumericChartYAxisScale
   let presentationStyle: NumericChartPresentationStyle
   let color: NumericChartColor
   @State private var selectedDate: Date?
@@ -1123,28 +1145,29 @@ private struct NumericChartPlot: View {
       comment: "Charts axis label for numeric MQTT sample values."
     )
     return Chart {
-      ForEach(samples) { sample in
-        switch presentationStyle {
-        case .line:
-          LineMark(
-            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-            y: .value(valueLabel, sample.value)
-          )
-          .foregroundStyle(color.swiftUIColor)
-        case .points:
+      ForEach(data.segments) { segment in
+        LineMark(
+          x: .value(timeLabel, segment.startTime),
+          y: .value(valueLabel, segment.startValue),
+          series: .value("Segment", segment.id)
+        )
+        .foregroundStyle(segment.isClipped ? .red : color.swiftUIColor)
+        LineMark(
+          x: .value(timeLabel, segment.endTime),
+          y: .value(valueLabel, segment.endValue),
+          series: .value("Segment", segment.id)
+        )
+        .foregroundStyle(segment.isClipped ? .red : color.swiftUIColor)
+      }
+      ForEach(data.points) { point in
+        if presentationStyle == .points || point.isClipped || data.points.count == 1 {
           PointMark(
-            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-            y: .value(valueLabel, sample.value)
+            x: .value(timeLabel, date(point.sample.receivedAtMicroseconds)),
+            y: .value(valueLabel, point.value)
           )
-          .foregroundStyle(color.swiftUIColor)
-          .symbolSize(24)
-        case .step:
-          LineMark(
-            x: .value(timeLabel, date(sample.receivedAtMicroseconds)),
-            y: .value(valueLabel, sample.value)
-          )
-          .foregroundStyle(color.swiftUIColor)
-          .interpolationMethod(.stepEnd)
+          .foregroundStyle(point.isClipped ? .red : color.swiftUIColor)
+          .symbolSize(point.isClipped ? 36 : 24)
+          .accessibilityValue(Text(point.sample.value, format: .number))
         }
       }
       if let selectedSample {
@@ -1154,15 +1177,17 @@ private struct NumericChartPlot: View {
           .accessibilityHidden(true)
         PointMark(
           x: .value(timeLabel, date(selectedSample.receivedAtMicroseconds)),
-          y: .value(valueLabel, selectedSample.value)
+          y: .value(
+            valueLabel,
+            min(max(selectedSample.value, data.domain.lowerBound), data.domain.upperBound))
         )
-        .foregroundStyle(color.swiftUIColor)
+        .foregroundStyle(data.domain.contains(selectedSample.value) ? color.swiftUIColor : .red)
         .symbolSize(45)
         .accessibilityHidden(true)
       }
     }
     .chartXScale(domain: dateDomain)
-    .chartYScale(domain: yDomain)
+    .chartYScale(domain: data.domain, type: yScale == .logarithmic ? .log : .linear)
     .chartXSelection(value: $selectedDate)
     .chartOverlay { proxy in
       GeometryReader { geometry in
@@ -1183,21 +1208,22 @@ private struct NumericChartPlot: View {
     }
     .accessibilityLabel(
       Text(
-        "Numeric MQTT value over time",
+        "Numeric MQTT value over time. Clipped samples: \(data.clippedSampleCount)",
         bundle: #bundle,
-        comment: "Accessible description of the numeric MQTT line chart."
+        comment: "Accessible chart description. The variable counts samples clamped to a red top or bottom edge."
       )
     )
+    .accessibilityIdentifier("chart.plot")
   }
 
   private var selectedSample: NumericChartSample? {
     guard let selectedDate, dateDomain.contains(selectedDate) else { return nil }
     // Inspect the actual plotted values, including the configured multiplier
     // and downsampling, without synthesizing values between MQTT messages.
-    return samples.min {
-      abs(date($0.receivedAtMicroseconds).timeIntervalSince(selectedDate))
-        < abs(date($1.receivedAtMicroseconds).timeIntervalSince(selectedDate))
-    }
+    return data.points.min {
+      abs(date($0.sample.receivedAtMicroseconds).timeIntervalSince(selectedDate))
+        < abs(date($1.sample.receivedAtMicroseconds).timeIntervalSince(selectedDate))
+    }?.sample
   }
 
   private var dateDomain: ClosedRange<Date> {
@@ -1277,63 +1303,5 @@ private struct NumericChartReadout: View {
     .minimumScaleFactor(0.75)
     .accessibilityElement(children: .combine)
     .accessibilityHidden(sample == nil)
-  }
-}
-
-enum NumericChartDomain {
-  static func domain(
-    configuration: NumericChartConfiguration?,
-    samples: [NumericChartSample]
-  ) -> ClosedRange<Double> {
-    guard let configuration,
-      configuration.yAxis.mode == .fixed,
-      let lowerBound = configuration.yAxis.lowerBound,
-      let upperBound = configuration.yAxis.upperBound
-    else {
-      return automatic(for: samples)
-    }
-    return lowerBound...upperBound
-  }
-
-  static func automatic(
-    for samples: [NumericChartSample]
-  ) -> ClosedRange<Double> {
-    guard let minimum = samples.map(\.value).min(),
-      let maximum = samples.map(\.value).max()
-    else {
-      return 0...1
-    }
-    guard minimum == maximum else {
-      let span = maximum - minimum
-      guard span.isFinite else {
-        return minimum...maximum
-      }
-      let padding = span * 0.05
-      let lower = minimum - padding
-      let upper = maximum + padding
-      let boundedLower = lower.isFinite ? lower : minimum
-      let boundedUpper = upper.isFinite ? upper : maximum
-      return boundedLower...boundedUpper
-    }
-
-    let magnitude = abs(minimum)
-    let padding = max(
-      magnitude.isFinite ? magnitude * 0.05 : 0,
-      1
-    )
-    let candidateLower = minimum - padding
-    let candidateUpper = maximum + padding
-    let lower =
-      candidateLower.isFinite
-      ? candidateLower
-      : (minimum.nextDown.isFinite ? minimum.nextDown : minimum)
-    let upper =
-      candidateUpper.isFinite
-      ? candidateUpper
-      : (maximum.nextUp.isFinite ? maximum.nextUp : maximum)
-    if lower < upper {
-      return lower...upper
-    }
-    return -1...1
   }
 }

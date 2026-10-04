@@ -13,7 +13,10 @@ scene. On macOS, charts open in a separate movable window beside their server.
 Each chart has a Settings popover and can move into its own window; closing
 that window returns the chart to the dashboard. The chart topics, settings,
 and dashboard window position are remembered for future
-connections to that broker. Hide Details collapses the detail pane while keeping
+connections to that broker.
+Graphs support linear and logarithmic Y scales, independent automatic minimum
+and maximum bounds, and red edge markers for values outside the displayed range.
+Hide Details collapses the detail pane while keeping
 the topic outline visible. Window contents are restored across launches. Broker definitions synchronize through encrypted records in the
 user's private CloudKit database, while credentials remain device-only
 Keychain items and message history remains local to each device.
