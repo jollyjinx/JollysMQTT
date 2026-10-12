@@ -5,6 +5,9 @@ It is designed around the topic-tree workflow of MQTT Explorer, with live
 payload inspection, JSON formatting, publishing, retained-message operations,
 history, diffs, and numeric charts.
 
+Install a built version of JollysMQTT by
+[joining the public TestFlight beta](https://testflight.apple.com/join/GDXKVAXN).
+
 The app supports multiple independent windows on macOS and iPadOS. On macOS,
 the Brokers window stays open: double-click a broker or choose Connect to open
 a separate connection window. Command-N shows the broker list again. On iPad,
