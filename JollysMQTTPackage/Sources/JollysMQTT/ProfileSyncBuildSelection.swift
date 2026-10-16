@@ -260,7 +260,8 @@ actor ProvisionedProfileSync: ProfileSyncing {
       do {
         adapter = try await CloudKitProfileSync.configured(
           configuration,
-          stateStore: stateStore
+          stateStore: stateStore,
+          diagnosticLogs: .shared
         )
       } catch {
         adapter = UnavailableProfileSync()

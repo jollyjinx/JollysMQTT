@@ -139,6 +139,8 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   private let boundaryPolicy: MQTTInboundBoundaryPolicy
   private let ingestion: BrokerFeedIngestion?
   private let publishQueueCapacity: Int
+  private let diagnosticLogs: DiagnosticLogStore?
+  private let connectionLogID: UUID
   private var ownedWorkIsShutdown = false
 
   private var activeConnection: MQTTConnectionScope?
@@ -156,7 +158,9 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     ),
     boundaryPolicy: MQTTInboundBoundaryPolicy = .init(),
     ingestion: BrokerFeedIngestion? = nil,
-    publishQueueCapacity: Int = 32
+    publishQueueCapacity: Int = 32,
+    diagnosticLogs: DiagnosticLogStore? = nil,
+    connectionLogID: UUID = UUID()
   ) {
     precondition(publishQueueCapacity > 0)
     self.client = client
@@ -166,9 +170,35 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     self.boundaryPolicy = boundaryPolicy
     self.ingestion = ingestion
     self.publishQueueCapacity = publishQueueCapacity
+    self.diagnosticLogs = diagnosticLogs
+    self.connectionLogID = connectionLogID
   }
 
   func runAttempt(
+    configuration: BrokerFeedConfiguration,
+    events: BrokerFeedAttemptEvents
+  ) async throws {
+    await log(.connectionAttempt)
+    do {
+      try await runConnectionAttempt(configuration: configuration, events: events)
+      await log(.connectionClosed)
+    } catch is CancellationError {
+      await log(.connectionCancelled)
+      throw CancellationError()
+    } catch let failure as BrokerFeedFailure {
+      await log(.connectionFailed(failure.diagnostic))
+      throw failure
+    } catch {
+      await log(.connectionFailed(BrokerFeedFailure.transportUnavailable.diagnostic))
+      throw error
+    }
+  }
+
+  private func log(_ event: DiagnosticLogEvent) async {
+    await diagnosticLogs?.record(event, connectionID: connectionLogID)
+  }
+
+  private func runConnectionAttempt(
     configuration: BrokerFeedConfiguration,
     events: BrokerFeedAttemptEvents
   ) async throws {
@@ -219,11 +249,14 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
   }
 
   func retryHistoryPersistence() async -> Bool {
-    await ingestion?.retryHistoryPersistence(
-      recoveredAtMicroseconds: Int64(
-        Date().timeIntervalSince1970 * 1_000_000
-      )
-    ) ?? false
+    let succeeded =
+      await ingestion?.retryHistoryPersistence(
+        recoveredAtMicroseconds: Int64(
+          Date().timeIntervalSince1970 * 1_000_000
+        )
+      ) ?? false
+    await log(.historyRecovery(succeeded: succeeded))
+    return succeeded
   }
 
   func shutdownOwnedWork() async {
@@ -232,6 +265,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     await activePublishCommands?.close(reason: .cancelled)
     activePublishCommands = nil
     await ingestion?.shutdown()
+    await log(.connectionClosed)
   }
 
   func publish(
@@ -261,6 +295,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     authentication: MQTTAuthentication?,
     events: BrokerFeedAttemptEvents
   ) async throws {
+    await log(.connecting)
     await events.connecting()
     let security: MQTTBrokerEndpoint.Security
     switch profile.transport {
@@ -335,6 +370,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
     events: BrokerFeedAttemptEvents
   ) async throws {
     await ingestion?.beginConnectionEpoch(connection.connectionEpoch)
+    await log(.subscribing)
     await events.subscribing()
     let publishCommands = BrokerFeedPublishCommandQueue(
       connectionEpoch: connection.connectionEpoch,
@@ -351,6 +387,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
             boundaryPolicy: self.boundaryPolicy,
             onSubscribed: {
               await self.activatePublishCommands(publishCommands)
+              await self.log(.connected)
               await events.connected()
             },
             process: { message in
@@ -403,6 +440,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
                 completedAtMicroseconds: success.completedAtMicroseconds
               )
               await publishCommands.complete(success)
+              await self.log(.publishCompleted)
             } catch is CancellationError {
               await publishCommands.fail(
                 operationID: command.request.operationID,
@@ -410,6 +448,7 @@ actor MQTTBrokerFeedAttempt: BrokerFeedAttempting {
               )
               throw CancellationError()
             } catch {
+              await self.log(.publishFailed)
               await publishCommands.fail(
                 operationID: command.request.operationID,
                 reason: .transportUnavailable

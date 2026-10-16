@@ -49,6 +49,7 @@ struct ReleaseMetadataTests {
     let sandboxKeys: Set<String> = [
       "com.apple.security.app-sandbox",
       "com.apple.security.network.client",
+      "com.apple.security.files.user-selected.read-write",
     ]
 
     #expect(Set(ordinaryMac.keys) == sandboxKeys)

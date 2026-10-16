@@ -12,11 +12,13 @@ public enum JollysMQTTWindows {
 
 extension FocusedValues {
   @Entry var activeServerListStore: ServerListStore?
+  @Entry var supportLogsStore: SupportLogsStore?
 }
 
 public struct JollysMQTTWindowCommands: Commands {
   @Environment(\.openWindow) private var openWindow
   @FocusedValue(\.activeServerListStore) private var activeServerListStore
+  @FocusedValue(\.supportLogsStore) private var supportLogsStore
 
   public init() {}
 
@@ -62,6 +64,14 @@ public struct JollysMQTTWindowCommands: Commands {
           || activeServerListStore?.state.isConnectionRequestPending == true
       )
     }
+    CommandGroup(after: .help) {
+      Button {
+        supportLogsStore?.isPresented = true
+      } label: {
+        Text("Share Log Files…", bundle: #bundle)
+      }
+      .disabled(supportLogsStore == nil)
+    }
   }
 
   private func connectSelectedBroker() {
@@ -75,6 +85,7 @@ public struct JollysMQTTWindowCommands: Commands {
 public struct JollysMQTTRootView: View {
   @State private var sceneStore: WorkspaceSceneStore
   @State private var helpPresented = false
+  @State private var logsStore = SupportLogsStore()
 
   @MainActor
   public init(
@@ -88,7 +99,29 @@ public struct JollysMQTTRootView: View {
 
   public var body: some View {
     WorkspaceSceneView(store: sceneStore)
+      .focusedSceneValue(\.supportLogsStore, logsStore)
       .toolbar {
+        #if !os(macOS)
+          ToolbarItem(placement: .automatic) {
+            Menu {
+              Button {
+                logsStore.isPresented = true
+              } label: {
+                Label {
+                  Text("Share Log Files…", bundle: #bundle)
+                } icon: {
+                  Image(systemName: "square.and.arrow.up")
+                }
+              }
+            } label: {
+              Label {
+                Text("More", bundle: #bundle)
+              } icon: {
+                Image(systemName: "ellipsis.circle")
+              }
+            }
+          }
+        #endif
         ToolbarItem(placement: .automatic) {
           Button {
             helpPresented = true
@@ -116,6 +149,9 @@ public struct JollysMQTTRootView: View {
       }
       .sheet(isPresented: $helpPresented) {
         JollysMQTTHelpView()
+      }
+      .sheet(isPresented: $logsStore.isPresented) {
+        SupportLogsView(store: logsStore)
       }
   }
 }

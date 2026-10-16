@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Try Again" : {
+      "comment" : "Retries preparing a support log archive after a failure."
+    },
+    "Segment" : {
+      "comment" : "Column for a topic path segment in the macOS outline."
+    },
+    "Share Log Files" : {
+      "comment" : "Title of the support diagnostics sheet."
+    },
+    "Share Log Files…" : {
+      "comment" : "Menu and share action for an archive of application and connection logs."
+    },
+    "Share application and connection diagnostics to help investigate a problem." : {
+      "comment" : "Purpose of the support log archive."
+    },
+    "Broker addresses, usernames, topics, payloads, and credentials are excluded. Logs use anonymous connection identifiers." : {
+      "comment" : "Privacy description of the support diagnostics archive."
+    },
+    "The log files could not be prepared or saved. Check available disk space and try again." : {
+      "comment" : "Support log archive preparation or export failure."
+    },
+    "Preparing log files…" : {
+      "comment" : "Progress while creating a consistent support log archive."
+    },
+    "JollysMQTT keeps up to 20 MB of logs in total and removes logs last written more than 10 days ago." : {
+      "comment" : "Diagnostic file retention policy."
+    },
+    "Save ZIP…" : {
+      "comment" : "Save a support log archive to a user-selected file."
+    },
+    "More" : {
+      "comment" : "Menu containing additional application actions."
+    },
     "Linear" : {
       "comment" : "Linear numeric chart Y-axis scale."
     },

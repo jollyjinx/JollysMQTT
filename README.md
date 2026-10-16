@@ -41,13 +41,22 @@ patterns found in the existing bridge,
 derived from the checked-in product reference, and [AGENTS.md](AGENTS.md) for
 contributor constraints.
 
+## Support logs
+
+Choose **Help → Share Log Files…** on macOS, or **More → Share Log Files…**
+on iOS/iPadOS, to share a ZIP of application and connection diagnostics.
+macOS also offers **Save ZIP…**. Each connection has its own log stream;
+reconnect attempts stay together. Logs rotate automatically within a shared
+20 MB budget and expire after ten days. Broker addresses, usernames, topics,
+payloads, and credentials are excluded.
+
 ## TestFlight
 
 To archive the committed official iOS and macOS builds and upload both to
 TestFlight, run:
 
 ```bash
-Tools/build-and-upload-testflight.sh
+Scripts/build-and-upload-testflight.sh
 ```
 
 Use `--archive-only`, `--preflight`, or `--dry-run` for non-uploading modes.
@@ -56,3 +65,15 @@ command, or `--version auto` to derive it from the commit date. Without this
 option, the script uses the Xcode project's marketing version.
 See [AI/TESTFLIGHT_RELEASE.md](AI/TESTFLIGHT_RELEASE.md) for signing,
 authentication, versioning, and release-gate details.
+
+## macOS DMG releases
+
+Pushing a version tag such as `v0.2.0` to GitHub builds a universal macOS app,
+signs it with Developer ID, notarizes and staples the app and DMG, then
+publishes the DMG and SHA-256 checksum as a GitHub Release. Official builds
+retain Production CloudKit synchronization.
+
+Configure the six signing and notarization secrets in the `macos-release`
+GitHub environment before the first release. See
+[AI/MACOS_DMG_RELEASE.md](AI/MACOS_DMG_RELEASE.md) for exact secret names,
+Developer ID provisioning, tag commands, and verification gates.

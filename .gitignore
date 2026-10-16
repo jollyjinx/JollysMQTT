@@ -1,6 +1,10 @@
 .DS_Store
 .build/
+.swiftpm/
 DerivedData/
 xcuserdata/
 *.xcuserstate
 !JollysMQTTPackage/Package.resolved
+# The release script seeds Xcode's generated lock from the package lock above.
+JollysMQTT.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+__pycache__/

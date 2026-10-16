@@ -8,12 +8,15 @@ public final class ProfileSyncControlStore {
   public private(set) var isWorking = false
 
   private let repository: (any ProfileSynchronizingRepositoryProtocol)?
+  private let diagnosticLogs: DiagnosticLogStore?
   private var hasStarted = false
 
   public init(
-    repository: (any ProfileSynchronizingRepositoryProtocol)?
+    repository: (any ProfileSynchronizingRepositoryProtocol)?,
+    diagnosticLogs: DiagnosticLogStore? = nil
   ) {
     self.repository = repository
+    self.diagnosticLogs = diagnosticLogs
   }
 
   public func start() async {
@@ -27,6 +30,7 @@ public final class ProfileSyncControlStore {
     if status == .available {
       await retry()
     }
+    await diagnosticLogs?.record(.profileSyncStatus(status))
   }
 
   public func run() async {
@@ -56,19 +60,25 @@ public final class ProfileSyncControlStore {
 
   public func refreshStatus() async {
     guard let repository, !isWorking else { return }
+    let previous = status
     status = await repository.syncStatus()
+    if status != previous {
+      await diagnosticLogs?.record(.profileSyncStatus(status))
+    }
   }
 
   public func retry() async {
     guard let repository else { return }
     isWorking = true
     status = .syncing
+    await diagnosticLogs?.record(.profileSyncStatus(status))
     do {
       status = try await repository.synchronize()
     } catch {
       status = await repository.syncStatus()
     }
     isWorking = false
+    await diagnosticLogs?.record(.profileSyncStatus(status))
   }
 
   public func keepLocalOnly() async {
@@ -103,5 +113,6 @@ public final class ProfileSyncControlStore {
       status = await repository.syncStatus()
     }
     isWorking = false
+    await diagnosticLogs?.record(.profileSyncStatus(status))
   }
 }

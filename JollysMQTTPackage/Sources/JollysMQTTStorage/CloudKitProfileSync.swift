@@ -38,11 +38,13 @@
 
     public static func configured(
       _ configuration: CloudKitProfileSyncConfiguration,
-      stateStore: any ProfileSyncStateStoring
+      stateStore: any ProfileSyncStateStoring,
+      diagnosticLogs: DiagnosticLogStore? = nil
     ) async throws -> CloudKitProfileSync {
       let driver = try await CKSyncEngineProfileDriver.make(
         configuration: configuration,
-        stateStore: stateStore
+        stateStore: stateStore,
+        diagnosticLogs: diagnosticLogs
       )
       return CloudKitProfileSync(engine: driver)
     }
@@ -456,19 +458,24 @@
   actor CKSyncEngineProfileDelegate: CKSyncEngineDelegate {
     private let codec: CloudKitProfileRecordCodec
     private let stateStore: any ProfileSyncStateStoring
+    private let diagnosticLogs: DiagnosticLogStore?
 
     private var stagedSnapshot: ProfileSyncSnapshot?
     private var fetchedRecords: [BrokerProfile.ID: ProfileReplicaRecord] = [:]
     private var transportBases: [BrokerProfile.ID: CKRecord] = [:]
     private var operationFailure: ProfileSyncFailure?
     private var recovery: ProfileSyncRecovery?
+    private var awaitingDomainMerge = false
+    private var mergeAfterGeneration: UInt64 = 0
 
     init(
       codec: CloudKitProfileRecordCodec,
-      stateStore: any ProfileSyncStateStoring
+      stateStore: any ProfileSyncStateStoring,
+      diagnosticLogs: DiagnosticLogStore? = nil
     ) {
       self.codec = codec
       self.stateStore = stateStore
+      self.diagnosticLogs = diagnosticLogs
     }
 
     @discardableResult
@@ -479,6 +486,9 @@
           >= (stagedSnapshot?.generation ?? 0)
       else { return true }
       stagedSnapshot = snapshot
+      if fetchedRecords.isEmpty && snapshot.generation > mergeAfterGeneration {
+        awaitingDomainMerge = false
+      }
       return true
     }
 
@@ -487,6 +497,7 @@
     ) {
       stagedSnapshot = snapshot
       recovery = nil
+      awaitingDomainMerge = false
     }
 
     func beginOperation() {
@@ -495,6 +506,38 @@
 
     func makeExchange() throws -> ProfileSyncExchange {
       try takeFetchedExchangeBeforeSend() ?? .noChanges
+    }
+
+    /// A handled optimistic-lock conflict is a merge input, even when
+    /// CKSyncEngine also throws the enclosing partial-failure error.
+    func exchangeAfterSendFailure(_ error: any Error) throws -> ProfileSyncExchange {
+      if let recovery { throw recovery }
+      if let operationFailure { throw operationFailure }
+      guard Self.containsOnlyRecordConflicts(error), !fetchedRecords.isEmpty else {
+        throw error
+      }
+      return try makeExchange()
+    }
+
+    private static func containsOnlyRecordConflicts(_ error: any Error) -> Bool {
+      guard let error = error as? CKError else { return false }
+      if error.code == .serverRecordChanged {
+        return error.serverRecord != nil
+      }
+      guard error.code == .partialFailure,
+        let partialErrors = error.partialErrorsByItemID,
+        !partialErrors.isEmpty
+      else { return false }
+      // An atomic batch may reject otherwise valid siblings because one
+      // record conflicted. Re-staging the merged snapshot retries them too.
+      return partialErrors.values.contains { containsOnlyRecordConflicts($0) }
+        && partialErrors.values.allSatisfy {
+          ($0 as? CKError)?.code == .batchRequestFailed || containsOnlyRecordConflicts($0)
+        }
+    }
+
+    func canProvideRecordBatch() -> Bool {
+      recovery == nil && !awaitingDomainMerge
     }
 
     /// Drains fetched domain records before any send is allowed. The driver
@@ -515,6 +558,7 @@
       let changes = fetchedRecords.values.sorted {
         $0.id.uuidString < $1.id.uuidString
       }
+      mergeAfterGeneration = stagedSnapshot?.generation ?? 0
       fetchedRecords.removeAll(keepingCapacity: true)
       return ProfileSyncExchange(
         remoteRecords: changes
@@ -527,6 +571,7 @@
         let replicaRecord = try codec.decodeReplicaRecord(record)
         fetchedRecords[replicaRecord.id] = replicaRecord
         transportBases[replicaRecord.id] = record
+        awaitingDomainMerge = true
       } catch let failure as ProfileSyncFailure {
         recordOperationFailure(failure)
       } catch {
@@ -545,6 +590,7 @@
       fetchedRecords.removeAll(keepingCapacity: false)
       transportBases.removeAll(keepingCapacity: false)
       operationFailure = nil
+      awaitingDomainMerge = false
     }
 
     func pendingRecovery() -> ProfileSyncRecovery? {
@@ -587,6 +633,9 @@
       guard recovery == nil else {
         return
       }
+      let hasConflict = failures.contains {
+        $0.error.code == .serverRecordChanged && $0.error.serverRecord != nil
+      }
       for failed in failures.sorted(by: {
         $0.record.recordID.recordName
           < $1.record.recordID.recordName
@@ -598,6 +647,8 @@
             ] as? CKRecord
         {
           acceptFetchedRecord(serverRecord)
+        } else if failed.error.code == .batchRequestFailed && hasConflict {
+          continue
         } else {
           recordOperationFailure(
             CloudKitProfileSync.classify(failed.error)
@@ -673,6 +724,7 @@
             kind: .internalFailure,
             isRetryable: true
           )
+          await logFailure(error, operation: .saveState)
         }
 
       case .accountChange(let change):
@@ -731,6 +783,18 @@
             )
           }
         }
+        let conflictCount = sent.failedRecordSaves.filter {
+          $0.error.code == .serverRecordChanged
+        }.count
+        if conflictCount > 0 {
+          await diagnosticLogs?.record(.cloudKitConflicts(count: conflictCount))
+        }
+        for failed in sent.failedRecordSaves where failed.error.code != .serverRecordChanged {
+          await logFailure(failed.error, operation: .saveRecord)
+        }
+        for error in sent.failedRecordDeletes.values {
+          await logFailure(error, operation: .deleteRecord)
+        }
 
       case .sentDatabaseChanges(let sent):
         guard recovery == nil else {
@@ -740,13 +804,16 @@
           operationFailure = CloudKitProfileSync.classify(
             failed.error
           )
+          await logFailure(failed.error, operation: .saveZone)
         } else if let error = sent.failedZoneDeletes.values.first {
           operationFailure = CloudKitProfileSync.classify(error)
+          await logFailure(error, operation: .saveZone)
         }
 
       case .didFetchRecordZoneChanges(let finished):
         if let error = finished.error {
           operationFailure = CloudKitProfileSync.classify(error)
+          await logFailure(error, operation: .fetch)
         }
 
       case .willFetchChanges, .willFetchRecordZoneChanges,
@@ -755,6 +822,18 @@
       @unknown default:
         break
       }
+    }
+
+    func logFailure(_ error: any Error, operation: DiagnosticLogEvent.CloudKitOperation) async {
+      let cloudError = error as? CKError
+      await diagnosticLogs?.record(
+        .cloudKitFailure(
+          operation: operation,
+          code: cloudError?.code.rawValue ?? -1,
+          partialCodes: cloudError?.partialErrorsByItemID?.values.compactMap {
+            ($0 as? CKError)?.code.rawValue
+          } ?? []
+        ))
     }
 
     private func recordOperationFailure(
@@ -782,7 +861,7 @@
       _ context: CKSyncEngine.SendChangesContext,
       syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
-      guard recovery == nil else { return nil }
+      guard canProvideRecordBatch() else { return nil }
       return await CKSyncEngine.RecordZoneChangeBatch(
         pendingChanges:
           syncEngine.state.pendingRecordZoneChanges.filter {
@@ -812,7 +891,8 @@
 
     static func make(
       configuration: CloudKitProfileSyncConfiguration,
-      stateStore: any ProfileSyncStateStoring
+      stateStore: any ProfileSyncStateStoring,
+      diagnosticLogs: DiagnosticLogStore?
     ) async throws -> CKSyncEngineProfileDriver {
       let candidates = try await stateStore.loadCandidates()
       let selection = selectProfileSyncState(
@@ -828,7 +908,8 @@
       )
       let delegate = CKSyncEngineProfileDelegate(
         codec: codec,
-        stateStore: stateStore
+        stateStore: stateStore,
+        diagnosticLogs: diagnosticLogs
       )
       var engineConfiguration = CKSyncEngine.Configuration(
         database:
@@ -901,11 +982,19 @@
         {
           return fetched
         }
-        try await engine.sendChanges(
-          CKSyncEngine.SendChangesOptions(
-            scope: .zoneIDs([codec.zoneID])
+        do {
+          try await engine.sendChanges(
+            CKSyncEngine.SendChangesOptions(
+              scope: .zoneIDs([codec.zoneID])
+            )
           )
-        )
+        } catch is CancellationError {
+          throw CancellationError()
+        } catch {
+          await delegate.logFailure(error, operation: .send)
+          try Task.checkCancellation()
+          return try await delegate.exchangeAfterSendFailure(error)
+        }
         try Task.checkCancellation()
         return try await delegate.makeExchange()
       } catch is CancellationError {

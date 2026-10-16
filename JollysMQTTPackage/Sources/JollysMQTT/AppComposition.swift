@@ -240,13 +240,15 @@ public struct JollysMQTTAppDependencies: Sendable {
       let attempt = MQTTBrokerFeedAttempt(
         credentialResolver: CredentialRepository.shared,
         installationID: installationID,
-        ingestion: ingestion
+        ingestion: ingestion,
+        diagnosticLogs: .shared
       )
       return BrokerFeed(attempt: attempt)
     }
     return JollysMQTTAppDependencies(
       profileRepository: profileRepository,
       profileSynchronizingRepository: profileRepository,
+      diagnosticLogs: .shared,
       credentialRepository: CredentialRepository.shared,
       workspaceRepository: LocalWorkspaceRepository(
         directoryURL: root.appending(
@@ -274,6 +276,7 @@ public struct JollysMQTTAppDependencies: Sendable {
 
   public let profileRepository: any ProfileRepositoryProtocol
   public let profileSynchronizingRepository: (any ProfileSynchronizingRepositoryProtocol)?
+  public let diagnosticLogs: DiagnosticLogStore?
   public let credentialRepository: any CredentialRepositoryProtocol
   public let workspaceRepository: any WorkspaceRepositoryProtocol
   public let brokerChartRepository: any BrokerChartRepositoryProtocol
@@ -289,6 +292,7 @@ public struct JollysMQTTAppDependencies: Sendable {
     profileRepository: any ProfileRepositoryProtocol,
     profileSynchronizingRepository:
       (any ProfileSynchronizingRepositoryProtocol)? = nil,
+    diagnosticLogs: DiagnosticLogStore? = nil,
     credentialRepository: any CredentialRepositoryProtocol = CredentialRepository.shared,
     workspaceRepository: any WorkspaceRepositoryProtocol,
     brokerChartRepository: any BrokerChartRepositoryProtocol = MemoryBrokerChartRepository(),
@@ -308,6 +312,7 @@ public struct JollysMQTTAppDependencies: Sendable {
       MemoryBrokerDeletionCleanupJournal()
   ) {
     self.profileRepository = profileRepository
+    self.diagnosticLogs = diagnosticLogs
     self.profileSynchronizingRepository =
       profileSynchronizingRepository
       ?? (profileRepository
@@ -382,7 +387,8 @@ public final class WorkspaceSceneStore {
     )
     self.profileSync = ProfileSyncControlStore(
       repository:
-        dependencies.profileSynchronizingRepository
+        dependencies.profileSynchronizingRepository,
+      diagnosticLogs: dependencies.diagnosticLogs
     )
     let feed = WorkspaceBrokerFeedLease(
       workspaceID: id,

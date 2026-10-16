@@ -98,6 +98,8 @@ declared by an application bundle.
 - Treat broker addresses, usernames, topic names, payloads, and history as
   private data.
 - Do not log payload bodies or credentials by default.
+- Support logs use typed allow-listed events with a shared 20 MB budget; see
+  `AI/SUPPORT_DIAGNOSTICS.md` before changing logging, retention, or exports.
 - Protect local profile, workspace, and history files with platform data
   protection where available and exclude volatile message history from device
   backups.
@@ -181,11 +183,11 @@ Transport integration tests may start an isolated Mosquitto broker in a
 container. Do not point automated tests at a real broker or use real
 credentials.
 
-Use `Tools/build-and-upload-testflight.sh` for official iOS and macOS
+Use `Scripts/build-and-upload-testflight.sh` for official iOS and macOS
 TestFlight archives. It requires a clean committed worktree, uses the
 `Official Release` configuration, assigns one Git-derived build number to both
 archives, and verifies them before upload. Both archives use Apple Development
-so Xcode embeds the app entitlements. `Tools/prepare-macos-archive.sh` removes
+so Xcode embeds the app entitlements. `Scripts/prepare-macos-archive.sh` removes
 signatures only from verified codeless SwiftPM resource bundles, then re-signs
 the containing macOS app with its original certificate and metadata. It checks
 the app signature, requires sandbox/network entitlements, and verifies that all
@@ -195,6 +197,20 @@ Prefer `--archive-only`,
 `--preflight`, or `--dry-run` while validating release changes. An actual
 upload is an explicit release operation; never perform one as part of ordinary
 implementation or testing.
+
+GitHub version tags (`vX.Y.Z`) trigger `.github/workflows/release-macos.yml`
+for Developer ID macOS DMGs. Read `AI/MACOS_DMG_RELEASE.md` before modifying
+this path. `Scripts/release_macos_dmg.py` uses Official Release with manual
+Developer ID signing, hardened runtime, and Production CloudKit. It verifies
+actual archive/export entitlements and requires accepted app and DMG
+notarizations, stapling, and Gatekeeper validation before creating publishable
+assets. Never weaken these gates or fall back to local-only profiles when
+signing is unavailable. Keep signing secrets out of artifacts and restore the
+Keychain search list after each run. Test release changes with
+`python3 -B -m unittest discover -s Scripts/Tests -p 'test_macos_release.py' -v`.
+The workflow seeds Xcode's ignored lockfile from the checked-in package lock
+and rejects dependency revision changes. Tag pushes start real releases;
+ordinary validation must not push release tags or submit notarizations.
 
 For documentation-only changes before the scaffold exists, run:
 

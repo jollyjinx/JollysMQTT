@@ -25,12 +25,12 @@ assert_contains() {
         fail "expected output to contain: ${expected}"
 }
 
-mkdir -p "${FIXTURE_ROOT}/Tools" "${FIXTURE_ROOT}/JollysMQTT.xcodeproj"
-cp "${REPOSITORY_ROOT}/Tools/build-and-upload-testflight.sh" \
-    "${REPOSITORY_ROOT}/Tools/prepare-macos-archive.sh" \
-    "${REPOSITORY_ROOT}/Tools/xcode_git_version.sh" \
-    "${FIXTURE_ROOT}/Tools/"
-chmod +x "${FIXTURE_ROOT}/Tools/"*.sh
+mkdir -p "${FIXTURE_ROOT}/Scripts" "${FIXTURE_ROOT}/JollysMQTT.xcodeproj"
+cp "${REPOSITORY_ROOT}/Scripts/build-and-upload-testflight.sh" \
+    "${REPOSITORY_ROOT}/Scripts/prepare-macos-archive.sh" \
+    "${REPOSITORY_ROOT}/Scripts/xcode_git_version.sh" \
+    "${FIXTURE_ROOT}/Scripts/"
+chmod +x "${FIXTURE_ROOT}/Scripts/"*.sh
 
 git -C "${FIXTURE_ROOT}" init -q -b main
 git -C "${FIXTURE_ROOT}" config user.name "JollysMQTT Tests"
@@ -38,7 +38,7 @@ git -C "${FIXTURE_ROOT}" config user.email "tests@invalid.example"
 git -C "${FIXTURE_ROOT}" add .
 git -C "${FIXTURE_ROOT}" commit -q -m "Test fixture"
 
-readonly RELEASE_SCRIPT="${FIXTURE_ROOT}/Tools/build-and-upload-testflight.sh"
+readonly RELEASE_SCRIPT="${FIXTURE_ROOT}/Scripts/build-and-upload-testflight.sh"
 readonly MOCK_XCODEBUILD="${OUTPUT_ROOT}/mock-xcodebuild.sh"
 export CODESIGN_BIN="${OUTPUT_ROOT}/mock-codesign.sh"
 export MOCK_SIGNING_LOG="${OUTPUT_ROOT}/signing.log"

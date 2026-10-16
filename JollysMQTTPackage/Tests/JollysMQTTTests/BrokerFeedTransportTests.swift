@@ -8,14 +8,49 @@ import Testing
 
 @Suite("Broker feed transport composition")
 struct BrokerFeedTransportTests {
+  @Test("Connection failures reach their log without exposing private profile fields")
+  func credentialFailureLogging() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "mqtt-feed-log-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let logs = DiagnosticLogStore(directory: directory)
+    let connectionID = UUID()
+    let attempt = MQTTBrokerFeedAttempt(
+      credentialResolver: UnusedCredentialResolver(),
+      installationID: UUID(),
+      diagnosticLogs: logs,
+      connectionLogID: connectionID
+    )
+    let privateHost = "private-broker.example"
+    let privateUsername = "private-operator"
+    let profile = BrokerProfile.feedTransportTest(host: privateHost, username: privateUsername)
+    await #expect(throws: BrokerFeedFailure.credentialUnavailable) {
+      try await attempt.runAttempt(
+        configuration: BrokerFeedConfiguration(profile: profile, credentialRevision: 1),
+        events: BrokerFeedAttemptEvents(connecting: {}, subscribing: {}, connected: {})
+      )
+    }
+    let file = try #require(
+      try await logs.retainedFiles().first {
+        $0.lastPathComponent.contains(connectionID.uuidString.lowercased())
+      })
+    let text = try String(contentsOf: file, encoding: .utf8)
+    #expect(text.contains("connection.attempt"))
+    #expect(text.contains("credentials:credentialUnavailable"))
+    #expect(!text.contains(privateHost))
+    #expect(!text.contains(privateUsername))
+    #expect(!text.contains(profile.id.uuidString))
+  }
+
   @Test("History separates WebSocket paths without changing existing MQTT source identities")
   func webSocketHistorySourceIdentity() {
     let id = UUID()
     func source(_ connectionProtocol: BrokerConnectionProtocol, path: String) -> String {
-      MQTTBrokerFeedAttempt.historySourceID(for: .new(
-        id: id, name: "Broker", host: "broker.example",
-        connectionProtocol: connectionProtocol, webSocketPath: path
-      ))
+      MQTTBrokerFeedAttempt.historySourceID(
+        for: .new(
+          id: id, name: "Broker", host: "broker.example",
+          connectionProtocol: connectionProtocol, webSocketPath: path
+        ))
     }
 
     #expect(source(.mqtt, path: "/mqtt") == source(.mqtt, path: "/ignored"))

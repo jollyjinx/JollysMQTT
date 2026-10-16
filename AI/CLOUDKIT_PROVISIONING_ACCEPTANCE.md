@@ -4,7 +4,7 @@ description: "Build variants, recovery behavior, development schema, determinist
 area: "release"
 doc_type: "acceptance-record"
 status: "implemented-pending-external-acceptance"
-last_reviewed: "2026-10-03"
+last_reviewed: "2026-10-16"
 tags:
   - "cloudkit"
   - "provisioning"
@@ -170,6 +170,35 @@ reports an invalid entitlement blob: this app produced that misleading warning
 inside the sandbox but passed verification with all expected entitlements
 outside it. No broker endpoints, profile contents, credentials, or record UUIDs
 are retained in this acceptance note.
+
+## 2026-10-16 startup record-version conflicts
+
+The current installed app's startup logs show successful zone saves followed
+by three record-save `opLockFailure` responses and `CKError.partialFailure`.
+This differs from the missing-schema failure above. On relaunch, the engine's
+persisted change token can fetch no changes while the in-memory server-record
+bases are empty. Staging all local profiles then attempts saves without the
+existing records' change tags and receives ordinary server-record conflicts.
+
+The delegate already collected the server records as logical merge inputs,
+but the driver let the enclosing `sendChanges` partial failure bypass that
+exchange. The UI consequently showed the generic startup failure even though
+the conflicts could be resolved using the existing merge/re-stage path.
+
+The driver now returns the exchange for a batch containing only handled
+server-record conflicts and their atomic `batchRequestFailed` siblings. Real
+errors, malformed records, account recovery, and cancellation remain errors.
+Automatic outgoing batches pause until the repository has drained the remote
+exchange and staged a later-generation merged snapshot. Same-generation
+staging cannot lift that barrier. Re-staging schedules the merged data and
+reuses the server records' change tags.
+
+Regression tests exercise the actual enclosing partial-failure shape, atomic
+siblings, the merge barrier, mixed permission failures, and preservation of
+merge inputs after a real failure. [Support diagnostics](SUPPORT_DIAGNOSTICS.md)
+now retain numeric CloudKit and per-record error codes. Signed Production
+relaunch and two-device acceptance still require verification with the fixed
+application build; deterministic checks do not establish live convergence.
 
 ## Build families
 

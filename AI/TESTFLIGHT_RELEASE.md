@@ -4,7 +4,7 @@ description: "Clean-commit archive, versioning, signing, verification, and App S
 area: "release"
 doc_type: "release-runbook"
 status: "active"
-last_reviewed: "2026-10-03"
+last_reviewed: "2026-10-16"
 tags:
   - "testflight"
   - "app-store-connect"
@@ -15,7 +15,7 @@ tags:
 
 # TestFlight Release Workflow
 
-`Tools/build-and-upload-testflight.sh` follows the JollysFastVNC2
+`Scripts/build-and-upload-testflight.sh` follows the JollysFastVNC2
 archive-then-upload workflow. It archives the same committed source for iOS and
 macOS, verifies both version fields in both archives, then submits both
 archives to App Store Connect/TestFlight.
@@ -57,13 +57,13 @@ environment, and official entitlements.
 Use Xcode's configured App Store Connect account:
 
 ```bash
-Tools/build-and-upload-testflight.sh
+Scripts/build-and-upload-testflight.sh
 ```
 
 Choose a new marketing version in the same command that builds and uploads:
 
 ```bash
-Tools/build-and-upload-testflight.sh --version 0.2.0
+Scripts/build-and-upload-testflight.sh --version 0.2.0
 ```
 
 Use `--version auto` for a date-based marketing version. Run `--preflight` or
@@ -72,20 +72,20 @@ Use `--version auto` for a date-based marketing version. Run `--preflight` or
 Create and verify archives without uploading:
 
 ```bash
-Tools/build-and-upload-testflight.sh --archive-only
+Scripts/build-and-upload-testflight.sh --archive-only
 ```
 
 Print the archive and upload commands without executing them:
 
 ```bash
-Tools/build-and-upload-testflight.sh --dry-run
+Scripts/build-and-upload-testflight.sh --dry-run
 ```
 
 Validate the clean commit, team, API-key tuple, output location, and export
 options without building:
 
 ```bash
-Tools/build-and-upload-testflight.sh --preflight
+Scripts/build-and-upload-testflight.sh --preflight
 ```
 
 Preflight does not contact the Apple Developer portal or prove that the team
@@ -155,7 +155,7 @@ the actual signature as described in Apple's
 [entitlements troubleshooting note](https://developer.apple.com/library/archive/technotes/tn2415/_index.html).
 
 The release script now signs both archives normally with Apple Development.
-`Tools/prepare-macos-archive.sh` validates the macOS signature and entitlements,
+`Scripts/prepare-macos-archive.sh` validates the macOS signature and entitlements,
 checks that every package resource bundle is codeless, removes those resource
 signatures, and re-signs only the containing app with its original certificate
 and metadata. It compares all signed entitlements before and after, requires
@@ -197,7 +197,7 @@ Run the release-script regression tests after changing its signing, output,
 or safety behavior:
 
 ```bash
-Tools/Tests/build-and-upload-testflight-tests.sh
+Scripts/Tests/build-and-upload-testflight-tests.sh
 ```
 
 For API-key authentication, set all three values:
@@ -206,7 +206,7 @@ For API-key authentication, set all three values:
 APP_STORE_CONNECT_API_KEY_PATH=/absolute/path/to/AuthKey_Example.p8 \
 APP_STORE_CONNECT_API_KEY_ID=EXAMPLE123 \
 APP_STORE_CONNECT_API_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
-Tools/build-and-upload-testflight.sh
+Scripts/build-and-upload-testflight.sh
 ```
 
 The default team is `5V8J7476Q9`, matching SmartyBox. Override it with

@@ -1373,6 +1373,89 @@ struct ProfileSyncStateStoreTests {
       )
     }
 
+    @Test(
+      "Startup save conflicts survive CKSyncEngine's enclosing partial failure",
+      arguments: [false, true])
+    func startupConflictBatchReturnsMergeInsteadOfFailure(atomicSibling: Bool) async throws {
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles", recordType: "EncryptedBrokerProfile"
+      )
+      let profile = rankedProfile(name: "Existing remote profile")
+      let server = try codec.encode(profile)
+      let conflict = CKError(
+        _nsError: NSError(
+          domain: CKError.errorDomain,
+          code: CKError.Code.serverRecordChanged.rawValue,
+          userInfo: [CKRecordChangedErrorServerRecordKey: server]
+        ))
+      var partialErrors: [CKRecord.ID: CKError] = [server.recordID: conflict]
+      let sibling = try codec.encode(rankedProfile(name: "New profile in the atomic batch"))
+      if atomicSibling { partialErrors[sibling.recordID] = CKError(.batchRequestFailed) }
+      let batchError = CKError(
+        _nsError: NSError(
+          domain: CKError.errorDomain,
+          code: CKError.Code.partialFailure.rawValue,
+          userInfo: [CKPartialErrorsByItemIDKey: partialErrors]
+        ))
+      let delegate = CKSyncEngineProfileDelegate(
+        codec: codec, stateStore: MemoryProfileSyncStateStore()
+      )
+      await delegate.beginOperation()
+      var failures = [
+        CloudKitFailedProfileSave(record: server, error: conflict)
+      ]
+      if atomicSibling {
+        failures.append(
+          CloudKitFailedProfileSave(record: sibling, error: CKError(.batchRequestFailed)))
+      }
+      await delegate.acceptFailedRecordSaves(failures)
+      #expect(await delegate.canProvideRecordBatch() == false)
+      let exchange = try await delegate.exchangeAfterSendFailure(batchError)
+      #expect(exchange.remoteRecords?.map(\.id) == [profile.id])
+      // Draining the exchange must not allow automatic sends of stale local data.
+      #expect(await delegate.canProvideRecordBatch() == false)
+      _ = await delegate.stage(ProfileSyncSnapshot(generation: 0, profiles: [profile]))
+      #expect(await delegate.canProvideRecordBatch() == false)
+      _ = await delegate.stage(ProfileSyncSnapshot(generation: 1, profiles: [profile]))
+      #expect(await delegate.canProvideRecordBatch())
+    }
+
+    @Test("A partial failure containing a real error is never hidden by a conflict")
+    func mixedConflictBatchStillFails() async throws {
+      let codec = CloudKitProfileRecordCodec(
+        zoneName: "EncryptedProfiles", recordType: "EncryptedBrokerProfile"
+      )
+      let server = try codec.encode(rankedProfile(name: "Remote"))
+      let conflict = CKError(
+        _nsError: NSError(
+          domain: CKError.errorDomain,
+          code: CKError.Code.serverRecordChanged.rawValue,
+          userInfo: [CKRecordChangedErrorServerRecordKey: server]
+        ))
+      let batchError = CKError(
+        _nsError: NSError(
+          domain: CKError.errorDomain,
+          code: CKError.Code.partialFailure.rawValue,
+          userInfo: [
+            CKPartialErrorsByItemIDKey: [
+              server.recordID: conflict,
+              CKRecord.ID(recordName: "other"): CKError(.permissionFailure),
+            ]
+          ]
+        ))
+      let delegate = CKSyncEngineProfileDelegate(
+        codec: codec, stateStore: MemoryProfileSyncStateStore()
+      )
+      await delegate.acceptFailedRecordSaves([
+        CloudKitFailedProfileSave(record: server, error: conflict)
+      ])
+      await #expect(throws: CKError.self) {
+        try await delegate.exchangeAfterSendFailure(batchError)
+      }
+      // Preserve the valid merge input for the next attempt.
+      #expect(try await delegate.makeExchange().remoteRecords?.count == 1)
+    }
+
     @Test("Every server-record conflict in one batch becomes a domain merge input")
     func multipleServerConflictsAreCollected() async throws {
       let first = rankedProfile(name: "First")
