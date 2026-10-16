@@ -34,8 +34,9 @@ let package = Package(
   ],
   dependencies: [
     .package(
-      url: "https://github.com/jollyjinx/mqtt-nio.git",
-      branch: "main"
+      url: "https://github.com/swift-server-community/mqtt-nio.git",
+      exact: "3.0.0-rc.1",
+      traits: []
     )
   ],
   targets: [

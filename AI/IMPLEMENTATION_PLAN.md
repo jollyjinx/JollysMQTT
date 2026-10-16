@@ -4,7 +4,7 @@ description: "Detailed product, architecture, persistence, testing, and staged d
 area: "architecture"
 doc_type: "implementation-plan"
 status: "reviewed"
-last_reviewed: "2026-10-03"
+last_reviewed: "2026-10-16"
 tags:
   - "swift"
   - "swiftui"
@@ -44,8 +44,8 @@ Reference behavior:
 
 - MQTT Explorer feature overview:
   <https://mqtt-explorer.com/>
-- mqtt-nio fork:
-  <https://github.com/jollyjinx/mqtt-nio>
+- mqtt-nio upstream:
+  <https://github.com/swift-server-community/mqtt-nio>
 - Existing local mqtt-nio v3 migration and MQTT Explorer screenshot:
   `~/GitHub/modbus2mqtt`
 - Checked-in MQTT Explorer behavioral reference at revision
@@ -72,10 +72,10 @@ Reference behavior:
 - The package and app compile in Swift 6 mode with complete concurrency checks.
 - "mqttnio version 3" means the mqtt-nio package's v3 API, not merely MQTT
   protocol 3.1.1.
-- JollysMQTT follows the `main` branch of the `jollyjinx/mqtt-nio` fork. Keep
-  the resolved branch revision in `Package.resolved` for reproducible ordinary
-  builds, and validate each dependency update with JollysMQTT's compatibility
-  suite.
+- JollysMQTT uses upstream `swift-server-community/mqtt-nio` at exact version
+  `3.0.0-rc.1`, with optional distributed tracing disabled. Keep the resolved
+  version and revision in `Package.resolved` for reproducible builds, and
+  validate each dependency update with JollysMQTT's compatibility suite.
 - MQTT 3.1.1 is the initial protocol default. The domain model leaves room for
   MQTT 5 because mqtt-nio supports both.
 - iPhone uses one active app scene. Multiwindow is a first-class requirement on
@@ -310,8 +310,9 @@ This is the only target that depends on:
 
 ```swift
 .package(
-    url: "https://github.com/jollyjinx/mqtt-nio.git",
-    branch: "main"
+    url: "https://github.com/swift-server-community/mqtt-nio.git",
+    exact: "3.0.0-rc.1",
+    traits: []
 )
 ```
 
@@ -608,7 +609,7 @@ Implementation requirements:
 - Apply a configurable maximum payload size before copying into history/UI.
 - Never decode arbitrary bytes as UTF-8 without validation.
 - Treat mqtt-nio's `MQTTSubscription` as an unbounded upstream sequence in the
-  pinned alpha.2 implementation. Its consumer must do only bounded validation,
+  pinned `3.0.0-rc.1` implementation. Its consumer must do only bounded validation,
   assign sequence metadata, copy the allowed payload, and offer the message to
   a fixed-capacity ingress queue. It must not await database I/O, JSON parsing,
   or the main actor.
@@ -1239,12 +1240,12 @@ Every milestone must:
 
 - Create thin multiplatform Xcode app and local package.
 - Establish Swift 6.2.3 settings and deployment targets.
-- Add the `jollyjinx/mqtt-nio` `main` branch dependency only to the transport
-  target and check in its resolved revision.
+- Add the upstream mqtt-nio `3.0.0-rc.1` dependency only to the transport
+  target and check in its resolved version and revision.
 - Add package/app build schemes and test plan.
 - Prove connect, subscribe, publish, cancellation, and TLS on macOS and iOS.
 - Prove the bounded-ingress adapter under a producer faster than its consumer;
-  record the resolved mqtt-nio `main` subscription's unbounded buffering as an
+  record the resolved mqtt-nio subscription's unbounded buffering as an
   upstream constraint and measure total-process peak memory through teardown.
 - Benchmark the minimal SQLite batch writer and pruning strategy at the target
   message rate.
@@ -1391,9 +1392,9 @@ Before merging each feature:
 
 | Risk | Mitigation / decision gate |
 |------|----------------------------|
-| mqtt-nio 3 API churn | Fork `main` branch plus checked-in resolution and single adapter target; update only behind integration suite |
+| mqtt-nio 3 API churn | Exact upstream release plus checked-in resolution and single adapter target; update only behind integration suite |
 | mqtt-nio 3 toolchain requirement | Establish Swift 6.2.3 in Milestone 0 before UI work |
-| mqtt-nio alpha.2 subscription uses an unbounded `AsyncThrowingStream` | Fast consumer, bounded app ingress, deterministic overload disconnect, sustained-load spike; upstream issue/patch if dependency buffering still defeats the memory target |
+| mqtt-nio subscription uses an unbounded `AsyncThrowingStream` | Fast consumer, bounded app ingress, deterministic overload disconnect, sustained-load spike; upstream issue/patch if dependency buffering still defeats the memory target |
 | Very large wildcard subscriptions | Configurable filters, payload limits, actor aggregation, UI coalescing, bounded history |
 | SwiftUI outline performance | Stable narrow row snapshots; macOS `NSOutlineView` adapter fallback |
 | Window restoration differences by OS/user settings | Typed `WindowGroup` identity plus versioned local workspace state and platform UI tests |

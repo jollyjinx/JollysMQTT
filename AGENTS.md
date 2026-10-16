@@ -4,7 +4,7 @@ description: "Repository map, architectural boundaries, validation commands, and
 area: "repo"
 doc_type: "agent-guidance"
 status: "active"
-last_reviewed: "2026-10-03"
+last_reviewed: "2026-10-16"
 tags:
   - "documentation"
   - "agents"
@@ -104,13 +104,14 @@ declared by an application bundle.
 
 ## mqtt-nio dependency rule
 
-The requested mqtt-nio major version 3 is prerelease. Use the
-[`jollyjinx/mqtt-nio`](https://github.com/jollyjinx/mqtt-nio) fork's `main`
-branch. Keep `Package.resolved` checked in so ordinary builds reproduce the
-resolved branch head. Do not restore the obsolete
-`e670a69ee3122bd11ef04f668757ffc01c263468` revision pin; `main` now carries
-the maintained timeout implementation. See `AI/MQTT_NIO_FORK.md` for branch
-tracking and adoption notes. Changes to the resolved branch revision require:
+Use upstream
+[`swift-server-community/mqtt-nio`](https://github.com/swift-server-community/mqtt-nio)
+at exact version `3.0.0-rc.1`, with its optional `DistributedTracing` trait
+disabled. This release includes the maintained timeout fix formerly supplied
+by the fork. Keep `Package.resolved` checked in for reproducible builds. Do not
+restore the old fork branch or custom timeout revision. See
+`AI/MQTT_NIO_FORK.md` for adoption evidence and fork history. Dependency updates
+require:
 
 1. reading the upstream release notes,
 2. building all package targets,

@@ -4,7 +4,7 @@ description: "Patterns, mqtt-nio v3 details, UI references, and non-reusable cho
 area: "architecture"
 doc_type: "research"
 status: "active"
-last_reviewed: "2026-07-28"
+last_reviewed: "2026-10-16"
 tags:
   - "swift"
   - "mqtt"
@@ -198,8 +198,8 @@ Relevant API behavior:
 Historical JollysMQTT implications at the time of this review:
 
 1. The reviewed alpha.2 source required an exact dependency selection. The
-   current project policy instead follows `jollyjinx/mqtt-nio` `main`; see
-   `MQTT_NIO_FORK.md`.
+   current project policy uses upstream `3.0.0-rc.1`; see `MQTT_NIO_FORK.md`
+   for adoption evidence and fork history.
 2. Pass `NIOTSEventLoopGroup.singleton.any()` explicitly on Apple platforms.
 3. Map clean-session mode to the appropriate mqtt-nio overload.
 4. Keep only one active connection per `MQTTSession`.

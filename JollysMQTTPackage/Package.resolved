@@ -1,13 +1,13 @@
 {
-  "originHash" : "515e35dc5b18b996516fad99edf25bf591d8cdfccfce12d7be1131c65511ee02",
+  "originHash" : "6307c550552bbdf8a0e3a57ad01b788e3d2c3c1d6bb430c164415464fe4b6f19",
   "pins" : [
     {
       "identity" : "mqtt-nio",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jollyjinx/mqtt-nio.git",
+      "location" : "https://github.com/swift-server-community/mqtt-nio.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "0d320511d859c0400b2886951996068fdb12be7a"
+        "revision" : "64c9fb4d7cb9ed40a8f21a195db0e295a9c06265",
+        "version" : "3.0.0-rc.1"
       }
     },
     {

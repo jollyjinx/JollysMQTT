@@ -4,7 +4,7 @@ description: "Decision record for fixed-capacity MQTT ingress, overload teardown
 area: "transport"
 doc_type: "architecture-decision-record"
 status: "accepted"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-10-16"
 tags:
   - "mqtt"
   - "mqtt-nio"
@@ -18,7 +18,7 @@ tags:
 ## Context
 
 mqtt-nio `3.0.0-alpha.2` built each `MQTTSubscription` on an unbounded
-`AsyncThrowingStream`, and the currently resolved fork `main` revision retains
+`AsyncThrowingStream`, and the currently resolved upstream `3.0.0-rc.1` retains
 that implementation. A bounded application queue cannot retroactively bound
 messages already buffered by the dependency. JollysMQTT therefore needs both a
 deterministic local-overload contract and a measured total-process
@@ -125,6 +125,16 @@ serialized real-overload integration case passed after the move. The
 compatibility gate remains in place, and any future budget failure reopens the
 choice among an upstream fix, a narrow maintained patch, or a verified newer
 revision.
+
+The 2026-10-16 move to upstream `3.0.0-rc.1`, revision
+`64c9fb4d7cb9ed40a8f21a195db0e295a9c06265`, retains the same unbounded
+subscription buffer. The serialized real-overload integration tests passed
+for both TCP and WebSocket. A release probe with the same 250,000-message
+workload passed all budgets on Mac16,7 with macOS 27.2, Xcode 27.2, and Swift
+6.4: peak RSS 16,646,144 bytes, RSS increase 9,306,112 bytes, queue high-water
+exactly 4,096, and rejection-to-connection-completion 100.70 ms. Raw output is
+checked in at
+`AI/BENCHMARKS/2026-10-16-overload-rc1-mac16-7.json`.
 
 ## Consequences
 

@@ -4,7 +4,7 @@ description: "Decision record for clean-session defaults, process-local mqtt-nio
 area: "transport"
 doc_type: "architecture-decision-record"
 status: "accepted"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-10-16"
 tags:
   - "mqtt"
   - "mqtt-nio"
@@ -17,7 +17,7 @@ tags:
 
 ## Context
 
-mqtt-nio's alpha.2-based `main` branch exposes connections and subscriptions as
+mqtt-nio `3.0.0-rc.1` exposes connections and subscriptions as
 scoped operations. Its `MQTTSession` is a reference object containing inflight
 and subscription state, and the dependency permits only one connection at a
 time to borrow one session. Apple clients must explicitly use

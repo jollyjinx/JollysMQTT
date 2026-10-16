@@ -1,10 +1,10 @@
 ---
-title: "mqtt-nio Fork Dependency"
-description: "jollyjinx/mqtt-nio main-branch policy, timeout-fix history, and verification requirements."
+title: "mqtt-nio Dependency and Fork History"
+description: "Upstream 3.0.0-rc.1 adoption, timeout-fix fork history, and verification requirements."
 area: "dependencies"
 doc_type: "dependency-note"
 status: "active"
-last_reviewed: "2026-08-23"
+last_reviewed: "2026-10-16"
 tags:
   - "swift"
   - "mqtt"
@@ -12,12 +12,46 @@ tags:
   - "dependency"
 ---
 
-# mqtt-nio Fork Dependency
+# mqtt-nio Dependency and Fork History
 
-JollysMQTT depends on the `main` branch of
-[`jollyjinx/mqtt-nio`](https://github.com/jollyjinx/mqtt-nio). The manifest
-intentionally tracks that branch while the checked-in `Package.resolved`
-records the exact revision used by ordinary builds.
+JollysMQTT uses upstream
+[`swift-server-community/mqtt-nio`](https://github.com/swift-server-community/mqtt-nio)
+at exact version `3.0.0-rc.1`, revision
+`64c9fb4d7cb9ed40a8f21a195db0e295a9c06265`. Keep the checked-in
+`Package.resolved` so ordinary builds reproduce the reviewed dependency graph.
+
+The manifest disables the optional `DistributedTracing` trait with
+`traits: []`. JollysMQTT does not use tracing; disabling it preserves the
+existing publish behavior without automatic trace-context user properties or
+tracing dependencies in the built target graph.
+
+## 2026-10-16 upstream release candidate
+
+The [3.0.0-rc.1 release notes](https://github.com/swift-server-community/mqtt-nio/releases/tag/3.0.0-rc.1)
+include the maintained timeout implementation (#271) that previously required
+the fork. The release is four commits beyond our former fork resolution:
+distributed tracing (#273), tracing documentation (#275), a CI dependency
+update (#276), and explicitly non-Sendable subscription iterators (#277).
+
+`MQTTSubscription` remains Sendable, while each iterator belongs to its
+consumer. The release retains the unbounded `AsyncThrowingStream` subscription
+buffer; ADR 0002's bounded ingress and overload teardown gate still apply.
+
+Validation on macOS 27.2 (`26B5112a`), Xcode 27.2 (`27B5038j`), and Apple
+Swift 6.4:
+
+- `swift build` passed for all package targets with no adapter API changes.
+- `JOLLYSMQTT_MQTT_INTEGRATION=1 swift test --parallel` passed all 508 tests.
+  The eight serialized Mosquitto compatibility tests include plain and TLS
+  WebSockets, QoS 0/1/2, sessions, trusted/untrusted TLS, cancellation, and
+  bounded-ingress overload.
+- Debug macOS and unsigned generic-iOS Xcode builds passed using the same
+  dependency resolution. Optional distributed tracing was absent from the
+  built target graph, and all transitive dependency versions were preserved.
+- The release overload probe passed with 250,000 256-byte publications, a
+  4,096-message high-water mark, 15.88 MiB peak RSS, an 8.88 MiB RSS increase,
+  and 100.70 ms from rejection to full connection completion. Raw output:
+  [2026-10-16-overload-rc1-mac16-7.json](BENCHMARKS/2026-10-16-overload-rc1-mac16-7.json).
 
 ## Reason for the fork
 
@@ -33,22 +67,22 @@ routes timeout through the channel handler's cancellation path so the timed-out
 task is removed before connection teardown. It includes a regression test for
 a QoS 1 publish timing out before the connection closes.
 
-The fork's current `main` branch replaces that divergent one-off commit with
+The fork's `main` branch replaced that divergent one-off commit with
 the maintained timeout implementation from mqtt-nio change #271. At the time
-of this review, `main` resolves to
+of the 2026-08-23 review, `main` resolved to
 `0d320511d859c0400b2886951996068fdb12be7a`, two commits after the alpha.2
 base. The old custom revision is not an ancestor of this branch and must not
 be restored as a pin.
 
 ## Pin and upgrade policy
 
-The fork's `main` branch is now the requested dependency line. Keep the branch
-requirement in `Package.swift` and the generated revision plus branch name in
-`Package.resolved`. Dependency updates move the resolved revision; update the
-overload probe's dependency identity in the same change so new benchmark
-output remains attributable.
+Keep the exact upstream release requirement in `Package.swift` and its
+generated version plus revision in `Package.resolved`. Do not return to the
+fork unless a new upstream defect requires a separately reviewed patch.
+Update the overload probe's dependency identity with each dependency update
+so new benchmark output remains attributable.
 
-Before updating the resolved `main` revision, inspect the candidate changes,
+Before updating the dependency, inspect the release notes and candidate changes,
 build all package targets, run the full package test suite, run the serialized
 Mosquitto transport integration tests, and repeat the overload memory probe
 when the subscription buffering implementation changes. Record API or
